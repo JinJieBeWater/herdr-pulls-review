@@ -24,7 +24,8 @@ A Review bar for Herdr App's top bar and a review pane beside the agent: the bar
 - The bar sizes its own block: `on_size_change` on a `flex_none` wrapper reports its full width even when the block is narrower; divided by `settings().zoom` (it reports zoomed pixels), it goes to `run("layout.resize", { id: props().block, px })`, only when it changed.
 - `herdr` mode: `pane.split { direction: "right", mod: "review", props: { root, page, n } }`, or `tab.new { mod: "review" }`; a pane already open gets the page through `shared("review")`.
 - `mods/review/daemon.js` reads `~/.pulls.review/daemon.pid` and calls the daemon's `/api/review*` routes ([the fork's plan](https://github.com/JinJieBeWater/pulls.review/blob/multi-repo/plans/fork/04-herdr-review-pane.md)), starting it with `jin.review -d --no-open --worktree`. The pane shares `review.titles`, `review.program` and `review.status` (per tab) for headers and tabs that read them, as Herdr T3's do.
-- Programs: `git` (read-only, `--no-optional-locks -c core.fsmonitor=false`), `jin.review` or `pulls.review`, `hc` for `official`. Icons: Herdr's `mods/workspace-chrome/*`, Phosphor (`mods/review/ph`) and catppuccin file icons (`mods/review/cat`).
+- Programs: `git` (read-only, `--no-optional-locks -c core.fsmonitor=false`), `jin.review` or `pulls.review`, `hc` for `official`. Icons: Herdr's `mods/workspace-chrome/*`, Lucide (`mods/review/icons`) and catppuccin file icons (`mods/review/icons/cat`).
+- `mods/review/main.js` holds the pane's state, lifecycle and top-level render; each concern has its file: `review-load.js` (reading and polling the daemon), `header.js`, `commits.js`, `groups.js`, `files.js`, `diff.js`, `settings.js`, `keys.js`, and `controls.js` for the controls they share. `rows.js` lays out a diff's rows.
 
 ## Watch out
 
