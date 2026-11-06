@@ -1,12 +1,14 @@
 // A pulls.review review drawn in a pane, beside the agent that wrote the change: groups (the AI
 // analysis, else rule-based), each group's files and their diffs, reviewed marks, one commit at
-// a time. Opened by the pulls-review mod in "herdr" mode with props `{ root, page, n }`;
-// later opens in the same tab arrive through shared(PANE). Everything comes from the jin.review daemon.
+// a time. Opened by the pulls-review mod in "herdr" mode with props `{ root, page, n, analyze }`;
+// later opens in the same space arrive through shared(PANE). Everything comes from the jin.review daemon.
 
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, h_resizable, resizable_panel, Scrollbar, v_virtual_list, VirtualListScrollHandle, TextView, Switch, InputState, Input } from "gpui-base";
-import { exec, focused, panes, props, settings, setShared, shared, spaces, theme, watchFolder, window as appWindow } from "herdr";
+import { exec, focused, notify, panes, props, settings, setShared, shared, spaces, theme, watchFolder, window as appWindow } from "herdr";
 import { request, review } from "./daemon.js";
+import { step, menuJump, scrollList } from "./list.js";
+import { hoverKept } from "./tip.js";
 import { buildItems, codeInset, contentWidth, FILE, fileRows, groupFiles, noteWidth, pageLabel, ROW } from "./rows.js";
 
 const PANE = "review";
@@ -45,7 +47,25 @@ const sunken = (t) => isLight(t.background) ? "#0000000a" : "#ffffff0f", raised 
 
 // Models the settings list before the search must narrow them.
 const LISTED = 200;
+const MODEL_ROW = 28; // T3's select and combobox rows, with no gap between them
+// A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
+const PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
+// A commit's age as the Review bar's menu reads it.
+function ago(ms, now) {
+  const m = Math.floor((now - ms) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.floor(m / 60)}h`;
+  return `${Math.floor(m / 1440)}d`;
+}
 // As the app's LOCALES (core/locales.ts): the languages an analysis can write in, by their own names.
+// As the app's DiffCollapseMenu: every file of the diff at once, not just the group shown.
+const FOLDS = [
+  { id: "expand-all", label: "Expand all files", icon: "unfold-vertical", collapse: false, applies: () => true },
+  { id: "collapse-all", label: "Collapse all files", icon: "fold-vertical", collapse: true, applies: () => true },
+  { id: "collapse-reviewed", label: "Collapse reviewed files", icon: "square-check", collapse: true, applies: f => f.reviewed && !f.changed },
+  { id: "collapse-tests", label: "Collapse test files", icon: "flask-conical", collapse: true, applies: f => f.test },
+];
 const LOCALES = [["en", "English"], ["zh-CN", "简体中文"], ["zh-TW", "繁體中文"], ["ja", "日本語"], ["ko", "한국어"], ["es", "Español"], ["fr", "Français"],
   ["de", "Deutsch"], ["pt-BR", "Português (Brasil)"], ["ru", "Русский"], ["it", "Italiano"], ["id", "Bahasa Indonesia"]];
 // Responsive widths, the app's: the sidebar from WIDE (its `lg`; narrower, the groups are tabs over the diff), split from
@@ -117,41 +137,35 @@ function spans(tokens) {
 export default class ReviewPane extends View {
   init(_props, cx) {
     const p = props() ?? {};
+    // The page a count's click asked to analyze, until its first read. Props outlive a restart, where a stale ask mustn't start a paid run.
+    this.analyzeFor = p.analyze === true && localStorage.getItem("tab") === null ? p.page : null;
     this.tab = localStorage.getItem("tab") ?? focused()?.tab;
     localStorage.setItem("tab", this.tab ?? "");
     this.root = localStorage.getItem("root") ?? p.root;
     this.page = localStorage.getItem("page") ?? p.page;
     this.base = localStorage.getItem("base") ?? this.page;
     this.handled = Number(localStorage.getItem("handled") ?? p.n ?? 0);
-    this.split = pref("split") === true;
-    // The sidebar's file list, a tree or a list, as the app's own toggle; a tree by default, as there.
-    this.fileList = pref("fileList") === "list" ? "list" : "tree";
-    // Groups as tabs or, wide enough, a sidebar, as the app's DiffGroupNavToggle; tabs by default, as there.
-    this.groupNav = pref("groupNav") === "sidebar" ? "sidebar" : "tabs";
-    // Starting an analysis on open is this pane's own choice, off by default: the app never starts a paid, slow AI run
-    // by itself. The agent, model and language are the daemon's shared settings.
-    this.autoAnalyze = pref("autoAnalyze") === true;
     // The one popup open over the diff, if any: "settings", "status" or "fold".
     this.popup = null; this.closedPopup = null; this.popupClosedAt = 0;
     this.agents = null; this.shared = null; this.settingsError = null;
     this.height = 600; this.headerHidden = false; this.scrolledDownBy = 0; this.baseCommits = null;
     // The model field searches the agent's catalog; Enter picks the model it names exactly, else the text as typed.
     this.modelInput = InputState.new({ placeholder: "Search or type a model" });
-    // ↑ ↓ move a highlight through the listed models; Enter on one picks it.
-    this.modelIndex = -1;
-    this.modelInput.on("change", (_e, cx) => { this.modelIndex = -1; cx.notify(); });
-    this.modelInput.on("submit", (_e, cx) => {
-      const typed = this.modelInput.value().trim(), { catalog, shown } = this.models();
-      const lit = shown[this.modelIndex];
-      if (!this.shared || (!typed && !lit)) return;
-      const hit = lit ?? catalog.find(m => [m.id, m.name].some(x => x.toLowerCase() === typed.toLowerCase()));
-      this.modelInput.set_value(""); this.modelIndex = -1; this.settingsPage = null;
-      this.saveLlm({ agentModel: hit?.id ?? typed }, cx);
-    });
-    this.review = null; this.error = null; this.version = 0; this.width = 900; this.view = 600; this.listHeight = 600; this.frames = 0; this.sideWidth = [0, 0, 0]; this.shift = [0, 0, 0];
+    // The row lit on a settings page and in the fold menu, by keys or the pointer; Enter on one picks it.
+    this.pageAt = -1; this.foldAt = -1;
+    this.modelInput.on("change", (_e, cx) => { this.pageAt = -1; cx.notify(); });
+    this.modelInput.on("submit", (_e, cx) => this.submitModel(cx));
+    // The commit list's search, and the row lit in it.
+    this.commitSearch = InputState.new({ placeholder: "Search commits" });
+    this.commitAt = 0;
+    this.commitSearch.on("change", (_e, cx) => { this.commitAt = 0; this.scrollTop = { ...this.scrollTop, "commit-list": 0 }; cx.notify(); });
+    this.commitSearch.on("submit", (_e, cx) => { const row = this.commitRows()[this.commitAt]; if (row) this.showPage(row.page, cx); });
+    // The colors the rows on screen are in.
+    this.colorsKey = JSON.stringify(colors(theme()));
+    this.review = null; this.error = null; this.version = 0; this.width = 900; this.view = 600; this.diffHeight = 600; this.frames = 0; this.sideWidth = [0, 0, 0]; this.shift = [0, 0, 0];
     this.startingUntil = 0; this.loading = null; this.loadId = 0;
     this.marks = 0; this.marking = 0;
-    this.collapsed = new Set(); this.full = new Map(); this.seen = new Set(); this.auto = new Set(); this.asked = new Set(); this.folded = new Set();
+    this.collapsed = new Set(); this.full = new Map(); this.seen = new Set(); this.asked = new Set(); this.folded = new Set();
     this.handle = cx.focus_handle();
     this.scroll = VirtualListScrollHandle.new();
     this.barsOn = false; this.barsRun = 0;
@@ -181,7 +195,7 @@ export default class ReviewPane extends View {
   }
 
   // No review shown, or none yet: what belonged to the last one goes with it.
-  forget() { this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); }
+  forget() { this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); this.shift = [0, 0, 0]; }
 
   watch(cx) {
     const root = this.root;
@@ -218,7 +232,7 @@ export default class ReviewPane extends View {
     // Rows only for the group's files that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
     const rows = poll || !group ? [] : groupFiles(group).filter(path => this.review.files.some(f => f.path === path && !f.hunks));
     for (const file of this.review?.files ?? []) if (rows.includes(file.path)) this.asked.add(file.sha);
-    this.colorsKey = JSON.stringify(colors(t));
+    const key = JSON.stringify(colors(t));
     cx.timer.after(LOAD_TIMEOUT, (cx) => {
       if (id !== this.loadId || !this.loading) return;
       this.loading = null; this.error = `jin.review didn't answer in ${LOAD_TIMEOUT / 1000} s`;
@@ -230,20 +244,29 @@ export default class ReviewPane extends View {
       try {
         const r = await review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group });
         if (id !== this.loadId) return;
+        // The theme changed meanwhile: these rows have the old colors, and later reads ask only for files without rows.
+        if (JSON.stringify(colors(theme())) !== key) { this.again = true; return; }
         // Read before a reviewed mark landed, it would undo the mark on screen: the mark's own read follows.
         if (this.marking || marks !== this.marks) return;
         this.apply(r);
         this.error = null;
         this.watch(cx);
         this.loadBase(cx);
-        // Opening a page with no analysis starts one, once per head. An outdated one waits for Re-analyze:
-        // every commit on the branch would otherwise start another run.
-        const a = r.analysis, once = `${page}@${r.head?.sha}`;
-        if (this.autoAnalyze && a.agent && !a.error && a.state === "none" && !this.auto.has(once)) {
-          this.auto.add(once);
-          this.analyze(cx, false);
+        // Only a count's click starts a run, on a page with no analysis. An outdated one waits for Re-analyze: every commit
+        // on the branch would otherwise start another. The setting is off by default: the app never starts a paid, slow AI run by itself.
+        if (this.analyzeFor === page) {
+          this.analyzeFor = null;
+          const a = r.analysis;
+          if (pref("autoAnalyze") === true && a.agent && !a.error && a.state === "none") this.analyze(cx, false);
         }
-      } catch (e) { if (id === this.loadId) { this.error = e?.message ?? String(e); if (this.switching) this.forget(); } }
+      } catch (e) {
+        if (id === this.loadId) {
+          this.error = e?.message ?? String(e);
+          if (this.switching) this.forget();
+          // No daemon to ask: a run shown as going would poll, and each poll try to start the daemon, until it answers.
+          else if (this.review?.analysis.state === "running") this.review.analysis = { ...this.review.analysis, state: "none", error: this.error };
+        }
+      }
       finally {
         if (id === this.loadId) {
           this.loading = null;
@@ -301,15 +324,14 @@ export default class ReviewPane extends View {
     if (switched) this.scroll.scroll_to_item(0);
   }
 
-  // Reopened on one commit's page, which lists only itself: the diff's commits come from its base, read once without rows.
-  // A failed read leaves the commit alone in the bar's list.
+  // One commit's page lists only itself: the diff's commits come from its base, read without rows after each read, so a new
+  // commit reaches the header's list. A failed read leaves the list as it was.
   loadBase(cx) {
-    const { root, base } = this, key = `${root}\n${base}`;
-    if (this.page === base || this.baseCommits || this.baseAsked === key) return;
-    this.baseAsked = key;
+    const { root, base } = this;
+    if (this.page === base) return;
     cx.spawn(async (cx) => {
       const r = await review(root, "/api/review", { page: base, colors: colors(theme()), rows: [] }).catch(() => null);
-      if (r && root === this.root && base === this.base && !this.baseCommits) { this.baseCommits = r.commits; cx.notify(); }
+      if (r && root === this.root && base === this.base) { this.baseCommits = r.commits; cx.notify(); }
     });
   }
 
@@ -321,7 +343,7 @@ export default class ReviewPane extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try { await review(root, "/api/review/analyze", { page, force }); }
-      catch (e) { this.startingUntil = 0; this.analyzeError = e?.message ?? String(e); }
+      catch (e) { if (root === this.root && page === this.page) { this.startingUntil = 0; this.analyzeError = e?.message ?? String(e); } }
       cx.notify();
       this.load(cx);
     });
@@ -334,31 +356,98 @@ export default class ReviewPane extends View {
   // until the tab is looked at. In the pane, the button keeps a failure.
   // shortcut: a pane starts only when shown, so the Review bar drops a run's word from before a restart (its main.js); with no bar in the layout, that word stays until its tab is shown.
   report() {
-    const a = this.switching ? null : this.review?.analysis, real = a?.state === "running", mine = panes().filter(p => p.mod === PANE);
-    if (!mine.some(p => p.tab === this.tab)) return;
+    const a = this.switching ? null : this.review?.analysis, real = a?.state === "running";
+    if (!panes().some(p => p.mod === PANE && p.tab === this.tab)) return;
     if (this.wasRunning && !real) this.news = this.analyzeError ?? a?.error ? "blocked" : "done";
     this.wasRunning = real;
-    if (this.analyzing() || spaces().some(s => s.active && s.tabs.some(c => c.id === this.tab && c.active))) this.news = null;
-    const word = this.analyzing() ? "working" : this.news ?? null, all = shared(`${PANE}.status`) ?? {};
-    const live = Object.entries(all).filter(([tab]) => tab !== this.tab && mine.some(p => p.tab === tab));
-    // Every write redraws every mod: only a change, and tabs without a review pane drop out.
-    if ((all[this.tab] ?? null) === word && live.length === Object.keys(all).length - (this.tab in all ? 1 : 0)) return;
-    setShared(`${PANE}.status`, Object.fromEntries(word ? [...live, [this.tab, word]] : live));
+    if (this.analyzing() || this.onScreen()) this.news = null;
+    this.keep("status", this.analyzing() ? "working" : this.news ?? null);
   }
 
-  // What this tab's pane shows, for the Review bar, which picks what it shows next: Herdr gives a mod pane no folder, and a
-  // tab of its own has no terminal to borrow one from.
-  publish() {
-    const mine = panes().filter(p => p.mod === PANE), all = shared(`${PANE}.shown`) ?? {}, now = all[this.tab];
+  // This tab's entry in a value shared by tab, none with no value. Every write redraws every mod: only a change, and tabs
+  // without a review pane drop out.
+  keep(name, value) {
+    const key = `${PANE}.${name}`, mine = panes().filter(p => p.mod === PANE), all = shared(key) ?? {};
     if (!mine.some(p => p.tab === this.tab)) return;
-    // The diff's commits, oldest first: on one commit's page, still its base's.
-    const commits = this.baseCommits ?? (this.switching ? null : this.review?.commits) ?? [];
     const live = Object.entries(all).filter(([tab]) => tab !== this.tab && mine.some(p => p.tab === tab));
-    // As report(): only a change, and tabs without a review pane drop out.
-    if (now?.root === this.root && now.page === this.page && now.base === this.base && now.commits?.length === commits.length
-      && commits.every((c, i) => c.sha === now.commits[i].sha) && live.length === Object.keys(all).length - 1) return;
-    const shown = { root: this.root, page: this.page, base: this.base, commits: commits.map(c => ({ sha: c.sha, subject: c.subject, time: c.date ? new Date(c.date).getTime() : null })) };
-    setShared(`${PANE}.shown`, Object.fromEntries([...live, [this.tab, shown]]));
+    if (JSON.stringify(all[this.tab] ?? null) === JSON.stringify(value) && live.length === Object.keys(all).length - (this.tab in all ? 1 : 0)) return;
+    setShared(key, Object.fromEntries(value ? [...live, [this.tab, value]] : live));
+  }
+
+  // What this tab's pane shows, for the Review bar to light its count and find the repository: Herdr gives a mod pane no
+  // folder, and a tab of its own has no terminal to borrow one from.
+  publish() { this.keep("shown", { root: this.root, page: this.page, base: this.base }); }
+
+  // The diff's commits, oldest first: on one commit's page, still its base's.
+  diffCommits() { return this.baseCommits ?? (this.switching ? null : this.review?.commits) ?? []; }
+
+  // The commit shown on its own within the diff; none for the whole diff, or for a commit opened as its own diff.
+  shownCommit() { return this.page?.startsWith("/commit/") && this.page !== this.base ? this.page.slice("/commit/".length) : null; }
+
+  // Another page of this diff: a request as the Review bar's, handled with those in render. Its base keeps the commits, and
+  // it has no `analyze`. The list's search has the keyboard and is going, and an arrow's press stops short of the pane.
+  showPage(page, cx) {
+    this.closePopup(cx);
+    this.handle.focus();
+    setShared(PANE, { tab: this.tab, root: this.root, page, base: this.base, n: Math.max(Date.now(), this.handled + 1) });
+    cx.notify();
+  }
+
+  // The list's rows, newest first as a log's, under All changes until a search hides it.
+  commitRows() {
+    const query = this.commitSearch.value().trim().toLowerCase();
+    return [
+      ...(query ? [] : [{ id: "commit-all", label: "Review all changes", page: this.base }]),
+      ...[...this.diffCommits()].reverse().filter(c => c.sha.startsWith(query) || c.subject.toLowerCase().includes(query))
+        .map(c => ({ id: `commit-${c.sha}`, label: `Review commit ${c.subject}`, page: `/commit/${c.sha}`, commit: c })),
+    ];
+  }
+
+  // `‹ Commit 2 of 5 ›`, whose words open the list, only with somewhere else in this diff to go. Short of room its words give
+  // way first, then what's left of it: the header clips.
+  commitSwitch(t) {
+    const list = this.diffCommits(), sha = this.shownCommit();
+    if (!sha && list.length < 2) return null;
+    // The whole diff sits before its oldest commit. A commit no longer listed, as after an amend, has no neighbours.
+    const at = sha ? list.findIndex(c => c.sha === sha) : -1, gone = sha && at < 0;
+    const go = (id, icon, label, c) => this.iconButton(t, id, icon, label, (cx) => this.showPage(`/commit/${c.sha}`, cx), { disabled: !c, size: 24 });
+    const place = !sha ? "All changes" : gone ? sha.slice(0, 7) : this.width < COMPACT ? `${at + 1}/${list.length}` : `Commit ${at + 1} of ${list.length}`;
+    return h_flex().id("review-commit-switch").min_w(0).flex_shrink_1().overflow_hidden().gap(2).items_center()
+      .child(go("commit-older", "mods/review/chevron-left.svg", "Older commit", at > 0 ? list[at - 1] : null))
+      .child(h_flex().id("commit-pick").h(24).min_w(0).flex_shrink_1().px(8).gap(4).items_center().rounded(8).text_size(12).font_medium().text_color(t.foreground)
+        .when(this.popup === "commits", el => el.bg(ACTIVE)).hover(s => s.bg(HOVER))
+        .role("button").accessibility_label(`Pick another commit of this review, ${place} shown`)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); this.togglePopup("commits", cx); })
+        .child(div().id("commit-place").min_w(0).truncate().child(place))
+        .child(svg(`${LU}/chevron-down.svg`).size(14).flex_none().text_color(t.dim)))
+      .child(go("commit-newer", "mods/review/chevron-right.svg", "Newer commit", gone ? null : list[at + 1]));
+  }
+
+  // The commits of this review and All changes, as the settings' model page: a search, ↑/↓ (`key`), Enter, Escape.
+  commitMenu(t) {
+    const rows = this.commitRows(), now = Date.now(), all = rows[0]?.id === "commit-all" ? 1 : 0, count = rows.length - all;
+    const row = (r, i) => {
+      const c = r.commit, prefix = c ? PREFIX.exec(c.subject)?.[0] ?? "" : "", on = r.page === this.page;
+      return h_flex().id(r.id).h(28).px(8).gap(8).flex_none().items_center().rounded(4)
+        .when(i === this.commitAt, el => el.bg(HOVER)).on_hover((over, cx) => { if (over && this.commitAt !== i) { this.commitAt = i; cx.notify(); } })
+        .role("button").accessibility_label(r.label + (on ? ", shown" : "")).on_click((_e, cx) => this.showPage(r.page, cx))
+        .child(this.pickMark(t, on))
+        .when(!c, el => el.child(div().flex_1().child("All changes")))
+        .when(Boolean(c), el => el
+          .child(h_flex().flex_1().min_w(0).gap(4)
+            .when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
+            .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))))
+          .when(Boolean(c.date), el => el.child(div().flex_none().ml(4).text_size(12).text_color(t.dim).child(ago(new Date(c.date).getTime(), now)))));
+    };
+    // As T3's combobox over its commit list: 384 wide, at most 368 tall, of which the search takes 42 and the list's padding 8.
+    return this.popover(t, "review-commit-menu").w(Math.min(384, this.width - 32))
+      .child(this.searchField(t, this.commitSearch).mx(12).mt(9))
+      .child(v_flex().p(4).flex_none()
+        // Outside the list, so All changes stays put.
+        .when(Boolean(all), el => el.child(row(rows[0], 0)))
+        .child(scrollList(this, "commit-list", { count, row: MODEL_ROW, height: Math.min(count * MODEL_ROW, Math.max(MODEL_ROW * 3, Math.min(318 - all * MODEL_ROW, this.height - 140))), at: this.commitAt - all,
+          draw: (i) => row(rows[i + all], i + all), wheeled: (keep) => { if (keep >= 0) this.commitAt = keep + all; } }))
+        .when(!rows.length, el => el.child(div().p(8).flex_none().text_center().text_color(t.dim).child("No matches"))));
   }
 
   // The settings panel reads the daemon's agents and shared settings each time it opens: the browser may have changed them.
@@ -397,49 +486,95 @@ export default class ReviewPane extends View {
     const catalog = this.agents?.find(a => a.name === agent)?.models ?? [];
     const query = this.modelInput.value().trim().toLowerCase();
     const matches = query ? catalog.filter(m => `${m.id} ${m.name}`.toLowerCase().includes(query)) : catalog;
-    return { agent, model, catalog, matches, shown: matches.slice(0, LISTED) };
+    const shown = matches.slice(0, LISTED);
+    // The rows above the catalog, while a search names them too: else ↓ would stop on Default before the first match.
+    const lead = [{ key: "model-default", id: "", name: "Default" }, ...(model && !catalog.some(m => m.id === model) ? [{ key: "model-custom", id: model, name: model, detail: "Custom" }] : [])]
+      .filter(m => m.name.toLowerCase().includes(query));
+    return { agent, model, catalog, matches, shown, rows: [...lead, ...shown] };
+  }
+
+  // Enter in the model field: the lit row, else the model it names exactly, else the text as typed.
+  submitModel(cx) {
+    const typed = this.modelInput.value().trim(), { catalog, rows } = this.models(), lit = rows[this.pageAt];
+    if (!this.shared || (!typed && !lit)) return;
+    const hit = lit ?? catalog.find(m => [m.id, m.name].some(x => x.toLowerCase() === typed.toLowerCase()));
+    this.settingsBack(cx);
+    this.saveLlm({ agentModel: hit?.id ?? typed }, cx);
+  }
+
+  // The rows of the settings page shown, each with what picking it writes.
+  pageRows() {
+    const page = this.settingsPage, locale = this.locale(), { agent, model, rows } = this.models();
+    if (page === "language") return LOCALES.map(([code, name]) => ({ id: `locale-${code}`, name, on: code === locale, pick: (cx) => this.saveShared({ ...this.shared, locale: code }, cx) }));
+    // One agent's model ids mean nothing to another: switching resets to its default.
+    if (page === "agent") return (this.agents ?? []).map(a => ({ id: `agent-${a.name}`, name: a.label, detail: a.version, on: a.name === agent, pick: (cx) => this.saveLlm({ agent: a.name, agentModel: "" }, cx) }));
+    return rows.map(m => ({ id: m.key ?? `model-${m.id}`, name: m.name, detail: m.detail, on: m.id === model, pick: (cx) => this.saveLlm({ agentModel: m.id }, cx) }));
+  }
+
+  // A press on the panel stops there, so the keyboard is sent where the page wants it: the model search, else the pane's keys.
+  openPage(id, cx) {
+    this.settingsPage = id; this.pageAt = -1;
+    (id === "model" ? this.modelInput : this.handle).focus();
+    cx.notify();
+  }
+
+  // Back to the settings' main page. The model field is going, and the keyboard with it unless it's sent back.
+  settingsBack(cx) {
+    this.settingsPage = null; this.modelInput.set_value(""); this.pageAt = -1;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  // A list's pick mark, as T3's MenuRadioItemIndicator, its slot kept so the rows line up.
+  pickMark(t, on) { return div().w(14).flex_none().text_color(t.accent).when(on, el => el.child(svg("mods/review/check.svg").size(14))); }
+
+  // As T3's ComboboxSearchInput and MenuSearchInput, past the insets, which differ: a 26 field, 6 to the rule, its text 20 from the icon's start.
+  searchField(t, state) {
+    return h_flex().h(33).pb(6).gap(4).flex_none().items_center().border_b_1().border_color(t.border)
+      .child(svg(`${LU}/search.svg`).size(16).flex_none().text_color(t.dim))
+      .child(Input.new(state).flex_1().h_full().text_size(14).text_color(t.foreground));
   }
 
   /**
-   * The settings, as the app's settings dialog in a panel: the view's choices, then the analysis's - analyzing on open,
+   * The settings, as the app's settings dialog in a panel: the view's choices, then the analysis's - analyzing when a count opens a review,
    * and the language, agent and model, each a row naming its value. A row's press opens its list as a page of the panel,
    * as the app's selects open theirs (Herdr can't float a list over the rows after it); a pick, or Escape, comes back.
    */
   settingsPanel(t) {
     const page = this.settingsPage, locale = this.locale(), { agent, model, catalog, matches, shown } = this.models();
-    const label = (text) => div().h(24).px(8).flex_none().flex().items_center().text_size(11).text_color(t.dim).child(text);
-    const rule = () => div().h(1).my(4).mx(2).flex_none().bg(t.border);
+    const split = pref("split") === true, autoAnalyze = pref("autoAnalyze") === true;
+    // As T3's MenuGroupLabel and MenuSeparator.
+    const label = (text) => div().h(28).px(8).flex_none().flex().items_center().text_size(12).font_medium().text_color(t.dim).child(text);
+    const rule = () => div().h(1).my(4).mx(8).flex_none().bg(t.border);
     const link = (id, text, url) => div().id(id).text_color(t.muted).hover(s => s.text_color(t.foreground).underline()).role("link")
       .on_click((_e, cx) => { cx.stop_propagation(); openUrl(url); }).child(text);
-    const note = (text, color = t.dim) => div().px(8).py(4).flex_none().text_color(color).child(text);
-    const mark = (on) => div().w(14).flex_none().text_color(t.accent).when(on, el => el.child(svg("mods/review/check.svg").size(12)));
-    const choice = (id, text, detail, on, pick, lit = false) => h_flex().id(id).h(28).px(8).gap(8).flex_none().items_center().rounded(6)
-      .when(lit, el => el.bg(HOVER)).hover(s => s.bg(HOVER)).role("radio_button").accessibility_label(text).on_click((_e, cx) => pick(cx))
-      .child(mark(on))
-      .child(div().flex_1().min_w(0).truncate().child(text))
-      .when(Boolean(detail), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(detail)));
-    // A setting that opens its page: its name, its value and a chevron.
-    const nav = (id, text, value) => h_flex().id(`settings-${id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).hover(s => s.bg(HOVER))
-      .role("button").accessibility_label(`${text}: ${value}`).on_click((_e, cx) => { this.settingsPage = id; cx.notify(); })
+    // As T3's ComboboxStatus, its 12 in the panel's 4 and 8.
+    const note = (text, color = t.dim) => div().p(8).flex_none().text_size(12).font_medium().text_color(color).child(text);
+    const choice = (r, i) => h_flex().id(r.id).h(28).px(8).gap(8).flex_none().items_center().rounded(4)
+      .when(i === this.pageAt, el => el.bg(HOVER)).on_hover((on, cx) => { if (on && this.pageAt !== i) { this.pageAt = i; cx.notify(); } })
+      .role("radio_button").accessibility_label(r.name).on_click((_e, cx) => { this.settingsBack(cx); r.pick(cx); })
+      .child(this.pickMark(t, r.on))
+      .child(div().flex_1().min_w(0).truncate().child(r.name))
+      .when(Boolean(r.detail), el => el.child(div().flex_none().text_size(12).text_color(t.dim).child(r.detail)));
+    // A setting that opens its page, as T3's MenuSubTrigger: its name, its value and a chevron.
+    const nav = (id, text, value) => h_flex().id(`settings-${id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(4).hover(s => s.bg(HOVER))
+      .role("button").accessibility_label(`${text}: ${value}`).on_click((_e, cx) => this.openPage(id, cx))
       .child(div().flex_none().child(text))
       .child(div().flex_1().min_w(0).truncate().text_right().text_color(t.dim).child(value))
-      .child(svg("mods/review/chevron-right.svg").size(11).flex_none().text_color(t.dim));
-    // A page's list scrolls where the panel runs short; everything above it stays put.
-    const list = (items) => v_flex().id(`${page}-list`).min_h(0).flex_shrink_1().gap(2).overflow_y_scroll().children(items);
-    const done = (cx) => { this.settingsPage = null; this.modelInput.set_value(""); this.modelIndex = -1; cx.notify(); };
-    const pickModel = (id) => (cx) => { done(cx); this.saveLlm({ agentModel: id }, cx); };
-    const current = this.agents?.find(a => a.name === agent);
-    const custom = model && !catalog.some(m => m.id === model), typed = this.modelInput.value().trim();
+      .child(svg("mods/review/chevron-right.svg").size(16).mr(-2).flex_none().text_color(t.dim));
+    const current = this.agents?.find(a => a.name === agent), typed = this.modelInput.value().trim();
+    const options = page ? this.pageRows() : [];
     const rows = !page ? [
       label("View"),
       // Split needs a diff SPLIT_MIN wide: narrower, the choice is kept and the diff unified, so it shows faded.
-      this.choiceRow(t, "Diff", [["view-unified", "Unified", !this.split], ["view-split", "Split", this.split, this.view < SPLIT_MIN]], (id, cx) => { if ((id === "view-split") !== this.split) this.toggleSplit(cx); }),
-      this.choiceRow(t, "Files", [["files-tree", "Tree", this.fileList !== "list"], ["files-list", "List", this.fileList === "list"]], (id, cx) => {
-        this.fileList = id === "files-list" ? "list" : "tree"; setPref("fileList", this.fileList); cx.notify();
+      this.choiceRow(t, "Diff", [["view-unified", "Unified", !split], ["view-split", "Split", split, this.view < SPLIT_MIN]], (id, cx) => { if ((id === "view-split") !== split) this.toggleSplit(cx); }),
+      // A tree by default, as the app's own toggle.
+      this.choiceRow(t, "Files", [["files-tree", "Tree", pref("fileList") !== "list"], ["files-list", "List", pref("fileList") === "list"]], (id, cx) => {
+        setPref("fileList", id === "files-list" ? "list" : "tree"); cx.notify();
       }),
       // The sidebar needs the pane WIDE: narrower, the choice is kept and the groups are tabs, so it shows faded.
-      this.choiceRow(t, "Groups", [["groups-tabs", "Tabs", this.groupNav !== "sidebar"], ["groups-sidebar", "Sidebar", this.groupNav === "sidebar", this.width < WIDE]], (id, cx) => {
-        this.groupNav = id === "groups-sidebar" ? "sidebar" : "tabs"; setPref("groupNav", this.groupNav); cx.notify();
+      this.choiceRow(t, "Groups", [["groups-tabs", "Tabs", pref("groupNav") !== "sidebar"], ["groups-sidebar", "Sidebar", pref("groupNav") === "sidebar", this.width < WIDE]], (id, cx) => {
+        setPref("groupNav", id === "groups-sidebar" ? "sidebar" : "tabs"); cx.notify();
       }),
       // Read by mods/pulls-review on the next open: a pane beside the agent, or a tab of its own.
       this.choiceRow(t, "Open in", [["open-pane", "Pane", pref("openIn") !== "tab"], ["open-tab", "Tab", pref("openIn") === "tab"]], (id, cx) => {
@@ -447,12 +582,13 @@ export default class ReviewPane extends View {
       }),
       rule(),
       label("AI"),
-      Switch.new("auto-analyze").checked(this.autoAnalyze).accessibility_label("Analyze automatically")
-        .on_change((on, cx) => { this.autoAnalyze = on; setPref("autoAnalyze", on); cx.notify(); })
-        .child(h_flex().h(28).px(8).gap(8).items_center().rounded(6).hover(s => s.bg(HOVER))
+      Switch.new("auto-analyze").checked(autoAnalyze).accessibility_label("Analyze automatically")
+        .on_change((on, cx) => { setPref("autoAnalyze", on); cx.notify(); })
+        // As T3's MenuCheckboxItem, its switch variant.
+        .child(h_flex().h(28).pl(8).pr(6).gap(16).items_center().rounded(4).hover(s => s.bg(HOVER))
           .child(div().flex_1().child("Analyze automatically"))
-          .child(div().w(28).h(16).p(2).flex_none().flex().rounded_full().bg(this.autoAnalyze ? t.accent : t.input)
-            .when(this.autoAnalyze, el => el.justify_end())
+          .child(div().w(22).h(14).p(1).flex_none().flex().rounded_full().bg(autoAnalyze ? t.accent : t.input)
+            .when(autoAnalyze, el => el.justify_end())
             .child(div().size(12).rounded_full().bg(t.background)))),
       this.settingsError && note(this.settingsError, t.ansi1),
       // As the app's LanguageMenu, the language the analysis writes in (the pane's own words stay English): unset, the
@@ -464,40 +600,28 @@ export default class ReviewPane extends View {
       rule(),
       // Credit, as the app's footer: pulls.review is antfu's; this pane draws from JinJieBeWater's fork of it.
       h_flex().id("settings-credit").h(28).px(8).gap(4).flex_none().items_center().text_size(11).text_color(t.dim)
-        .child(image(`mods/${PANE}/logo.svg`).w(12).h(12).flex_none().mr(2))
+        .child(image(`mods/${PANE}/logo.svg`).w(12).h(12).flex_none())
         .child(link("credit-upstream", "pulls.review", "https://github.com/antfu/pulls.review")).child("by")
         .child(link("credit-antfu", "@antfu", "https://github.com/antfu")).child("·")
         .child(link("credit-fork", "fork", "https://github.com/JinJieBeWater/pulls.review")).child("by")
         .child(link("credit-jinjie", "@JinJieBeWater", "https://github.com/JinJieBeWater")),
     ] : [
-      h_flex().id("settings-back").h(28).px(8).gap(6).flex_none().items_center().rounded(6).hover(s => s.bg(HOVER))
-        .role("button").accessibility_label("Back").on_click((_e, cx) => done(cx))
-        .child(svg("mods/review/chevron-left.svg").size(11).flex_none().text_color(t.dim))
+      h_flex().id("settings-back").h(28).px(8).gap(8).flex_none().items_center().rounded(4).hover(s => s.bg(HOVER))
+        .role("button").accessibility_label("Back").on_click((_e, cx) => this.settingsBack(cx))
+        .child(svg("mods/review/chevron-left.svg").size(16).mx(-2).flex_none().text_color(t.dim))
         .child(div().font_medium().child({ language: "Language", agent: "Agent", model: "Model" }[page])),
-      rule(),
-      page === "language" && list(LOCALES.map(([code, name]) => choice(`locale-${code}`, name, null, code === locale, (cx) => {
-        done(cx); this.saveShared({ ...this.shared, locale: code }, cx);
-      }))),
-      page === "agent" && list((this.agents ?? []).map(a => choice(`agent-${a.name}`, a.label, a.version, a.name === agent, (cx) => {
-        // One agent's model ids mean nothing to another: switching resets to its default.
-        done(cx); this.saveLlm({ agent: a.name, agentModel: "" }, cx);
-      }))),
-      // The search sits above the catalog, which runs to hundreds for some agents.
-      page === "model" && h_flex().h(28).px(8).gap(8).flex_none().items_center()
-        .child(svg(`${LU}/search.svg`).size(12).w(14).flex_none().text_color(t.dim))
-        .child(div().flex_1().min_w(0).h(24).px(6).flex().items_center().rounded(6).border_1().border_color(t.border).cursor_text()
-          .child(Input.new(this.modelInput).flex_1().h_full().text_size(12).text_color(t.foreground))),
-      page === "model" && list([
-        choice("model-default", "Default", null, !model, pickModel("")),
-        custom && choice("model-custom", model, "Custom", true, done),
-        // Pi lists hundreds: past LISTED the search finds the rest.
-        ...shown.map((m, i) => choice(`model-${m.id}`, m.name, null, m.id === model, pickModel(m.id), i === this.modelIndex)),
-        shown.length < matches.length && note(`${matches.length - LISTED} more: search to narrow`),
-        Boolean(typed) && !matches.length && note(`Enter to use “${typed}”`),
-      ].filter(Boolean)),
+      page !== "model" && rule(),
+      // The search sits above the catalog, which runs to hundreds for some agents. Its own rule stands in for the page's.
+      page === "model" && this.searchField(t, this.modelInput).mx(8).mt(5).mb(5),
+      // A page's list shrinks where the panel runs short; everything above it stays put. Pi lists hundreds: past LISTED the search finds the rest.
+      scrollList(this, `${page}-list`, { count: options.length, row: MODEL_ROW, at: this.pageAt, draw: (i) => choice(options[i], i), wheeled: (keep) => { this.pageAt = keep; } })
+        .h(options.length * MODEL_ROW).min_h(0).flex_shrink_1(),
+      page === "model" && shown.length < matches.length && note(`${matches.length - LISTED} more: search to narrow`),
+      page === "model" && Boolean(typed) && !matches.length && note(`Enter to use “${typed}”`),
     ];
     // Clipped: whatever outgrows the height scrolls inside its list, or is cut, rather than drawn past the panel.
-    return this.popover(t, "review-settings-panel").w(320).max_h(Math.max(160, Math.min(520, this.height - 16))).overflow_hidden().p(6).gap(2)
+    // As T3's: a select as tall as there's room for, 38 down and 8 short of the pane's foot; a combobox, as the search's page is, 368 at most.
+    return this.popover(t, "review-settings-panel").w(320).max_h(Math.max(160, Math.min(page === "model" ? 368 : this.height, this.height - 46))).overflow_hidden().p(4)
       .children(rows.filter(Boolean));
   }
 
@@ -507,51 +631,50 @@ export default class ReviewPane extends View {
   // A popup's button toggles it. A press on the button while open is also a press outside it, which already closed it:
   // that press mustn't reopen it. The settings read the daemon's agents and settings on opening: the browser may have changed them.
   togglePopup(name, cx) {
+    // The button's press stops there, short of the pane that would take the keyboard.
+    this.handle.focus();
     if (this.popup === name) return this.closePopup(cx);
     if (this.closedPopup === name && Date.now() - this.popupClosedAt <= 300) return;
-    this.popup = name;
+    this.popup = name; this.foldAt = -1;
     if (name === "settings") this.loadSettings(cx);
+    // On the row shown, so ↑/↓ start from it.
+    if (name === "commits") { this.commitAt = Math.max(0, this.commitRows().findIndex(r => r.page === this.page)); this.commitSearch.focus(); }
     cx.notify();
   }
 
   closePopup(cx) {
     if (!this.popup) return;
     this.closedPopup = this.popup; this.popup = null; this.popupClosedAt = Date.now();
-    this.modelInput.set_value(""); this.modelIndex = -1; this.settingsPage = null;
+    this.modelInput.set_value(""); this.commitSearch.set_value(""); this.pageAt = -1; this.settingsPage = null;
     cx.notify();
   }
 
   // A popup's frame. It floats over the diff, and Herdr hands a press or a wheel to what's under it too: they stop here.
   // A press outside closes it.
   popover(t, id) {
-    return v_flex().id(id).rounded(10).bg(t.popover).border_1().border_color(t.border).text_size(12).shadow_lg()
+    return v_flex().id(id).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(14).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_scroll_wheel((_e, cx) => cx.stop_propagation())
       .on_mouse_down_out((_e, cx) => this.closePopup(cx));
   }
 
-  // As the app's DiffCollapseMenu: every file of the diff at once, not just the group shown. The file at the view's top
-  // (or its group's header) is brought back there, as folding the bodies above it would carry the view elsewhere.
+  // The file at the view's top (or its group's header) is brought back there, as folding the bodies above it would carry the view elsewhere.
+  foldAll({ collapse, applies }, cx) {
+    const top = (this.itemList ?? [])[this.visible?.start ?? 0];
+    const anchor = top && (top.kind === "group" ? top.key : `f:${this.itemFile.get(top.key)}`);
+    for (const f of this.review.files) if (applies(f)) collapse ? this.collapsed.add(f.path) : this.collapsed.delete(f.path);
+    this.version++; this.closePopup(cx);
+    const index = anchor ? this.items().findIndex(item => item.key === anchor) : -1;
+    if (index >= 0) this.scrollToTop(index, cx);
+  }
+
   foldMenu(t) {
-    const actions = [
-      ["expand-all", "Expand all files", "unfold-vertical", false, () => true],
-      ["collapse-all", "Collapse all files", "fold-vertical", true, () => true],
-      ["collapse-reviewed", "Collapse reviewed files", "square-check", true, f => f.reviewed && !f.changed],
-      ["collapse-tests", "Collapse test files", "flask", true, f => f.test],
-    ];
-    const run = (collapse, applies, cx) => {
-      const top = (this.itemList ?? [])[this.visible?.start ?? 0];
-      const anchor = top && (top.kind === "group" ? top.key : `f:${this.itemFile.get(top.key)}`);
-      for (const f of this.review.files) if (applies(f)) collapse ? this.collapsed.add(f.path) : this.collapsed.delete(f.path);
-      this.version++; this.closePopup(cx);
-      const index = anchor ? this.items().findIndex(item => item.key === anchor) : -1;
-      if (index >= 0) this.scrollToTop(index, cx);
-    };
-    return this.popover(t, "review-fold-menu").min_w(192).p(4).gap(2)
-      .children(actions.map(([id, label, icon, collapse, applies]) => h_flex().id(`fold-${id}`).h(28).px(8).gap(8).items_center().rounded(6)
-        .hover(s => s.bg(HOVER)).role("button").accessibility_label(label).on_click((_e, cx) => run(collapse, applies, cx))
-        .child(svg(`${LU}/${icon}.svg`).size(14).flex_none().text_color(t.dim))
-        .child(label)));
+    return this.popover(t, "review-fold-menu").min_w(160).p(4)
+      .children(FOLDS.map((fold, i) => h_flex().id(`fold-${fold.id}`).h(28).px(8).gap(8).items_center().rounded(4)
+        .when(i === this.foldAt, el => el.bg(HOVER)).on_hover((on, cx) => { if (on && this.foldAt !== i) { this.foldAt = i; cx.notify(); } })
+        .role("button").accessibility_label(fold.label).on_click((_e, cx) => this.foldAll(fold, cx))
+        .child(svg(`${LU}/${fold.icon}.svg`).size(16).mx(-2).flex_none().text_color(t.dim))
+        .child(fold.label)));
   }
 
   // Running or failed: what the status shows; with neither, as the app's dialog, it isn't shown.
@@ -564,10 +687,10 @@ export default class ReviewPane extends View {
   // or why it failed, and once it's done a Re-run.
   statusPanel(t) {
     const { running, error } = this.analysisStatus();
-    return this.popover(t, "review-status-panel").w(320).p(12).gap(10)
-      .child(div().font_medium().text_size(13).child("AI analysis"))
-      .when(running, el => el.child(h_flex().gap(6).items_center().opacity(0.4)
-        .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().spin(900))
+    return this.popover(t, "review-status-panel").w(320).p(16).gap(8).text_size(12)
+      .child(div().font_medium().text_size(14).child("AI analysis"))
+      .when(running, el => el.child(h_flex().gap(8).items_center().opacity(0.4)
+        .child(svg("mods/workspace-chrome/spinner.svg").size(14).flex_none().spin(900))
         .child(div().min_w(0).child(progressText(this.review.analysis.progress)))))
       .when(Boolean(error), el => el.child(div().text_color(t.ansi1).child(error)))
       .when(!running, el => el.child(h_flex().justify_end()
@@ -586,7 +709,8 @@ export default class ReviewPane extends View {
     const { root, page } = this;
     cx.spawn(async (cx) => {
       try { await review(root, "/api/review/reviewed", { page, shas: files.map(file => file.sha), reviewed }); }
-      catch (e) { this.error = e?.message ?? String(e); }
+      // A toast: the read after this one, succeeding, would clear the pane's error at once.
+      catch (e) { notify({ title: "pulls.review", body: e?.message ?? String(e), level: "error" }); }
       // Read back what the daemon keeps, the marks of a failed press included.
       this.marking--;
       this.load(cx);
@@ -619,13 +743,13 @@ export default class ReviewPane extends View {
 
   group() { return this.review?.groups.find(g => g.key === this.groupKey) ?? null; }
 
-  // A press on a file's header, placed by x as item() lays the header out: the reviewed box at the start (12px in,
-  // 14 wide), the fold and the whole-file slots at the end (24 wide each, 4 apart, 12px in). Anywhere else folds, as the app's.
+  // A press on a file's header, placed by x as item() lays the header out: the reviewed box at the start (8px in,
+  // 16 wide), the fold and the whole-file slots at the end (20 wide each, 4 apart, 12px in). Anywhere else folds, as the app's.
   headerPress(file, x, cx) {
     if (this.switching) return;
     const fromEnd = this.view - x;
-    if (x < 34) return this.setReviewed(file, !file.reviewed, cx);
-    if (fromEnd > 36 && fromEnd <= 64 && this.canFull(file)) return this.toggleFull(file, cx);
+    if (x < 30) return this.setReviewed(file, !file.reviewed, cx);
+    if (fromEnd > 32 && fromEnd <= 56 && this.canFull(file)) return this.toggleFull(file, cx);
     this.collapsed.has(file.path) ? this.collapsed.delete(file.path) : this.collapsed.add(file.path);
     this.version++;
     cx.notify();
@@ -637,8 +761,8 @@ export default class ReviewPane extends View {
     const fill = state === "changed" ? "#f97316" : state === "none" ? null : t.accent;
     return div().size(16).flex_none().rounded(4).border_1().border_color(fill ?? t.border).bg(fill ?? t.raised)
       .flex().items_center().justify_center().text_color("#ffffff")
-      .when(state === "all", el => el.child(svg("mods/review/check.svg").size(10)))
-      .when(state === "some" || state === "changed", el => el.child(svg("mods/review/minus.svg").size(10)));
+      .when(state === "all", el => el.child(svg("mods/review/check.svg").size(12)))
+      .when(state === "some" || state === "changed", el => el.child(svg("mods/review/minus.svg").size(12)));
   }
 
   // Rebuilt only when something it shows changed: render runs on every live change in Herdr.
@@ -674,7 +798,7 @@ export default class ReviewPane extends View {
     const items = this.items(), total = items.reduce((n, item) => n + item.size, 0);
     let top = 0, last = 0;
     for (const item of items) { if (item.kind === "file" || item.kind === "group") last = top; top += item.size; }
-    return Math.max(0, Math.ceil(this.listHeight - (total - last)));
+    return Math.max(0, Math.ceil(this.diffHeight - (total - last)));
   }
 
   /**
@@ -688,7 +812,7 @@ export default class ReviewPane extends View {
     if (index <= start) return this.scroll.scroll_to_item(index);
     let last = index, height = sizes[index];
     // A pixel's margin, so a rounded height still carries it past the top.
-    while (height <= this.listHeight + 1 && last + 1 < sizes.length) height += sizes[++last];
+    while (height <= this.diffHeight + 1 && last + 1 < sizes.length) height += sizes[++last];
     this.scroll.scroll_to_item(last);
     const drawn = this.frames;
     let tries = 0;
@@ -720,10 +844,8 @@ export default class ReviewPane extends View {
       if (free.length === 1) { this.tab = free[0].tab; localStorage.setItem("tab", this.tab); }
     }
     // The name pane headers and tabs give this pane (t3's name.js), rather than the folder's; here, not in init, which a reload skips.
-    // A tab of its own, unnamed, reads as this pane too (t3-tabs). Tabs without a review pane drop out.
-    const title = this.page ? pageLabel(this.page, this.switching ? null : this.review) : "review";
-    const live = Object.fromEntries(Object.entries(titles).filter(([tab]) => mine.some(p => p.tab === tab)));
-    if (mine.some(p => p.tab === this.tab) && (titles[this.tab] !== title || Object.keys(live).length !== Object.keys(titles).length)) setShared(`${PANE}.titles`, { ...live, [this.tab]: title });
+    // A tab of its own, unnamed, reads as this pane too (t3-tabs).
+    this.keep("titles", this.page ? pageLabel(this.page, this.switching ? null : this.review) : "review");
     // Its icon in pane headers and tabs (t3's name.js), pulls.review's own logo. In a tab of its own it has a card in t3-inbox,
     // whose Settle closes it: its marks and analysis are the daemon's, so that loses nothing.
     if (shared(`${PANE}.program`)?.icon !== `mods/${PANE}/logo.svg` || shared(`${PANE}.program`).inbox !== true) setShared(`${PANE}.program`, { icon: `mods/${PANE}/logo.svg`, tint: false, name: "Review", inbox: true });
@@ -733,17 +855,25 @@ export default class ReviewPane extends View {
     if (request && request.tab === this.tab && request.n > this.handled) {
       this.handled = request.n;
       if (request.root !== this.root) { this.root = request.root; this.watching = null; this.seen.clear(); this.collapsed.clear(); this.page = null; this.forget(); }
-      // With a base, the Review bar picking another page of the same diff: its commits stay.
+      // With a base, the header's switch picking another page of the same diff: its commits stay.
       this.base = request.base ?? request.page;
       if (!request.base) this.baseCommits = null;
       this.remember();
+      // Only the bar's counts ask for an analysis, so anything else takes back an ask not yet read.
+      this.analyzeFor = request.analyze === true ? request.page : null;
+      // The page already shown has no read coming to act on the ask.
+      const again = this.analyzeFor && request.page === this.page;
       this.open(request.page, cx);
+      if (again) this.load(cx);
     }
     this.publish();
-    if (this.review && JSON.stringify(colors(t)) !== this.colorsKey) {
-      for (const file of this.review.files) delete file.hunks;
-      this.asked.clear(); this.version++;
-      this.load(cx);
+    if (JSON.stringify(colors(t)) !== this.colorsKey) {
+      this.colorsKey = JSON.stringify(colors(t));
+      if (this.review) {
+        for (const file of this.review.files) delete file.hunks;
+        this.asked.clear(); this.version++;
+        this.load(cx);
+      }
     }
     // The group shown has files without rows (just opened, or changed since): ask for them, once per version.
     const missing = !this.switching && this.group() && groupFiles(this.group()).map(path => this.review.files.find(f => f.path === path)).filter(f => f && !f.hunks && !this.asked.has(f.sha));
@@ -765,7 +895,10 @@ export default class ReviewPane extends View {
         : h_resizable("review-aside-width").flex_1().min_h(0)
           .child(resizable_panel().size(Math.max(ASIDE_MIN, Math.round(row / 5))).size_range(ASIDE_MIN, Math.max(ASIDE_MIN, Math.round(row * ASIDE_MAX_RATIO))).child(this.aside(t)))
           .child(resizable_panel().child(this.main(t, cx))));
-    return v_flex().id("review-pane").relative().size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
+    // Its run over, nothing else closes the panel: the next run would bring it back, or the next press only close it unseen.
+    const { running, error } = this.analysisStatus();
+    if (this.popup === "status" && (!this.review || this.switching || !(running || error))) this.popup = null;
+    return v_flex().id("review-pane").relative().size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12)
       .track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .on_mouse_down("left", () => this.handle.focus())
       .on_size_change((size, cx) => {
@@ -773,9 +906,9 @@ export default class ReviewPane extends View {
         if (Math.abs(width - this.width) >= 1 || Math.abs(height - this.height) >= 1) { this.width = width; this.height = height; cx.notify(); }
       })
       .when(!hidden, el => el.child(this.header(t, this.head())))
-      .when(Boolean(this.error), el => el.child(h_flex().flex_none().px(12).py(6).gap(8).bg(t.ansi1 + "18").text_color(t.ansi1).text_size(12)
+      .when(Boolean(this.error), el => el.child(h_flex().flex_none().px(12).py(6).gap(8).bg(t.ansi1 + "18").text_color(t.ansi1).text_size(11)
         .child(div().flex_1().min_w(0).child(this.error))
-        .child(this.button(t, "retry", "Retry", () => this.load(cx)))))
+        .child(this.button(t, "retry", "Retry", (cx) => this.load(cx)))))
       .child((!this.review
         // As the app's FeedbackLoading.
         ? div().flex_1().py(48).when(!this.error, el => el.child(h_flex().gap(8).items_center().justify_center().text_color(t.dim).role("status")
@@ -787,39 +920,66 @@ export default class ReviewPane extends View {
           .child(resizable_panel().child(column()))
         : div().flex_1().min_h(0).child(column())).when(Boolean(this.switching), el => el.opacity(DISABLED)))
       // Built only while open: render runs on every live change, and a catalog runs to hundreds of rows.
-      .when(this.popup === "settings", el => el.child(div().absolute().top(44).right(8).child(this.settingsPanel(t))))
+      // Each 4 under its button (T3's sideOffset) in the 40 header: 38 under the 28s, 36 under the 24 switch.
+      .when(this.popup === "settings", el => el.child(div().absolute().top(38).right(16).child(this.settingsPanel(t))))
       // Under its button, the one left of the gear.
-      .when(this.popup === "fold" && Boolean(this.review) && !this.switching && !hidden, el => el.child(div().absolute().top(44).right(44).child(this.foldMenu(t))))
-      // Under its button: right of it the fold menu's and the gear (24px each, 8px apart, 12px in), and the newer-commit
-      // arrow while one commit is shown.
-      .when(this.popup === "status" && Boolean(this.review) && !this.switching && (this.analysisStatus().running || Boolean(this.analysisStatus().error)), el => el.child(div().absolute().top(44).right(8).child(this.statusPanel(t))));
+      .when(this.popup === "fold" && Boolean(this.review) && !this.switching && !hidden, el => el.child(div().absolute().top(38).right(48).child(this.foldMenu(t))))
+      // Under the header's left end, where the switch starts.
+      .when(this.popup === "commits" && !hidden, el => el.child(div().absolute().top(36).left(16).child(this.commitMenu(t))))
+      // At the pane's end rather than under its button: 320 wide, it would run off a narrow pane from there.
+      .when(this.popup === "status", el => el.child(div().absolute().top(38).right(16).child(this.statusPanel(t))));
   }
 
   // Split as chosen, where the diff is wide enough for two sides; narrower it's unified, the choice kept.
-  splitShown() { return this.split && this.view >= SPLIT_MIN; }
+  splitShown() { return pref("split") === true && this.view >= SPLIT_MIN; }
 
   // The sidebar as chosen, from WIDE, as the app's from `lg`; narrower the groups are tabs, the choice kept.
-  sidebarShown() { return this.groupNav === "sidebar" && this.width >= WIDE; }
+  sidebarShown() { return pref("groupNav") === "sidebar" && this.width >= WIDE; }
 
   toggleSplit(cx) {
-    this.split = !this.split; setPref("split", this.split); this.version++;
+    setPref("split", pref("split") !== true);
     cx.notify();
   }
 
   key(e, cx) {
     // Typing a model name isn't a shortcut; Escape closes the panel.
     if (this.popup === "settings") {
-      const count = this.models().shown.length;
+      const page = this.settingsPage;
       // Escape goes back a page, then closes.
-      if (e.keystroke === "escape" && this.settingsPage) { this.settingsPage = null; cx.notify(); }
-      else if (e.keystroke === "escape") this.closePopup(cx);
-      else if ((e.keystroke === "down" || e.keystroke === "up") && count && this.settingsPage === "model") {
-        const step = e.keystroke === "down" ? 1 : -1;
-        this.modelIndex = this.modelIndex < 0 ? (step > 0 ? 0 : count - 1) : (this.modelIndex + step + count) % count;
-        cx.stop_propagation(); cx.notify();
+      if (e.keystroke === "escape") return page ? this.settingsBack(cx) : this.closePopup(cx);
+      if (!page) return;
+      if (e.key === "enter" && page === "model") return this.submitModel(cx);
+      const rows = this.pageRows();
+      if ((e.key === "enter" || e.key === "space") && page !== "model") {
+        const row = rows[this.pageAt];
+        if (row) { this.settingsBack(cx); row.pick(cx); }
+        return;
       }
+      // In the search field, Home and End are the caret's and typing is the field's.
+      const to = page === "model" ? step(e, this.pageAt, rows.length) : menuJump(this, e, rows.map(r => r.name), this.pageAt);
+      if (to >= 0) { this.pageAt = to; cx.stop_propagation(); cx.notify(); }
       return;
     }
+    if (this.popup === "fold") {
+      if (e.keystroke === "escape") this.closePopup(cx);
+      else if (e.key === "enter" || e.key === "space") { if (this.review && !this.switching && FOLDS[this.foldAt]) this.foldAll(FOLDS[this.foldAt], cx); }
+      else {
+        const to = menuJump(this, e, FOLDS.map(fold => fold.label), this.foldAt);
+        if (to < 0) return;
+        this.foldAt = to;
+      }
+      cx.stop_propagation(); cx.notify();
+      return;
+    }
+    // Typing is the search's, and Enter its submit.
+    if (this.popup === "commits") {
+      if (e.keystroke === "escape") { this.closePopup(cx); this.handle.focus(); cx.stop_propagation(); return; }
+      const to = step(e, this.commitAt, this.commitRows().length);
+      if (to >= 0) { this.commitAt = to; cx.stop_propagation(); cx.notify(); }
+      return;
+    }
+    // The status has no keys of its own, and what's under it is out of reach while it's up.
+    if (this.popup && e.keystroke !== "escape") return;
     const actions = {
       escape: () => this.closePopup(cx),
       j: () => this.step(1, cx), k: () => this.step(-1, cx),
@@ -837,19 +997,21 @@ export default class ReviewPane extends View {
   // The pane's buttons, text or icon, share one 24px height so a toolbar's controls line up.
   // As the app's ActionButton: bordered, faded until hovered (`btn-action`); `primary` filled; `note` dim words after the label.
   button(t, id, label, action, { color, icon, after, primary, spin, note } = {}) {
-    return h_flex().id(id).h(24).px(8).gap(4).flex_none().items_center().rounded(6).text_size(12).border_1()
+    // As T3's xs button: 7 in past its border.
+    return h_flex().id(id).h(24).px(7).gap(4).flex_none().items_center().rounded(8).text_size(12).font_medium().border_1()
       .when(!primary, el => el.border_color(t.border).text_color(color ?? t.foreground).opacity(0.75).hover(s => s.opacity(1).bg(HOVER)))
       .when(Boolean(primary), el => el.border_color(t.accent).bg(t.accent).text_color("#ffffff").hover(s => s.opacity(0.9)))
       .role("button").on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); action(cx); })
-      .when(Boolean(icon), el => el.child(svg(icon).size(12).flex_none().when(Boolean(spin), el => el.spin(900))))
+      .when(Boolean(icon), el => el.child(svg(icon).size(14).flex_none().when(Boolean(spin), el => el.spin(900))))
       .child(label)
       .when(Boolean(note), el => el.child(div().opacity(FADE).child(note)))
-      .when(Boolean(after), el => el.child(svg(after).size(11).flex_none()));
+      .when(Boolean(after), el => el.child(svg(after).size(14).flex_none()));
   }
 
-  // As the app's ActionIconButton (`btn-icon-compact`): faded until hovered; `active` (its popup open) on the active tone.
-  iconButton(t, id, icon, label, action, { color, spin, disabled, active } = {}) {
-    return div().id(id).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(color ?? t.foreground)
+  // As T3's icon-sm in DiffPanel's header (`size` 24: its icon-xs, beside an xs button), faded until hovered as the app's
+  // ActionIconButton; `active` (its popup open) on the active tone.
+  iconButton(t, id, icon, label, action, { color, spin, disabled, active, size = 28 } = {}) {
+    return div().id(id).size(size).flex_none().flex().items_center().justify_center().rounded(8).text_color(color ?? t.foreground)
       .when(Boolean(disabled), el => el.opacity(DISABLED))
       .when(!disabled, el => el.opacity(active ? 1 : FADE).when(Boolean(active), el => el.bg(ACTIVE)).hover(s => s.opacity(1).bg(HOVER)))
       .role("button").accessibility_label(label)
@@ -866,7 +1028,7 @@ export default class ReviewPane extends View {
       const files = r.files, done = files.filter(f => f.reviewed).length;
       parts.push({ text: `+${files.reduce((n, f) => n + f.additions, 0)}`, color: "ansi2" }, { text: `−${files.reduce((n, f) => n + f.deletions, 0)}`, color: "ansi1" },
         { text: `${done}/${files.length}`, color: "dim", donut: files.length ? done / files.length : 1 });
-      const a = r.analysis, error = this.analyzeError ?? (a.state !== "running" ? a.error : null);
+      const a = r.analysis, { error } = this.analysisStatus();
       const compact = this.width < COMPACT;
       // As the app's DiffAnalyzeButton, the analysis's state is the button's: running or failed, it opens the status; without
       // an agent, the settings. An analysis of an older version (the app has none) says so after its Re-analyze.
@@ -884,15 +1046,20 @@ export default class ReviewPane extends View {
   }
 
   header(t, head) {
-    // Narrow, the counts give way and the buttons never.
-    return h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border).bg(t.chrome)
-      .children(head.parts.map(p => h_flex().min_w(0).gap(6).items_center().text_size(12).text_color(t[p.color] ?? t.dim)
-        .when(p.donut !== undefined, el => el.child(this.donut(t, p.donut, 14)))
-        .child(div().min_w(0).truncate().child(p.text))))
+    // Narrow, the counts and the commit switch give way and the buttons never.
+    const commits = this.commitSwitch(t);
+    // As T3's DiffPanel header; the counts as its DiffStatLabel.
+    return h_flex().id("review-header").h(40).flex_none().px(16).gap(8).items_center().overflow_hidden().border_b(1).border_color(t.border).bg(t.chrome)
+      .when(Boolean(commits), el => el.child(commits))
+      .when(head.parts.length > 0, el => el.child(h_flex().min_w(0).gap(4).items_center().text_size(11).font_family(MONO)
+        .children(head.parts.map(p => h_flex().min_w(0).gap(4).items_center().text_color(t[p.color] ?? t.dim)
+          .when(p.donut !== undefined, el => el.ml(4).child(this.donut(t, p.donut)))
+          .child(div().min_w(0).truncate().child(p.text))))))
       .child(div().flex_1())
-      .children(head.buttons.map(b => b.text
-        ? this.button(t, b.id, b.text, b.run, { after: b.after, icon: b.lead, color: t[b.color], primary: b.primary, spin: b.spin, note: b.note })
-        : this.iconButton(t, b.id, b.icon, b.label, b.run, { color: t[b.color], spin: b.spin, disabled: b.disabled, active: b.active })));
+      .child(h_flex().flex_none().gap(4).items_center()
+        .children(head.buttons.map(b => b.text
+          ? this.button(t, b.id, b.text, b.run, { after: b.after, icon: b.lead, color: t[b.color], primary: b.primary, spin: b.spin, note: b.note })
+          : this.iconButton(t, b.id, b.icon, b.label, b.run, { color: t[b.color], spin: b.spin, disabled: b.disabled, active: b.active }))));
   }
 
   /**
@@ -913,47 +1080,46 @@ export default class ReviewPane extends View {
         if (index >= 0) this.scrollToTop(index, cx);
         cx.notify();
       };
-      return this.hoverable(h_flex().id(key).flex_none().items_center().pr(4).rounded(4), key)
-        .when(depth === 0, el => el.mt(4)).when(depth > 0, el => el.pl(16).rounded_l(0))
+      // As T3's SidebarMenuButton at lg; a subgroup in by what its SidebarMenuSub comes to, 24 to the text.
+      return this.hoverable(h_flex().id(key).h(48).flex_none().items_center().pr(10).gap(8).rounded(8), key)
+        .when(depth > 0, el => el.ml(14))
         .when(active, el => el.bg(ACTIVE)).when(!active, el => el.hover(s => s.bg(HOVER)))
-        .child(v_flex().id(`side-gb-${depth}-${g.key}`).flex_1().min_w(0).items_start().px(8).py(4).text_size(13)
+        .child(v_flex().id(`side-gb-${depth}-${g.key}`).flex_1().min_w(0).h_full().justify_center().items_start().pl(10).text_size(14).font_medium()
           .opacity(active ? 1 : FADE).hover(s => s.opacity(1))
           .role("button").accessibility_label(g.label).on_click((_e, cx) => pick(cx))
-          .child(h_flex().w_full().gap(6).items_center()
-            .child(this.categoryIcon(t, g.category, 14, active || this.hovered === key))
+          .child(h_flex().w_full().gap(8).items_center()
+            .child(this.categoryIcon(t, g.category, active || this.hovered === key))
             .child(div().min_w(0).truncate().child(g.label))
             .when(critical, el => el.child(this.criticalMark(t))))
           .child(h_flex().ml(24).gap(4).items_center().text_size(11)
             .child(this.diffStats(t, stats.added, stats.deleted))
             .child(div().opacity(0.4).child(`・${stats.count} ${stats.count === 1 ? "file" : "files"}`))))
-        .when(stats.progress !== 0, el => el.child(this.donut(t, stats.progress, 16)))
+        .when(stats.progress !== 0, el => el.child(this.donut(t, stats.progress)))
         // As the app's: only a group with subgroups has a caret, and it shows or hides them.
         .when(depth === 0 && g.children.length > 0, el => el.child(this.caretButton(`side-fold-${g.key}`)
           .role("button").accessibility_label(open(g, depth) ? "Hide subgroups" : "Show subgroups")
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => { cx.stop_propagation(); const k = id(g, depth); this.folded.has(k) ? this.folded.delete(k) : this.folded.add(k); cx.notify(); })
-          .child(svg(`${LU}/chevron-${open(g, depth) ? "down" : "right"}.svg`).size(12))));
+          .child(svg(`${LU}/chevron-${open(g, depth) ? "down" : "right"}.svg`).size(14))));
     };
     for (const g of this.review.groups) {
       rows.push(groupRow(g, 0, g));
       if (open(g, 0)) for (const child of g.children) rows.push(groupRow(child, 1, g));
     }
     return v_flex().id("review-sidebar").size_full().border_r(1).border_color(t.border)
-      .child(v_flex().id("review-sidebar-rows").flex_1().min_h(0).py(12).pl(12).pr(8).gap(2).overflow_y_scrollbar().children(rows));
+      .child(v_flex().id("review-sidebar-rows").flex_1().min_h(0).p(8).gap(4).overflow_y_scrollbar().children(rows));
   }
 
   // Hovering an element colors the category icon in it, as the app's `group-hover:saturate-100`: Herdr has no group hover.
-  hoverable(el, key) {
-    return el.on_hover((on, cx) => { if (on) this.hovered = key; else if (this.hovered === key) this.hovered = null; cx.notify(); });
-  }
+  hoverable(el, key) { return hoverKept(this, "hovered", key, el); }
 
   // A group's category icon in its hue (Tailwind's 300 on dark, 800 on light); unless `lit`, grey, as the app's `saturate-0`.
-  categoryIcon(t, category, size, lit) {
+  categoryIcon(t, category, lit) {
     const [icon, dark, light] = CATEGORY[category] ?? CATEGORY.other, hue = isLight(t.background) ? light : dark;
-    return svg(`${LU}/${icon}.svg`).size(size).flex_none().text_color(lit ? hue : grey(hue));
+    return svg(`${LU}/${icon}.svg`).size(16).flex_none().text_color(lit ? hue : grey(hue));
   }
 
-  criticalMark(t, size = 14) {
+  criticalMark(t, size = 16) {
     return svg(`${LU}/badge-alert.svg`).size(size).flex_none().text_color(isLight(t.background) ? "#d97706" : "#fbbf24");
   }
 
@@ -996,19 +1162,19 @@ export default class ReviewPane extends View {
           .role("button").on_click((_e, cx) => { this.scrollToTop(0, cx); cx.notify(); }).child(`${parent?.label} ›`)))
         .child(v_flex().px(8).py(4).gap(4)
           .child(h_flex().gap(8).items_center()
-            .child(this.categoryIcon(t, g.category, 16, true))
-            .child(div().flex_1().min_w(0).truncate().text_size(18).font_medium().child(g.label))
-            .when(Boolean(g.critical), el => el.child(this.criticalMark(t, 16))))
+            .child(this.categoryIcon(t, g.category, true))
+            .child(div().flex_1().min_w(0).truncate().text_size(14).font_medium().child(g.label))
+            .when(Boolean(g.critical), el => el.child(this.criticalMark(t))))
           .child(h_flex().gap(8).items_center().text_size(11)
             .child(this.diffStats(t, stats.added, stats.deleted))
             .child(div().opacity(FADE).child(`${stats.count} ${stats.count === 1 ? "file" : "files"}`))
-            .child(this.donut(t, stats.progress, 12))))
+            .child(this.donut(t, stats.progress))))
         .when(Boolean(g.summary), el => el.child(div().pb(8).pl(8).border_b(1).border_color(t.border).opacity(FADE)
-          .child(TextView.markdown(`aside-summary-${g.key}`, g.summary).selectable(true).scrollable(false).text_size(13))))))
+          .child(TextView.markdown(`aside-summary-${g.key}`, g.summary).selectable(true).scrollable(false).text_size(12))))))
       .child(v_flex().id("review-files").flex_1().min_h(0).overflow_y_scrollbar().children(this.fileTree(t, g)));
   }
 
-  // As the app's FileTree, 0.5em in and 1em a level: a folder's box, icon and name; a file's box, its icon and path in the code
+  // As T3's ChangedFilesTree, 8 in and 14 a level: a folder's box, icon and name; a file's box, its icon and path in the code
   // font (the folder dimmed, listed), test and critical marks, counts and status; a file in view on the active tone.
   fileTree(t, g) {
     const byPath = new Map(this.review.files.map(f => [f.path, f])), inView = this.visibleFiles(), light = isLight(t.background);
@@ -1018,26 +1184,26 @@ export default class ReviewPane extends View {
     // text, so the folder gives way before the name.
     const path = (row, struck) => {
       const parts = row.name.split("/"), name = parts.pop();
-      return h_flex().flex_1().min_w(0).gap(4).items_center().font_family(MONO)
-        .child(image(`${CAT}/${fileIcon(row.path)}.svg`).w(16).h(16).flex_none().opacity(FADE))
-        .when(parts.length > 0, el => el.child(div().min_w(0).flex_shrink(100).truncate().when(struck, el => el.line_through()).when(this.fileList === "list", el => el.opacity(0.4)).child(`${parts.join("/")}/`)))
+      return h_flex().flex_1().min_w(0).items_center().font_family(MONO)
+        .child(image(`${CAT}/${fileIcon(row.path)}.svg`).w(14).h(14).mr(8).flex_none().opacity(FADE))
+        .when(parts.length > 0, el => el.child(div().min_w(0).flex_shrink(100).truncate().when(struck, el => el.line_through()).when(pref("fileList") === "list", el => el.opacity(0.4)).child(`${parts.join("/")}/`)))
         .child(div().min_w(0).flex_shrink_1().truncate().when(struck, el => el.line_through()).child(name));
     };
-    return fileRows(g.files, g.missing, this.fileList).map(row => {
-      const base = h_flex().h(24).flex_none().pl(6 + row.depth * 13).pr(4).gap(6).items_center().rounded(4).text_size(13);
+    return fileRows(g.files, g.missing, pref("fileList")).map(row => {
+      const base = h_flex().h(28).flex_none().pl(8 + row.depth * 14).pr(8).gap(8).items_center().rounded(6).text_size(12);
       if (row.type === "folder") {
         const files = row.paths.map(path => byPath.get(path)).filter(Boolean), done = files.filter(f => f.reviewed).length;
         const state = !done ? "none" : done === files.length ? "all" : "some";
         return base.id(`tree-d-${row.key}`)
           .child(checkbox(`tree-dcheck-${row.key}`, state, `${row.name}: ${done} of ${files.length} reviewed`, (cx) => this.setReviewed(files, state !== "all", cx)))
-          .child(image(`${CAT}/${folderIcon(row.name)}.svg`).w(16).h(16).flex_none().opacity(FADE))
-          .child(div().min_w(0).truncate().opacity(FADE).child(row.name));
+          .child(image(`${CAT}/${folderIcon(row.name)}.svg`).w(14).h(14).flex_none().opacity(FADE))
+          .child(div().min_w(0).truncate().font_family(MONO).text_size(11).opacity(FADE).child(row.name));
       }
       if (row.type === "missing")
         return base.id(`tree-m-${row.key}`).opacity(0.5)
           .child(div().w(16).flex_none())
           .child(path(row, true))
-          .child(div().flex_none().text_size(11).child("removed"));
+          .child(div().flex_none().text_size(10).child("removed"));
       const f = byPath.get(row.path);
       if (!f) return null;
       const state = f.changed ? "changed" : f.reviewed ? "all" : "none";
@@ -1051,19 +1217,20 @@ export default class ReviewPane extends View {
         .child(checkbox(`tree-check-${row.path}`, state, f.reviewed ? `${row.path}: reviewed` : `${row.path}: not reviewed`, (cx) => this.setReviewed(f, !f.reviewed, cx)))
         .child(path(row, false))
         .when(f.test, el => el.child(svg(`${LU}/flask-conical.svg`).size(14).flex_none().text_color(light ? "#15803d" : "#4ade80")))
-        .when(critical, el => el.child(this.criticalMark(t)))
-        .child(div().flex_none().text_size(11).child(this.diffStats(t, f.additions, f.deletions)))
+        .when(critical, el => el.child(this.criticalMark(t, 14)))
+        .child(div().flex_none().text_size(10).child(this.diffStats(t, f.additions, f.deletions)))
         .child(this.fileStatus(f.status));
     }).filter(Boolean);
   }
 
   // A setting's row: its name, then its options as one segmented control; `pick(id, cx)` on a press.
   choiceRow(t, name, options, pick) {
-    return h_flex().h(32).px(8).gap(8).flex_none().items_center()
+    // A menu row's 4 either side of the 28 track.
+    return h_flex().h(36).px(8).gap(8).flex_none().items_center()
       .child(div().flex_1().child(name))
-      // As the app's ActionToggleGroup: a sunken track, the picked option raised; the others brighten on hover.
+      // As T3's segmented ToggleGroup: a sunken track, the picked option raised; the others brighten on hover.
       .child(h_flex().flex_none().p(2).gap(2).rounded(8).bg(sunken(t))
-        .children(options.map(([id, text, on, faded]) => div().id(id).h(22).px(10).flex().items_center().rounded(6)
+        .children(options.map(([id, text, on, faded]) => div().id(id).h(24).px(10).flex().items_center().rounded(6).text_size(12).font_medium()
           .text_color(on ? t.foreground : t.dim).when(on, el => el.bg(raised(t)).shadow_sm()).when(!on, el => el.hover(s => s.text_color(t.foreground)))
           .when(Boolean(faded), el => el.opacity(0.5))
           .role("radio_button").accessibility_label(`${name}: ${text}`)
@@ -1071,24 +1238,24 @@ export default class ReviewPane extends View {
           .child(text))));
   }
 
-  // As the app's ActionIconButton (`btn-icon`) at text-xs: round, faded until hovered, then on the app's translucent
-  // hover tone, which stacks over a hovered row's. Handlers and icon are the caller's.
+  // As T3's icon-xs, faded until hovered as the app's ActionIconButton, then on the app's translucent hover tone, which
+  // stacks over a hovered row's. Handlers and icon are the caller's.
   caretButton(id) {
-    return div().id(id).size(24).flex_none().flex().items_center().justify_center().rounded_full()
+    return div().id(id).size(24).flex_none().flex().items_center().justify_center().rounded(8)
       .opacity(FADE).hover(s => s.opacity(1).bg(HOVER));
   }
 
-  // As the app's DiffStats: the additions and the deletions, each only when there are any.
+  // As the app's DiffStats, each only when there are any, measured as T3's DiffStatLabel.
   diffStats(t, added, deleted) {
-    return h_flex().flex_none().gap(4)
+    return h_flex().flex_none().gap(4).font_family(MONO)
       .when(added > 0, el => el.child(div().text_color(t.ansi2).child(`+${added.toLocaleString()}`)))
       .when(deleted > 0, el => el.child(div().text_color(t.ansi1).child(`-${deleted.toLocaleString()}`)));
   }
 
-  // As the app's FileStatus: the letter in its status's color, on a tenth of it.
+  // As the app's FileStatus: the letter in its status's color, on a tenth of it. Measured as T3's sm Badge.
   fileStatus(status) {
     const [letter, color] = FILE_STATUS[status] ?? FILE_STATUS.modified;
-    return div().w(16).flex_none().flex().items_center().justify_center().rounded(4).font_family(MONO).text_size(11).text_color(color).bg(color + "1a").child(letter);
+    return div().h(16).min_w(16).px(3).flex_none().flex().items_center().justify_center().rounded(4).font_family(MONO).font_medium().text_size(10).text_color(color).bg(color + "1a").child(letter);
   }
 
   main(t, cx) {
@@ -1097,7 +1264,7 @@ export default class ReviewPane extends View {
     return v_flex().size_full().min_w(0).overflow_hidden()
       .child(div().id("review-diff-area").flex_1().min_h(0).overflow_hidden().relative().text_size(12)
         .on_size_change((size, cx) => {
-          this.listHeight = size.height / zoom();
+          this.diffHeight = size.height / zoom();
           if (Math.abs(size.width / zoom() - this.view) >= 1) { this.view = size.width / zoom(); cx.notify(); }
         })
         // Code scrolls sideways by the wheel: split, each side under the pointer; the full-width rows under either.
@@ -1152,10 +1319,11 @@ export default class ReviewPane extends View {
           .child(this.item(t, { key: `f:${sticky.path}`, kind: "file", file: sticky, size: FILE }))))
         .child(Scrollbar.vertical("review-diff").absolute().inset_0())
         .children(this.hbars(t))
-        .when(!items.length, el => el.child(div().absolute().top(8).px(12).text_color(t.dim).child("No files in this group"))));
+        // As T3's DiffPanel with nothing to show.
+        .when(!items.length, el => el.child(div().absolute().inset_0().px(20).flex().items_center().justify_center().text_center().text_color(t.dim).child("No files in this group"))));
   }
 
-  // Code scrolls sideways by the wheel alone: while it does, as an overlay scrollbar, a 4px bar says where it is, for each
+  // Code scrolls sideways by the wheel alone: while it does, as T3's ScrollArea, a 6px bar says where it is, for each
   // overflowing side with rows in view. Split, the full-width rows' sits above the halves' when both show.
   hbars(t) {
     const { start = 0, end = 0 } = this.visible ?? {}, split = this.splitShown();
@@ -1164,17 +1332,18 @@ export default class ReviewPane extends View {
     return sides.map(side => {
       const width = side === 2 ? this.view : this.view / 2, max = this.sideMax(side);
       const thumb = Math.max(24, width * width / this.sideWidth[side]);
-      return div().id(`hbar-${side}`).absolute().bottom(side === 2 && sides.length > 1 ? 8 : 2).left(side === 1 ? this.view / 2 : 0).w(width).h(4)
+      return div().id(`hbar-${side}`).absolute().bottom(side === 2 && sides.length > 1 ? 8 : 1).left(side === 1 ? this.view / 2 : 0).w(width).h(6)
         .opacity(this.barsOn ? 1 : 0).transition("opacity", { duration: 150, easing: "ease-out" })
         .child(div().absolute().left((width - thumb) * Math.min(this.shift[side], max) / max).w(thumb).h_full().rounded_full().bg(t.muted + "80"));
     });
   }
 
   groupHeader(t, g) {
-    return v_flex().id("group-header").flex_none().max_h(220).overflow_hidden().px(12).py(10).gap(6).border_b(1).border_color(t.border)
+    return v_flex().id("group-header").flex_none().max_h(220).overflow_hidden().px(16).py(10).gap(6).border_b(1).border_color(t.border)
       .child(h_flex().gap(8).items_center()
-        .when(g.critical, el => el.child(div().px(5).rounded(4).bg(t.blocked + "26").text_size(11).text_color(t.blocked).child("Needs care")))
-        .child(div().font_semibold().child(g.label)))
+        // As T3's Badge.
+        .when(g.critical, el => el.child(div().h(18).px(3).flex_none().flex().items_center().rounded(4).bg(t.blocked + "26").text_size(12).font_medium().text_color(t.blocked).child("Needs care")))
+        .child(div().text_size(14).font_semibold().child(g.label)))
       .when(Boolean(g.summary), el => el.child(TextView.markdown(`summary-${g.key}`, g.summary).selectable(true).scrollable(false).text_size(12).text_color(t.muted)))
       // Without the sidebar, as the app's chapter header: its subgroups to jump to, in one row as the tabs', unless its tab's
       // caret folded them. Scrolled away, they stick under the tabs instead.
@@ -1192,8 +1361,8 @@ export default class ReviewPane extends View {
   }
 
   // As the app's DisplayDonut: a faint ring, and from the top, clockwise, an arc as far as `value`.
-  donut(t, value, size = 18) {
-    const z = zoom(), c = size / 2 * z, r = (size / 2 - 2) * z, ring = (b) => b.move_to(c, c - r).arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r);
+  donut(t, value) {
+    const size = 14, z = zoom(), c = size / 2 * z, r = (size / 2 - 2) * z, ring = (b) => b.move_to(c, c - r).arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r);
     const a = 2 * Math.PI * Math.min(value, 1), arc = value >= 1 ? ring(PathBuilder.stroke(2 * z))
       : PathBuilder.stroke(2 * z).move_to(c, c - r).arc_to(r, r, 0, value > 0.5, true, c + r * Math.sin(a), c - r * Math.cos(a));
     return div().size(size).flex_none().relative()
@@ -1209,19 +1378,18 @@ export default class ReviewPane extends View {
   groupTab(t, id, g, { active = false, expanded = false, toggle, pick }) {
     const [, darkHue, lightHue] = CATEGORY[g.category] ?? CATEGORY.other, hue = isLight(t.background) ? lightHue : darkHue;
     const stats = this.groupStats(g), subgroups = g.children?.length ?? 0, critical = g.critical || (g.children ?? []).some(c => c.critical);
-    return this.hoverable(v_flex().id(id), id).flex_none().rounded_t(4).border_t(1).border_l(1).border_r(1).border_color(t.border).bg(t.background)
+    return this.hoverable(v_flex().id(id), id).flex_none().rounded_t(6).border_t(1).border_l(1).border_r(1).border_color(t.border).bg(t.background)
       .when(active, el => el.relative().top(-1).shadow_sm())
-      .child(h_flex().id(`${id}-button`).px(8).py(2).gap(8).items_center().text_size(13).text_color(t.foreground)
+      .child(h_flex().id(`${id}-button`).px(8).py(2).gap(8).items_center().text_size(14).font_medium().text_color(t.foreground)
         .opacity(active ? 1 : FADE).hover(s => s.opacity(1).bg(ACTIVE))
         .role("tab").accessibility_label(g.label).on_click((_e, cx) => pick(cx))
         .child(v_flex().items_start()
-          .child(h_flex().gap(6).items_center()
-            .child(this.categoryIcon(t, g.category, 14, active || this.hovered === id))
+          .child(h_flex().gap(8).items_center()
+            .child(this.categoryIcon(t, g.category, active || this.hovered === id))
             .child(g.label)
             .when(critical, el => el.child(this.criticalMark(t))))
           .child(h_flex().items_center().text_size(11)
-            .when(stats.added > 0, el => el.child(div().text_color(t.ansi2).child(`+${stats.added.toLocaleString()}`)))
-            .when(stats.deleted > 0, el => el.child(div().ml(4).text_color(t.ansi1).child(`-${stats.deleted.toLocaleString()}`)))
+            .child(this.diffStats(t, stats.added, stats.deleted))
             .child(div().text_color(t.dim).child(`・${stats.count} ${stats.count === 1 ? "file" : "files"}`))
             .when(subgroups > 0, el => el.child(div().text_color(t.dim).child(`・${subgroups} ${subgroups === 1 ? "subgroup" : "subgroups"}`)))))
         .when(stats.progress !== 0, el => el.child(this.donut(t, stats.progress)))
@@ -1229,7 +1397,7 @@ export default class ReviewPane extends View {
         .when(subgroups > 0 && Boolean(toggle), el => el.child(this.caretButton(`${id}-caret`)
           .role("button").accessibility_label(expanded ? "Hide subgroups" : "Show subgroups")
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); toggle(cx); })
-          .child(svg(`${LU}/chevron-${expanded ? "up" : "down"}.svg`).size(12)))))
+          .child(svg(`${LU}/chevron-${expanded ? "up" : "down"}.svg`).size(14)))))
       .child(div().h(2).w_full().bg(active ? hue : t.border));
   }
 
@@ -1262,7 +1430,7 @@ export default class ReviewPane extends View {
     const open = this.review.groups.find(g => g.key === this.expandedTab && g.children.length && !(g.key === this.groupKey && this.atTop()));
     // The shown tab is raised a pixel: each row's top pixel keeps it from the clip.
     const row = (id) => h_flex().id(id).pt(1).gap(6).overflow_x_scroll();
-    return v_flex().id("group-tabs").flex_none().px(12).pt(9).pb(8).gap(6).border_b(1).border_color(t.border)
+    return v_flex().id("group-tabs").flex_none().px(16).pt(9).pb(8).gap(6).border_b(1).border_color(t.border)
       .child(row("group-tab-row").children(this.review.groups.map(g => this.groupTab(t, `group-tab-${g.key}`, g, {
         active: g.key === this.groupKey, expanded: this.expandedTab === g.key,
         toggle: (cx) => { this.expandedTab = this.expandedTab === g.key ? null : g.key; cx.notify(); },
@@ -1273,7 +1441,7 @@ export default class ReviewPane extends View {
         },
       }))))
       .when(Boolean(open), el => el
-        .child(h_flex().gap(4).items_center().text_size(13)
+        .child(h_flex().gap(4).items_center()
           .child(svg(`${LU}/folder-open.svg`).size(14).flex_none().opacity(FADE))
           .child(div().opacity(FADE).child("subgroups of"))
           .child(div().child(open.label))
@@ -1302,8 +1470,9 @@ export default class ReviewPane extends View {
         // As the app's file header: the reviewed box, the path and its marks; the counts, the status, the whole file and the fold.
         // A row holds no handlers: headerPress places a press by these parts' positions.
         const f = item.file, open = !this.collapsed.has(f.path), full = this.full.has(f.path), loading = full && !this.full.get(f.path);
-        const slot = () => div().size(24).flex_none().flex().items_center().justify_center();
-        return h_flex().w_full().h(item.size).px(12).gap(8).items_center().border_t(1).border_b(1).border_color(t.border)
+        // As T3's: 8 and 12 in, its controls icon-micro.
+        const slot = () => div().size(20).flex_none().flex().items_center().justify_center();
+        return h_flex().w_full().h(item.size).pl(8).pr(12).gap(8).items_center().border_t(1).border_b(1).border_color(t.border)
           .bg(this.current === f.path ? t.selected : t.chrome)
           .child(this.checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none"))
           .child(div().min_w(0).flex_shrink_1().truncate().when(f.reviewed, el => el.text_color(t.dim)).child(f.previousPath ? `${f.previousPath} → ${f.path}` : f.path))
@@ -1315,16 +1484,16 @@ export default class ReviewPane extends View {
           .when(f.isBinary, el => el.child(div().flex_none().text_size(11).text_color(t.dim).child("binary")))
           .child(this.fileStatus(f.status))
           .child(h_flex().flex_none().gap(4)
-            .child(slot().when(this.canFull(f), el => el.child(svg(loading ? "mods/workspace-chrome/spinner.svg" : "mods/review/file-text.svg").size(14).text_color(full ? t.accent : t.dim).when(loading, s => s.spin(900)))))
-            .child(slot().child(svg(`mods/review/chevron-${open ? "down" : "right"}.svg`).size(12).text_color(t.dim))));
+            .child(slot().when(this.canFull(f), el => el.child(svg(loading ? "mods/workspace-chrome/spinner.svg" : "mods/review/file-text.svg").size(12).text_color(full ? t.accent : t.dim).when(loading, s => s.spin(900)))))
+            .child(slot().child(svg(`mods/review/chevron-${open ? "down" : "right"}.svg`).size(16).text_color(t.dim))));
       }
       case "group":
         return h_flex().w_full().h(item.size).px(12).gap(8).items_center().font_semibold().text_color(t.ansi4)
           .when(item.group.critical, el => el.child(div().text_color(t.blocked).child("!")))
           .child(div().min_w(0).truncate().child(item.group.label));
       case "hunk":
-        // Hunk headers on the raised tone, as Herdr's own changes diff draws them.
-        return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(MONO).text_color(t.dim).truncate().child(item.text);
+        // Hunk headers on the raised tone, as Herdr's own changes diff draws them, 11px as T3's hunk separators; `@@` is code, so mono.
+        return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(MONO).text_size(11).text_color(t.dim).truncate().child(item.text);
       case "note": {
         // As the app's AnalysisNoteCard: a sparkle, or a critical note's mark, then its Markdown in the UI font.
         // A file's own notes run across the file under its header; a line's sits under the line as a card.
