@@ -50,7 +50,7 @@ export function loadReview(view, cx, poll = false) {
   const { root, page } = view, t = theme(), group = view.switching ? null : view.group(), marks = view.marks, id = ++view.loadId;
   view.loading = { root, page }; view.again = false; view.dirty = false;
   // Rows only for the group's files that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
-  const rows = poll || !group ? [] : groupFiles(group).filter(path => view.review.files.some(f => f.path === path && !f.hunks));
+  const rows = poll || !group ? [] : groupFiles(group).filter(path => { const f = view.fileAt(path); return Boolean(f) && !f.hunks; });
   for (const file of view.review?.files ?? []) if (rows.includes(file.path)) view.asked.add(file.sha);
   const key = JSON.stringify(colors(t));
   cx.timer.after(LOAD_TIMEOUT, (cx) => {

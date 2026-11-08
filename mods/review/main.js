@@ -236,6 +236,12 @@ export default class ReviewPane extends View {
 
   currentFile() { return this.review?.files.find(file => file.path === this.current) ?? null; }
 
+  // A file by its path, from a map made once per read: a branch's files run to thousands, and a render looks up a group's every one.
+  fileAt(path) {
+    if (this.pathsOf !== this.review) { this.pathsOf = this.review; this.paths = new Map(this.review?.files.map(file => [file.path, file])); }
+    return this.paths.get(path);
+  }
+
   render(cx) {
     const t = theme();
     // Herdr doesn't tell a mod pane its tab, and a tab opened for it may not have the focus yet when it starts: a pane
@@ -278,7 +284,7 @@ export default class ReviewPane extends View {
       }
     }
     // The group shown has files without rows (just opened, or changed since): ask for them, once per version.
-    const missing = !this.switching && this.group() && groupFiles(this.group()).map(path => this.review.files.find(f => f.path === path)).filter(f => f && !f.hunks && !this.asked.has(f.sha));
+    const missing = !this.switching && this.group() && groupFiles(this.group()).map(path => this.fileAt(path)).filter(f => f && !f.hunks && !this.asked.has(f.sha));
     if (missing?.length && !this.loading) this.load(cx);
     const wide = this.width >= WIDE, sidebar = this.sidebarShown(), group = this.group();
     // A group newly shown, however it came to be, opens its subgroups; its tab's caret folds them.
