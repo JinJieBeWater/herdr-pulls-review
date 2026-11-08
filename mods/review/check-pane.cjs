@@ -23,7 +23,7 @@ const load = (file, env) => {
 // Values made in another realm compare unequal to this one's: compare them as JSON.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const rows = load("rows.js", {});
-const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows })", rows);
+const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk })", rows);
 
 const row = (kind, old, next) => ({ kind, old, new: next, tokens: [[`${kind}${old ?? ""}:${next ?? ""}`]] });
 // A run of deletions faces the additions after it; context faces itself.
@@ -75,6 +75,16 @@ const huge = [{ kind: "+", new: 1, tokens: [["{", "#fff"], ["x".repeat(100000), 
 clipRows(huge);
 assert.deepEqual(plain(huge[0].tokens.map(([text, color]) => [text.length, color])), [[1, "#fff"], [999, "#0f0"]]);
 assert.equal(contentWidth([{ kind: "row", lines: huge }]), contentWidth([long("a".repeat(1000))]));
+// A big group's rows run past the 8 MB a read carries: a read asks for the files in view and the 10 after them that have
+// none and weren't asked for, while they fit in 3000 changed lines, the first one always.
+const many = Array.from({ length: 40 }, (_, i) => ({ path: `f${i}`, sha: `s${i}`, additions: 500, deletions: 0 }));
+const fileAt = (p) => many.find(f => f.path === p), paths = many.map(f => f.path);
+assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(), new Set())), ["f0", "f1", "f2", "f3", "f4", "f5"]);
+many[0].hunks = []; many[1].hunks = [];
+assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f20", "f21"]), new Set(["s22"]))), ["f20", "f21", "f23", "f24", "f25", "f26"]);
+assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f38"]), new Set())), ["f38", "f39"]);
+many[30].additions = 9000;
+assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f30"]), new Set())), ["f30"]);
 // Split, an added file isn't paired: its rows are "solo", the whole width, measured on their own.
 const added = { ...review, files: [file("n.ts", { status: "added", hunks: [{ header: null, rows: [row("+", undefined, 1), row("+", undefined, 2)] }] })] };
 const soloItems = plain(buildItems(added, { key: "n", files: ["n.ts"], notes: {}, children: [] }, { ...opts, split: true }));
@@ -130,7 +140,7 @@ const env = {
   // Shared values every mod sees.
   shared: (key) => sharedStore.get(key) ?? null, setShared: (key, value) => sharedStore.set(key, value),
   run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), theme: () => ({ foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888" }),
-  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows,
+  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk,
   // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going.
   review: async (_root, route, body) => {
     routes.push(route);

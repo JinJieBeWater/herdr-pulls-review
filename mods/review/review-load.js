@@ -1,6 +1,6 @@
 import { exec, theme, watchFolder } from "herdr";
 import { review } from "./daemon.js";
-import { clipRows, groupFiles } from "./rows.js";
+import { clipRows } from "./rows.js";
 import { pref } from "./controls.js";
 
 // How long a read may take before the pane says it didn't answer and offers Retry; its answer still counts if it comes.
@@ -49,8 +49,8 @@ export function loadReview(view, cx, poll = false) {
   // Switching, the group shown is the old page's: the new page's first group comes with the read instead.
   const { root, page } = view, t = theme(), group = view.switching ? null : view.group(), marks = view.marks, id = ++view.loadId;
   view.loading = { root, page }; view.again = false; view.dirty = false;
-  // Rows only for the group's files that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
-  const rows = poll || !group ? [] : groupFiles(group).filter(path => { const f = view.fileAt(path); return Boolean(f) && !f.hunks; });
+  // Rows only for the files in view or just after that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
+  const rows = poll || !group ? [] : view.rowsWanted();
   for (const file of view.review?.files ?? []) if (rows.includes(file.path)) view.asked.add(file.sha);
   const key = JSON.stringify(colors(t));
   cx.timer.after(LOAD_TIMEOUT, (cx) => {
