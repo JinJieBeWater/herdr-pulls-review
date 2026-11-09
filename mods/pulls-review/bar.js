@@ -45,6 +45,10 @@ export function spaceReview() {
 
 // Reads write nothing under .git, so the folder watch doesn't wake on them.
 export const git = (cwd, args) => exec("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", ...args], { cwd });
+// The files the pane lists for the working tree, as the daemon's worktreeDiff reads them: HEAD to the working tree, net,
+// new files marked intent-to-add in a throwaway copy of the index so a moved file pairs up as one rename.
+const NET = `d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT && { cp "$(git rev-parse --git-path index)" "$d/i" 2>/dev/null; export GIT_INDEX_FILE="$d/i"; } && `
+  + "git --no-optional-locks -c core.fsmonitor=false add -N -- . && git --no-optional-locks -c core.fsmonitor=false diff -M --name-only -z HEAD --";
 
 // A commit's age as the Inbox's settled rows read (t3-inbox's ago), but "now" for "just now": the column is narrow.
 function ago(ms, now) {
@@ -106,8 +110,11 @@ export function watchReview(view, cx) {
           cx.spawn(async () => {
             try {
               while (view.reviews.get(view.reviewKey)?.root === root) {
-                const paths = await watchFolder(root);
-                if (await touchesDiff(root, paths)) for (const [k, at] of view.reviewAt) view.reviewAt.set(k, Math.min(at, Date.now() - 9000));
+                const paths = await watchFolder(root), soon = Date.now() - 9000;
+                // Only this repo's locations: another's late event leaves them be. Already due, nothing to ask git.
+                const mine = [...view.reviewAt].filter(([k, at]) => view.reviews.get(k)?.root === root && at > soon);
+                // Out of focus, no check-ignore per batch: the read on coming back settles it.
+                if (mine.length && (!window()?.active || await touchesDiff(root, paths))) for (const [k, at] of mine) view.reviewAt.set(k, Math.min(at, Date.now() - 9000));
               }
             }
             catch {} // The next read watches it again.
@@ -127,12 +134,18 @@ async function readReview(cwd) {
   const root = top.stdout.trim(), status = await git(root, ["status", "--porcelain=v2", "--branch", "--untracked-files=all"]);
   if (status.code !== 0) return null;
   const review = { root, branch: null, upstream: null, base: null, baseRef: null, changed: 0, ahead: 0, behind: 0, unmerged: 0, newer: 0, gone: false };
-  let ab = false;
+  let ab = false, lines = 0;
   for (const line of status.stdout.split("\n")) {
     if (line.startsWith("# branch.head ")) review.branch = line.slice(14);
     else if (line.startsWith("# branch.upstream ")) review.upstream = line.slice(18);
     else if (line.startsWith("# branch.ab ")) { ab = true; [review.ahead, review.behind] = line.slice(12).split(" ").map(n => Math.abs(parseInt(n, 10)) || 0); }
-    else if (line && !line.startsWith("#")) review.changed++; // One line per file, staged or not, renames included.
+    else if (line && !line.startsWith("#")) lines++;
+  }
+  // Status counts a file staged then edited back, which the pane shows no diff for, and a moved file as two.
+  if (lines) {
+    const net = await exec("sh", ["-c", NET], { cwd: root }).catch(() => null);
+    // shortcut: no sh (Windows) or no commit yet falls back to status's count; follow the daemon's empty-tree base if that matters.
+    review.changed = net?.code === 0 ? net.stdout.split("\0").filter(Boolean).length : lines;
   }
   // git leaves out branch.ab when the upstream is set but gone, as after a merged PR's branch is deleted.
   review.gone = Boolean(review.upstream) && !ab;
@@ -161,8 +174,10 @@ async function readReview(cwd) {
 // `unpushed`: the shas not on the upstream, for the menu's ↑.
 async function readPicks(r) {
   const [read, ahead] = await Promise.all([
-    git(r.root, ["log", "-200", "--format=%H%x1f%s%x1f%ct%x1f%an", r.unmerged ? `${r.baseRef}..HEAD` : "HEAD"]),
-    r.upstream && !r.gone ? git(r.root, ["rev-list", "--max-count=200", `${r.upstream}..HEAD`]) : { code: 0, stdout: "" },
+    // log.showSignature would add lines of its own.
+    git(r.root, ["log", "-200", "--no-show-signature", "--format=%H%x1f%s%x1f%ct%x1f%an", r.unmerged ? `${r.baseRef}..HEAD` : "HEAD"]),
+    // All of them: a menu commit can be past the first 200 to push, and one missing here reads as pushed.
+    r.upstream && !r.gone ? git(r.root, ["rev-list", `${r.upstream}..HEAD`]) : { code: 0, stdout: "" },
   ]);
   const commits = read.stdout.split("\n").filter(Boolean).map(line => { const [sha, subject, time, author] = line.split("\x1f"); return { sha, subject, time: Number(time) * 1000, author }; });
   const unpushed = ahead.code === 0 ? ahead.stdout.split("\n").filter(Boolean) : [];
@@ -378,9 +393,11 @@ export function reviewBar(view, t, stopPress) {
     view.pressAt = null;
     if (closing || view.readingPicks) return;
     view.readingPicks = true;
+    const from = JSON.stringify(reviewLocation());
     cx.spawn(async () => { try {
       const { commits, branches, unpushed } = await readPicks(r);
-      if (!commits.length && !branches.length) return;
+      // Focus moved on while git read: this repo's menu would hang over another's.
+      if (JSON.stringify(reviewLocation()) !== from || !commits.length && !branches.length) return;
       // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
       const tabs = branches.length > 0 && commits.length > 0;
       const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);

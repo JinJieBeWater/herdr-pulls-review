@@ -75,6 +75,7 @@ const load = (props = {}, setup = record) => {
   scope.exec = async (_command, args) => args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" }
     : args.includes("symbolic-ref") ? { code: 1, stdout: "" }
     : args.includes("rev-list") ? (refs[args.at(-1)] ? { code: 0, stdout: refs[args.at(-1)] } : { code: 128, stdout: "" })
+    : _command === "sh" ? { code: 1, stdout: "" } // No net diff to read: status's count, as without sh. A real repo's is below.
     : (assert.ok(args.includes("--untracked-files=all"), "a new folder counts its files, as the page it opens"), { code: 0, stdout: status });
   const review = await scope.readReview("/repo/src");
   const show = r => bar.reviews.set(JSON.stringify(scope.reviewLocation()), r);
@@ -226,6 +227,30 @@ const load = (props = {}, setup = record) => {
     assert.equal(view.reviewAt.get(key), readAt, "an ignored change");
     change(under("src/a.js")); await new Promise(setImmediate);
     assert.ok(Date.now() - view.reviewAt.get(key) >= 9000 && view.reviewAt.get(key) <= readAt, "a change: the 10 s rule reads a second after the last read");
+    // Already due, a batch asks git nothing; out of focus, nor does one that isn't: the read on coming back settles it.
+    const realExec = watcher.exec, asked = [];
+    watcher.exec = async (command, args, options) => { asked.push(args); return realExec(command, args, options); };
+    change(under("src/b.js")); await new Promise(setImmediate);
+    view.reviewAt.set(key, Date.now()); watcher.window = () => ({ active: false });
+    change(under("node_modules/x")); await new Promise(setImmediate);
+    assert.deepEqual([asked.length, Date.now() - view.reviewAt.get(key) >= 9000], [0, true], "no check-ignore, and a read once back");
+    watcher.window = env.window;
+    // Another repository's late event leaves this one's last read be.
+    view.reviews.set("other", { root: "/other" }); view.reviewAt.set("other", Date.now()); view.reviewAt.set(key, Date.now());
+    change(under("src/a.js")); await new Promise(setImmediate);
+    assert.ok(Date.now() - view.reviewAt.get("other") < 9000 && Date.now() - view.reviewAt.get(key) >= 9000);
+    watcher.exec = realExec;
+    // The uncommitted count is what the pane shows: a file staged then edited back is no diff, a moved file one rename.
+    const repo = path.join(tmp, "count"), sh = (cmd) => assert.equal(spawnSync("sh", ["-c", cmd], { cwd: repo }).status, 0, cmd);
+    fs.mkdirSync(repo);
+    sh("git init -q && echo base > a.txt && git add a.txt && git -c user.name=a -c user.email=a@b commit -qm init");
+    sh("echo staged > a.txt && git add a.txt && echo base > a.txt");
+    assert.equal((await watcher.readReview(repo)).changed, 0, "staged, then edited back");
+    sh("git reset -q --hard && mv a.txt renamed.txt");
+    assert.equal((await watcher.readReview(repo)).changed, 1, "moved");
+    sh("echo new > n.txt");
+    assert.equal((await watcher.readReview(repo)).changed, 2, "and a new file");
+    assert.equal(fs.readFileSync(path.join(repo, ".git/index")).includes("n.txt"), false, "the person's index untouched");
     // Herdr T3's Home draws no bar: nothing reads its folder, which may be a whole home directory's repository.
     view.reviewAt.clear(); state["t3-home.space"] = "s";
     tick(wcx); await new Promise(setImmediate);
@@ -240,6 +265,8 @@ const load = (props = {}, setup = record) => {
   let oldGit = false;
   const exec = scope.exec = async (_command, args) => {
     gits.push(args.find(a => a === "log" || a === "for-each-ref") ?? args.join(" "));
+    if (args.includes("log")) assert.ok(args.includes("--no-show-signature"), "log.showSignature would add lines that aren't commits");
+    if (args.includes("rev-list")) assert.ok(!args.some(a => a.startsWith("--max-count")), "the unpushed set whole, or a commit past it reads as pushed");
     if (args.includes("log")) { ranges.push(args.at(-1)); return { code: 0, stdout: `abcdef123456\x1ffix: a\x1f${Math.floor(Date.now() / 1000) - 7260}\x1fAvery\n` }; }
     if (args.includes("rev-list")) return { code: 0, stdout: "abcdef123456\n" };
     // Each branch: name, last subject, its time, author, upstream, its track, worktree, then (Git 2.41) ahead and behind.
@@ -393,6 +420,16 @@ const load = (props = {}, setup = record) => {
   pressLogo(); fire(logoButton(), "on_click", {}, run); fire(logoButton(), "on_click", {}, run); await reading;
   assert.equal(menus(), menusBefore + 2);
   delete state["pulls-review.menuClosed"];
+  // Focus moving to another repository while git reads: no menu of this one over it.
+  const readPicks = scope.readPicks;
+  let release;
+  scope.readPicks = (picked) => new Promise(done => { release = () => done(readPicks(picked)); });
+  fire(logoButton(), "on_click", {}, run);
+  Object.assign(shown, { pane: "p9", cwd: "/other" });
+  release(); await reading;
+  assert.equal(menus(), menusBefore + 2, "a stale read opens nothing");
+  Object.assign(shown, { pane: "p1", cwd: undefined });
+  scope.readPicks = readPicks;
   // Enter takes the top row, or the first a search leaves.
   let enter, query = "";
   const placeholders = [];
@@ -510,6 +547,15 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual(newSplit.map(([name, args]) => [name, args.direction, args.pane, args.props.analyze]), [["pane.split", "right", "p1", true]], "the default is a split");
   assert.equal((await opens({}))[0][1].props.analyze, false);
   assert.equal(state.review, undefined, "a new pane has no request to read");
+  // Switching space while it reads: the review stays out of the new space's pane.
+  let config;
+  opener.readTextFile = () => new Promise(done => { config = done; });
+  opener.panes = panesWith("r"); calls.length = 0;
+  const late = opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  opener.spaces = () => twoTabs().map(s => ({ ...s, active: !s.active })); opener.panes = panesWith("x");
+  config('{ "open": "herdr" }'); await late;
+  assert.deepEqual([plain(calls), state.review], [[], undefined], "started in one space, nothing done in another");
+  opener.readTextFile = env.readTextFile; opener.spaces = twoTabs;
 
   // A review pane starts only when shown and shared outlives the app, so a run's word from before a restart would spin on
   // in its tab and its Inbox row. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
