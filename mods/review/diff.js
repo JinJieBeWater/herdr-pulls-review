@@ -18,15 +18,21 @@ export const FOLDS = [
   { id: "collapse-tests", label: "Collapse test files", icon: "flask-conical", collapse: true, applies: f => f.test },
 ];
 
+// The most colored elements a line draws: each is a div, and a view of lines dense with them can outrun a render.
+// shortcut: 400 is a guess under the 50 ms a render gets; calibrate on a dense line in Herdr.
+const SPANS = 400;
+
 // Spaces that end an element are drawn into a following ligature (` =>` shows as `)⇒`): each run's
-// trailing spaces lead the next run instead, where they hold their width.
+// trailing spaces lead the next run instead, where they hold their width. Next runs of one color are one element, and
+// past SPANS the rest of the line is one in the plain color: every character still shows.
 function spans(tokens) {
   const out = [];
   let carry = "";
   for (const [text, color] of tokens) {
-    const t = carry + text.replaceAll("\t", "    "), body = t.trimEnd();
+    const t = carry + text.replaceAll("\t", "    "), body = t.trimEnd(), last = out.at(-1), c = out.length < SPANS - 1 ? color : undefined;
     carry = t.slice(body.length);
-    if (body) out.push([body, color]);
+    if (!body) continue;
+    if (last && last[1] === c) last[0] += body; else out.push([body, c]);
   }
   return out;
 }
@@ -34,7 +40,7 @@ function spans(tokens) {
 // The file at the view's top (or its group's header) is brought back there, as folding the bodies above it would carry the view elsewhere.
 export function foldAll(view, { collapse, applies }, cx) {
   const top = (view.itemList ?? [])[view.visible?.start ?? 0];
-  const anchor = top && (top.kind === "group" ? top.key : `f:${view.itemFile.get(top.key)}`);
+  const anchor = top && (top.kind === "group" ? top.key : `f:${top.path}`);
   for (const f of view.review.files) if (applies(f)) collapse ? view.collapsed.add(f.path) : view.collapsed.delete(f.path);
   view.version++; view.closePopup(cx);
   const index = anchor ? view.items().findIndex(item => item.key === anchor) : -1;
@@ -85,14 +91,14 @@ export function toggleFull(view, file, cx) {
   if (view.full.has(file.path) && !view.full.get(file.path)) return;
   if (view.full.has(file.path)) { view.full.delete(file.path); view.version++; cx.notify(); return; }
   view.full.set(file.path, null);
-  const { root, page } = view;
+  const { root, page } = view, key = JSON.stringify(colors(theme()));
   cx.spawn(async (cx) => {
     // The answer as it comes, `{ rows, truncated }`: past the bytes a read carries, the rows stop short of the file's end.
     let whole = null, error = null;
     try { const r = await review(root, "/api/review/file", { page, file: file.path, colors: colors(theme()) }); clipRows(r.rows); whole = r; }
     catch (e) { error = e?.message ?? String(e); }
-    // Another diff opened meanwhile, or this file changed (which dropped the ask): these rows are the old one's.
-    if (root !== view.root || page !== view.page || view.full.get(file.path) !== null || view.fileAt(file.path)?.sha !== file.sha) return;
+    // Another diff opened meanwhile, this file changed (which dropped the ask), or the theme did (which asked again): these rows are the old one's.
+    if (root !== view.root || page !== view.page || view.full.get(file.path) !== null || view.fileAt(file.path)?.sha !== file.sha || JSON.stringify(colors(theme())) !== key) return;
     if (whole) { view.full.set(file.path, whole); view.collapsed.delete(file.path); } else { view.full.delete(file.path); view.error = error; }
     view.version++;
     cx.notify();
@@ -145,7 +151,7 @@ export function diffView(view, t) {
       // A row reports only its key: where the press landed says which part of a file's header it was for.
       .on_mouse_down("left", (event) => { view.pressX = (event.local_position?.x ?? 0) / zoom(); view.pressY = (event.local_position?.y ?? 0) / zoom(); })
       // A blank after the items (trailing) lets the last header reach the top.
-      .child(v_virtual_list("review-diff", items.length + 1, [...items.map(item => item.size), view.trailing()], (i) => items[i]?.key ?? "end",
+      .child(v_virtual_list("review-diff", items.length + 1, view.listSizes(), (i) => items[i]?.key ?? "end",
         // The range drawn is the only word on where the list is scrolled, and its frames on when a scroll has landed.
         (range) => {
           view.visible = range; view.frames++;
@@ -155,7 +161,7 @@ export function diffView(view, t) {
         .on_item_click((key, cx) => {
           // A press on the stuck header lands on the row under it too: the header has it.
           if (view.stuck && view.pressY < FILE) return;
-          const file = view.review.files.find(f => f.path === view.itemFile.get(key));
+          const path = view.itemList.find(item => item.key === key)?.path, file = view.review.files.find(f => f.path === path);
           if (!file) return;
           if (key.startsWith("f:")) view.headerPress(file, view.pressX ?? 0, cx);
           view.select(file.path, cx, { scroll: false });
@@ -203,7 +209,7 @@ function drawCode(t, row, numbers, shift = 0) {
     .child(div().w(12).flex_none().text_color(row.kind === "+" ? t.ansi2 : row.kind === "-" ? t.ansi1 : t.dim).child(row.kind === " " ? "" : row.kind))
     .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
       .child(h_flex().flex_none().relative().left(-shift)
-        .children(spans(row.tokens.slice(0, 400)).map(([text, color]) => div().flex_none().text_color(color ?? t.foreground).child(text)))));
+        .children(spans(row.tokens).map(([text, color]) => div().flex_none().text_color(color ?? t.foreground).child(text)))));
 }
 
 function diffItem(view, t, item) {

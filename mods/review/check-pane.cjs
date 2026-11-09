@@ -62,6 +62,40 @@ const at = (side, line, text) => ({ text, critical: false, anchor: { side, line 
 const both = { key: "g", files: ["a.ts"], children: [], notes: { "a.ts": [at("additions", 2, "new 2"), at("deletions", 2, "old 2"), at("deletions", 1, "old 1"), at("additions", 2, "new 2 again")] } };
 assert.deepEqual(kinds(buildItems(review, both, { ...opts, split: true })), ["f", "h", "r2", "n(new 2)", "n(old 2)", "n(new 2 again)"]);
 assert.deepEqual(kinds(buildItems(review, both, opts)), ["f", "h", "r2", "n(old 2)", "r1", "n(new 2)", "n(new 2 again)"]);
+{
+  // A batch's rows, a page more, a fold, a whole file or a note rebuild only that file's items: kept from the last build in
+  // `parts`, the others are the same objects. A group of a thousand files was rebuilt whole on every one.
+  const files = [file("a.ts"), file("c.ts")], r = { ...review, files }, g = { key: "g", files: ["a.ts", "c.ts"], notes: {}, children: [] };
+  const o = { ...opts, collapsed: new Set(), full: new Map(), parts: new Map() }, body = (list, path) => list.filter(i => i.path === path && i.kind !== "file");
+  const kept = (before, after, path) => body(before, path).length > 0 && body(before, path).every((item, i) => item === body(after, path)[i]);
+  const steps = [
+    ["rows", "c.ts", () => { files[1].hunks = structuredClone(files[1].hunks); }],
+    ["a page", "c.ts", () => { files[1].hunks.push({ rows: [row("+", undefined, 3)] }); }],
+    ["a page of the last hunk", "c.ts", () => { const h = files[1].hunks.at(-1); h.rows = h.rows.concat([row("+", undefined, 4)]); }],
+    ["cut short", "c.ts", () => { files[1].clipped = true; }],
+    ["a note", "a.ts", () => { g.notes = { "a.ts": [{ text: "new", critical: false }] }; }],
+    ["a whole file", "a.ts", () => { o.full.set("a.ts", { rows: [row(" ", 1, 1)] }); }],
+    ["a fold", "c.ts", () => { o.collapsed.add("c.ts"); }],
+  ];
+  let last = buildItems(r, g, o), unfolded = last;
+  for (const [what, path, change] of steps) {
+    change();
+    const next = buildItems(r, g, o), other = path === "a.ts" ? "c.ts" : "a.ts";
+    assert.ok(kept(last, next, other), `${what}: the other file kept`);
+    assert.ok(!kept(last, next, path), `${what}: its file rebuilt`);
+    assert.deepEqual(plain(next), plain(buildItems(r, g, { ...o, parts: new Map() })), `${what}: as built afresh`);
+    if (!o.collapsed.size) unfolded = next;
+    last = next;
+  }
+  // Opened again, a folded file's items are the ones it had.
+  o.collapsed.delete("c.ts");
+  last = buildItems(r, g, o);
+  assert.ok(kept(unfolded, last, "c.ts"), "opened again, kept");
+  // A read that brings the same rows in new file objects keeps them, with the header on the new file.
+  r.files = files.map(f => ({ ...f }));
+  const reread = buildItems(r, g, o);
+  assert.ok(kept(last, reread, "c.ts") && reread.find(i => i.key === "f:c.ts").file === r.files[1]);
+}
 const big = plain(one(20000));
 assert.ok(big.length < 1000 && big.filter(item => item.lines).every(item => item.size === item.lines.length * 20));
 assert.equal(big.reduce((n, item) => n + (item.lines?.length ?? 0), 0), 20000);
@@ -73,13 +107,15 @@ const tree = plain(fileRows(["packages/cli/src/a.ts", "packages/cli/src/daemon/b
 assert.deepEqual(tree.map(r => `${"  ".repeat(r.depth)}${r.type}:${r.name}`), ["folder:packages/cli/src", "  file:a.ts", "  folder:daemon", "    file:b.ts", "file:README.md", "folder:gone", "  missing:c.ts"]);
 assert.deepEqual(tree[0].paths, ["packages/cli/src/a.ts", "packages/cli/src/daemon/b.ts"]);
 assert.deepEqual(plain(fileRows(["x/a.ts"], [], "list")), [{ key: "file:x/a.ts", depth: 0, type: "file", name: "x/a.ts", path: "x/a.ts" }]);
-// The code widens to its longest line (CJK counts double), unified rows or one split side, and stops at MAX_COLUMNS.
+// The code widens to its longest line (CJK counts double), unified rows or one split side.
 const long = (text) => ({ kind: "row", lines: [{ kind: "+", tokens: [[text]] }] });
 assert.equal(contentWidth([long("a".repeat(100))]), Math.ceil(92 + 100 * 7.25 + 16));
 assert.equal(contentWidth([long("测".repeat(50))]), contentWidth([long("a".repeat(100))]));
 const sides = [{ kind: "pair", lines: [{ left: { tokens: [["a".repeat(10)]] }, right: { tokens: [["a".repeat(100)]] } }, { left: { tokens: [["a"]] } }] }];
 assert.deepEqual([contentWidth(sides, "left"), contentWidth(sides, "right"), contentWidth(sides)], [Math.ceil(52 + 10 * 7.25 + 16), Math.ceil(52 + 100 * 7.25 + 16), 108]);
-assert.equal(contentWidth([long("a".repeat(5000))]), contentWidth([long("a".repeat(1000))]));
+// As wide as a cut line draws: its 1000 characters run to 2000 columns of CJK, or 4000 of tabs.
+assert.equal(contentWidth([{ kind: "row", lines: clipRows([{ kind: "+", tokens: [["测".repeat(5000)]] }]) }]), Math.ceil(92 + 2000 * 7.25 + 16));
+assert.equal(contentWidth([{ kind: "row", lines: clipRows([{ kind: "+", tokens: [["\t".repeat(5000)]] }]) }]), Math.ceil(92 + 4000 * 7.25 + 16));
 // A row is measured once: the list is rebuilt, and measured again, on every batch of rows that arrives.
 {
   let reads = 0;
@@ -94,12 +130,13 @@ clipRows(huge);
 assert.deepEqual(plain(huge[0].tokens.map(([text, color]) => [text.length, color])), [[1, "#fff"], [999, "#0f0"]]);
 assert.equal(contentWidth([{ kind: "row", lines: huge }]), contentWidth([long("a".repeat(1000))]));
 // A big group's rows run past the 8 MB a read carries: a read asks for the files in view and the 10 after them that have
-// none and weren't asked for, while they fit in 3000 changed lines, the first one always.
+// none and aren't folded, while they fit in 3000 changed lines, the first one always.
 const many = Array.from({ length: 40 }, (_, i) => ({ path: `f${i}`, sha: `s${i}`, additions: 500, deletions: 0 }));
 const fileAt = (p) => many.find(f => f.path === p), paths = many.map(f => f.path);
 assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(), new Set())), ["f0", "f1", "f2", "f3", "f4", "f5"]);
 many[0].hunks = []; many[1].hunks = [];
-assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f20", "f21"]), new Set(["s22"]))), ["f20", "f21", "f23", "f24", "f25", "f26"]);
+many[22].hunks = [];
+assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f20", "f21"]), new Set(["f24"]))), ["f20", "f21", "f23", "f25", "f26", "f27"]);
 assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f38"]), new Set())), ["f38", "f39"]);
 many[30].additions = 9000;
 assert.deepEqual(plain(rowsToAsk(paths, fileAt, new Set(["f30"]), new Set())), ["f30"]);
@@ -199,6 +236,20 @@ assert.equal(vm.runInContext('grey("#ff0000")', mainScope), "#363636");
 // A run's progress names the files it reads, not their paths.
 assert.equal(vm.runInContext('progressText({ kind: "reading", paths: [".git/x/agent/1/a.ts", "b.ts", "c"] })', mainScope), "Reading 3 files: a.ts, …");
 assert.equal(vm.runInContext('progressText({ kind: "thinking", step: 2 })', mainScope), "Thinking… (step 2)");
+{
+  // A line of more colored runs than an element budget still draws every character: past it, the rest is one plain run.
+  const said = [], plainDiv = mainScope.div;
+  const recorder = () => { const el = new Proxy(function () {}, { get: (_t, key) => key === "child" ? (v) => { if (typeof v === "string") said.push(v); return el; } : key === "when" ? (c, f) => (c && f(el), el) : () => el }); return el; };
+  mainScope.div = recorder;
+  const dense = [...Array.from({ length: 450 }, (_, i) => [String(i % 10), i % 2 ? "#ff0000" : "#00ff00"]), ["END", "#ff0000"]];
+  vm.runInContext("drawCode", mainScope)({ foreground: "#eeeeee", dim: "#888888", canvas: "#000000" }, { kind: " ", old: 1, new: 1, tokens: dense }, [1]);
+  mainScope.div = plainDiv;
+  const code = said.slice(2);
+  assert.equal(code.join(""), dense.map(([text]) => text).join(""));
+  assert.ok(code.length <= vm.runInContext("SPANS", mainScope), `${code.length} code elements`);
+  // Next runs of one color are one element; a run's trailing spaces lead the next.
+  assert.deepEqual(plain(vm.runInContext("spans", mainScope)([["a", "#f00"], ["b ", "#f00"], ["c", "#f00"], [" ", "#0f0"], ["d", "#0f0"]])), [["ab c", "#f00"], [" d", "#0f0"]]);
+}
 // The 150ms timer is the scroll spy; the others, by period, each pane's in the order they started. A test runs them by hand.
 let spy; const every = {};
 const cx = { spawn: (f) => f(cx), notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() { keyboard = "pane"; } }), timer: { every: (ms, f) => { if (ms === 150) spy = f; (every[ms] ??= []).push(f); }, after: (_ms, f) => timers.push(f) } };
@@ -955,7 +1006,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   await settle(); await settle(); // The folder mark above, and the read after it.
   const shownFiles = groupFiles(pane.group()), first = shownFiles[0], target = () => pane.review.files.find(f => f.path === first);
   for (const f of pane.review.files) if (shownFiles.includes(f.path)) f.hunks ??= [];
-  delete target().hunks;
+  delete target().hunks; pane.collapsed.delete(first);
   pane.load(cx); await settle();
   assert.deepEqual(plain(bodies.at(-1).rows), [first]);
   // A read that says what the one shown does changes nothing: the list isn't rebuilt, and its files stay the ones marks change.
@@ -1183,12 +1234,12 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     return { p, scope };
   };
   {
-    // A rows read that fails gives its files back: Retry asks for them again, and they leave "Loading…".
+    // After a rows read that fails, Retry asks for its files again, and they leave "Loading…".
     const { p, scope } = await paneOf();
     delete p.fileAt("a.ts").hunks; p.version++;
     scope.review = () => Promise.reject(new Error("for now"));
     p.load(cx); await wait();
-    assert.ok(p.error === "for now" && !p.asked.has("a.ts"));
+    assert.equal(p.error, "for now");
     const asks = [];
     scope.review = (root, route, body) => { if (route === "/api/review") asks.push(body.rows); return daemon(root, route, body); };
     p.render(cx); await wait();
@@ -1197,14 +1248,14 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.deepEqual(plain(asks), [["a.ts"]]);
     assert.ok(!p.error && p.fileAt("a.ts").hunks && !p.items().some(i => i.loading));
     // So does one dropped because a reviewed mark landed meanwhile: the mark's own read asks for them.
-    delete p.fileAt("a.ts").hunks; p.asked.clear(); p.version++; asks.length = 0;
+    delete p.fileAt("a.ts").hunks; p.version++; asks.length = 0;
     let answer, mark;
     scope.review = (root, route, body) => route === "/api/review" ? (asks.push(body.rows), new Promise(r => { answer = () => r(daemon(root, route, body)); }))
       : route === "/api/review/reviewed" ? new Promise(r => { mark = r; }) : daemon(root, route, body);
     p.load(cx);
     p.setReviewed(p.fileAt("c.ts"), true, cx);
     answer(); await wait(); p.render(cx); await wait();
-    assert.ok(!p.asked.has("a.ts") && asks.length === 1, "dropped, and no read until the mark lands");
+    assert.equal(asks.length, 1, "dropped, and no read until the mark lands");
     scope.review = (root, route, body) => { if (route === "/api/review") asks.push(body.rows); return daemon(root, route, body); };
     mark({}); await wait();
     assert.deepEqual(plain(asks.at(-1)), ["a.ts"]);
@@ -1318,7 +1369,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     // A file asked for that comes back without rows, past what one read carries, is asked for again by the next read.
     const { p, scope } = await paneOf();
     for (const f of [p.fileAt("a.ts"), p.fileAt("c.ts")]) delete f.hunks;
-    p.asked.clear(); p.version++;
+    p.version++;
     const asks = [];
     scope.review = async (root, route, body) => {
       if (route !== "/api/review" && route !== "/api/review/rows") return daemon(root, route, body);
@@ -1331,6 +1382,80 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     p.load(cx); await wait(); p.render(cx); await wait();
     assert.deepEqual(plain(asks), [["/api/review", ["a.ts", "c.ts"]], ["/api/review/rows", ["c.ts"]]]);
     assert.ok(p.fileAt("a.ts").hunks && p.fileAt("c.ts").hunks);
+  }
+  {
+    // Two paths can hold one blob (a copied file): rows read for one leave the other to the next batch, not loading for good.
+    const twin = { ...review, files: [file("a.ts", { sha: "same" }), file("c.ts", { sha: "same" })], groups: [{ ...review.groups[0], files: ["a.ts", "c.ts"], notes: {}, children: [] }] };
+    const bare = ({ hunks, ...f }) => f;
+    const { p } = await paneOf({ review: async (_root, route, body) => {
+      // The first file asked for only, as past what one read carries.
+      if (route === "/api/review/rows") return { files: twin.files.filter(f => f.path === body.files[0]).map(({ path, sha, hunks }) => structuredClone({ path, sha, hunks })) };
+      return route === "/api/review" ? { ...structuredClone(twin), files: twin.files.map(bare) } : {};
+    } });
+    for (let i = 0; i < 3; i++) { p.render(cx); await wait(); }
+    assert.ok(p.fileAt("a.ts").hunks && p.fileAt("c.ts").hunks, "both paths read");
+  }
+  {
+    // A read that outlives the timeout: Retry asks for its rows again, rather than leave them to an answer that's dropped.
+    const { p, scope } = await paneOf();
+    delete p.fileAt("a.ts").hunks; p.version++;
+    const held = [];
+    scope.review = (root, route, body) => route === "/api/review" ? new Promise(r => held.push([body, () => r(daemon(root, route, body))])) : daemon(root, route, body);
+    timers.length = 0;
+    p.load(cx); tick();
+    assert.ok(p.error && !p.loading);
+    p.load(cx);
+    assert.deepEqual(plain(held.map(([body]) => body.rows)), [["a.ts"], ["a.ts"]]);
+    held[1][1](); await wait();
+    assert.ok(!p.error && p.fileAt("a.ts").hunks);
+    held[0][1](); await wait();
+  }
+  {
+    // A theme change recolors a whole file too: one shown is read again in the new colors, one read in the old is dropped.
+    const { p, scope } = await paneOf(), light = scope.theme, held = [];
+    scope.review = (root, route, body) => route === "/api/review/file"
+      ? new Promise(r => held.push(() => r({ rows: [{ kind: " ", old: 1, new: 1, tokens: [["x", body.colors.foreground]] }] })))
+      : daemon(root, route, body);
+    const color = () => p.full.get("a.ts")?.rows[0].tokens[0][1];
+    p.toggleFull(p.fileAt("a.ts"), cx); held[0](); await wait();
+    assert.equal(color(), "#eeeeee");
+    scope.theme = () => ({ ...light(), foreground: "#111111" }); p.render(cx); await wait();
+    held.at(-1)(); await wait();
+    assert.equal(color(), "#111111", "shown, read again");
+    p.toggleFull(p.fileAt("a.ts"), cx); p.toggleFull(p.fileAt("a.ts"), cx);
+    const before = held.at(-1);
+    scope.theme = () => ({ ...light(), foreground: "#222222" }); p.render(cx); await wait();
+    before(); await wait();
+    assert.notEqual(color(), "#111111", "in flight, dropped");
+    held.at(-1)(); await wait();
+    assert.equal(color(), "#222222");
+    scope.theme = light;
+  }
+  {
+    // How far code scrolls sideways, kept per file, is what measuring the whole list gives: a fold takes its long line away.
+    const { p } = await paneOf();
+    p.view = 1000;
+    p.fileAt("c.ts").hunks = [{ header: "@@", rows: [{ kind: "+", new: 1, tokens: [["x".repeat(500)]] }] }];
+    const whole = () => pref("split") ? ["left", "right", "solo"].map(side => contentWidth(p.items(), side)) : [0, 0, contentWidth(p.items())];
+    const split = pref("split");
+    for (const mode of [false, true]) {
+      setPref("split", mode);
+      p.collapsed.delete("c.ts"); p.version++; p.items();
+      const open = plain(p.sideWidth);
+      assert.deepEqual(open, plain(whole()));
+      p.collapsed.add("c.ts"); p.version++; p.items();
+      assert.deepEqual(plain(p.sideWidth), plain(whole()));
+      assert.ok(Math.max(...p.sideWidth) < Math.max(...open), "folded, narrower");
+    }
+    setPref("split", split);
+  }
+  {
+    // A folded file's rows aren't read until it's opened: folding a big file is how to keep it off the pane's back.
+    const { p } = await paneOf();
+    delete p.fileAt("a.ts").hunks; p.collapsed.add("a.ts"); p.version++;
+    assert.deepEqual(plain(p.rowsWanted()), []);
+    p.collapsed.delete("a.ts"); p.version++;
+    assert.deepEqual(plain(p.rowsWanted()), ["a.ts"]);
   }
   // The list draws only a window of its items, from `top`, as a scrolled v_virtual_list does.
   let top = 0;

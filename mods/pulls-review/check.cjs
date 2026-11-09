@@ -405,6 +405,17 @@ const load = (props = {}, setup = record) => {
   for (let i = 0; i < 2; i++) fire(wheeled, "on_scroll_wheel", { delta: { x: 0, y: 28 * zoom } }, cx);
   assert.deepEqual([branchRow(0)?.style.top, branchRow(4)], [0, null], "the wheel scrolls back up");
   assert.equal(branchRow(3).style.bg, theme.selected, "and the highlight comes along, to the last row in view");
+  // Only the rows drawn are built: 200 commits, four in view, build a few dozen elements, not one per commit.
+  const long = load({ ...menuProps, commits: Array.from({ length: 200 }, (_, i) => ({ sha: `s${i}`, subject: `fix: c${i}`, time: Date.now() })),
+    // Read once into a set: a scan per row per render grows with every commit not pushed.
+    unpushed: Object.assign(["s0"], { includes() { throw new Error("the unpushed set scanned in render"); } }) });
+  fire(find(long.mod.render(), "review-commit-list"), "on_size_change", { width: 500, height: 4 * 28 * zoom }, cx);
+  let built = 0;
+  for (const make of ["div", "h_flex", "v_flex", "svg"]) { const real = long.scope[make]; long.scope[make] = (...args) => (built++, real(...args)); }
+  const longMenu = long.mod.render();
+  assert.deepEqual([Boolean(find(longMenu, "review-commit-s3")), find(longMenu, "review-commit-s4")], [true, null]);
+  assert.ok(built < 100, `${built} elements for four rows`);
+  assert.deepEqual(strings(find(longMenu, "review-commit-s0")).slice(-2, -1), ["↑"], "not pushed");
   // The logo toggles: a press outside the popup closes it, before or just after the press reaches the bar; its click leaves it closed.
   const menus = () => overlays.length, logoButton = () => find(bar.render(), "review-pick");
   const pressLogo = () => fire(logoButton(), "on_mouse_down:left", { position: { x: 900, y: 20 } }, cx);
@@ -491,7 +502,7 @@ const load = (props = {}, setup = record) => {
   assert.equal(launched.length, opened, "no match: Enter opens nothing");
   await click({ ...r, branch: "main", unmerged: 0 });
   assert.equal(ranges.at(-1), "HEAD", "on the default branch: its recent commits");
-  delete bar.reviewPress;
+  // Right after a press's: the last press isn't this click's.
   fire(find(bar.render(), "review-pick"), "on_click", {}, run);
   await reading;
   assert.equal(overlays.at(-1).at, undefined, "a click with no press opens at the pointer");
@@ -513,12 +524,30 @@ const load = (props = {}, setup = record) => {
   // mode, a review pane split off the focused one.
   calls.length = 0;
   const { mod: launcher, scope: opener } = load({ overlay: "o1" }, (scope) => {
-    scope.exec = async (_command, args) => args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" } : { code: 0, stdout: args.includes("status") ? " M a.js\n" : "" };
+    // No sh: status's count, as on Windows.
+    scope.exec = async (command, args) => command === "sh" ? { code: 1, stdout: "" } : args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" } : { code: 0, stdout: args.includes("status") ? " M a.js\n" : "" };
   });
   await new Promise(setImmediate);
   assert.deepEqual(calls.map(([name, args]) => [name, args.mod, args.pane, args.props?.root, args.props?.page]), [["pane.split", "review", "p1", "/repo", "/worktree"]]);
   assert.deepEqual(closed.at(-1), "o1");
   assert.equal(find(launcher.render(), "review-fit"), null, "nothing to see while it works");
+  // A file staged then edited back is no change to review, as the bar counts it: the shortcut opens the branch's commit.
+  const netRepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pulls-review-net-")));
+  try {
+    const sh = (cmd) => assert.equal(spawnSync("sh", ["-c", cmd], { cwd: netRepo }).status, 0, cmd);
+    sh("git init -q -b main && echo base > a.txt && git add a.txt && git -c user.name=a -c user.email=a@b commit -qm init"
+      + " && git checkout -qb feat && echo b > b.txt && git add b.txt && git -c user.name=a -c user.email=a@b commit -qm b"
+      + " && echo staged > a.txt && git add a.txt && echo base > a.txt");
+    calls.length = 0;
+    const { scope: shortcut } = load({}, null);
+    shortcut.panes = () => [{ pane: "p1", tab: "b", cwd: netRepo }];
+    shortcut.exec = async (command, args, { cwd }) => { const r = spawnSync(command, args, { cwd, encoding: "utf8" }); return { code: r.status, stdout: r.stdout }; };
+    await shortcut.launch({});
+    assert.deepEqual(calls.map(([name, args]) => [name, args.props?.page]), [["pane.split", "/branch/feat"]], "staged then edited back: the branch, not an empty worktree");
+    sh("echo edited > a.txt"); calls.length = 0;
+    await shortcut.launch({});
+    assert.deepEqual(calls.map(([name, args]) => [name, args.props?.page]), [["pane.split", "/worktree"]], "a real change: the worktree");
+  } finally { fs.rmSync(netRepo, { recursive: true, force: true }); }
   // From the bar, what it already knows: no git, no overlay to close.
   calls.length = 0;
   const shutBefore = closed.length;
@@ -545,8 +574,26 @@ const load = (props = {}, setup = record) => {
   delete state["review.prefs"];
   const newSplit = await opens({ analyze: true });
   assert.deepEqual(newSplit.map(([name, args]) => [name, args.direction, args.pane, args.props.analyze]), [["pane.split", "right", "p1", true]], "the default is a split");
-  assert.equal((await opens({}))[0][1].props.analyze, false);
-  assert.equal(state.review, undefined, "a new pane has no request to read");
+  const made = (await opens({}))[0][1].props;
+  assert.equal(made.analyze, false);
+  assert.deepEqual(plain(state.review), { tab: null, n: made.n }, "a new pane has no request to read; the record keeps its number");
+  // The pane takes only a number past the last it handled, and its own switch sends the last one + 1: each request's is
+  // past the last sent, whatever the clock says.
+  opener.panes = panesWith("r");
+  const OpenerDate = vm.runInContext("Date", opener), clock = OpenerDate.now;
+  OpenerDate.now = () => 100000;
+  state.review = { tab: "r", root: "/repo", page: "/commit/previous", base: "/branch/feat", n: 101000 };
+  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  assert.ok(state.review.n > 101000, "the clock set back");
+  const first = state.review.n;
+  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  assert.ok(state.review.n > first, "two in the same millisecond");
+  opener.panes = panesWith("x"); OpenerDate.now = () => 200000;
+  const fresh = (await opens({}))[0][1].props.n;
+  opener.panes = panesWith("r"); OpenerDate.now = () => 100000;
+  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  assert.ok(state.review.n > fresh, "past a new pane's, whose props start it");
+  OpenerDate.now = clock; delete state.review;
   // Switching space while it reads: the review stays out of the new space's pane.
   let config;
   opener.readTextFile = () => new Promise(done => { config = done; });

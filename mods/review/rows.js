@@ -3,7 +3,7 @@
 
 // Heights on one scale: 20 a code line, 24 a hunk, 28 a group, 32 a file.
 export const ROW = 20, HUNK = 24, GROUP = 28, FILE = 32, NOTE_LINE = 18;
-// One column of 12px JetBrains Mono; past MAX_COLUMNS a line is cut, not scrolled to.
+// One column of 12px JetBrains Mono; past MAX_COLUMNS characters a line is cut, not scrolled to.
 export const CHAR = 7.25, MAX_COLUMNS = 1000;
 // Code lines go to the list in runs of up to this many, one item each: Herdr's v_virtual_list takes at most 10000 items,
 // which a group of a few thousand changed lines passes when each line is one.
@@ -15,22 +15,23 @@ export const codeInset = (split) => split ? 52 : 92;
 
 // Wide (CJK and up) counts 2: a BMP character is 1 unit plus 1 here; an astral one, 2 units (surrogates aren't matched).
 const WIDE = /[\u2e80-\ud7ff\ue000-\uffff]/g;
-// Kept on the row: a row's tokens don't change once clipped, and the list is rebuilt, and measured, on every batch of rows.
-const columns = (row) => row ? row.columns ??= Math.min(MAX_COLUMNS, row.tokens.reduce((n, [text]) => { const t = text.replaceAll("\t", "    "); return n + t.length + (t.match(WIDE)?.length ?? 0); }, 0)) : 0;
+// As drawn, so past a clipped line's wide characters and tabs it still scrolls to its end. Kept on the row: its tokens don't
+// change once clipped.
+const columns = (row) => row ? row.columns ??= row.tokens.reduce((n, [text]) => { const t = text.replaceAll("\t", "    "); return n + t.length + (t.match(WIDE)?.length ?? 0); }, 0) : 0;
 
 // A group's rows run past the 8 MB one read carries: a read asks for at most ROW_BUDGET changed lines, from the files in view
 // and the LOOKAHEAD after them, so the rest come as the list reaches them. As the daemon's FIRST_ROWS for an open.
 export const ROW_BUDGET = 3000, LOOKAHEAD = 10;
 
-/** The paths of a read's rows: in view or just after, without rows and not yet asked for, while they fit (the first always). */
-export function rowsToAsk(paths, fileAt, inView, asked) {
+/** The paths of a read's rows: in view or just after, without rows and not folded, while they fit (the first always). */
+export function rowsToAsk(paths, fileAt, inView, collapsed) {
   let first = -1, last = -1;
   paths.forEach((path, i) => { if (inView.has(path)) { if (first < 0) first = i; last = i; } });
   const out = [];
   let lines = 0;
   for (const path of paths.slice(Math.max(first, 0), Math.max(last, 0) + LOOKAHEAD + 1)) {
     const f = fileAt(path);
-    if (!f || f.hunks || asked.has(f.sha)) continue;
+    if (!f || f.hunks || collapsed.has(path)) continue;
     const size = f.additions + f.deletions;
     if (out.length && lines + size > ROW_BUDGET) break;
     out.push(path); lines += size;
@@ -153,66 +154,79 @@ export const groupFiles = (group) => [...group.files, ...group.children.flatMap(
 /**
  * The list for one group: a header per child group, a header per file, and, unless the file
  * is collapsed, its notes and rows, in runs of up to RUN broken by a line's note. `full` holds a file's whole-file answer (`{ rows, truncated }`) once loaded.
- * Returns the items with their heights, as `v_virtual_list` takes them.
+ * Returns the items with their heights, as `v_virtual_list` takes them. `parts` keeps each file's items from the last
+ * build, reused while what they're drawn from holds: a batch of rows or a fold rebuilds its files, not a group of thousands.
  */
-export function buildItems(review, group, { collapsed, full, split, width }) {
+export function buildItems(review, group, { collapsed, full, split, width, parts = new Map() }) {
   const items = [], byPath = new Map(review.files.map(file => [file.path, file]));
-  const push = (item, size) => { items.push({ ...item, size }); };
   const notesOf = (g, path) => [g, ...g.children].flatMap(x => x.notes[path] ?? []);
-  const fileItems = (path) => {
+  const addFile = (path) => {
     const file = byPath.get(path);
     if (!file) return;
-    push({ key: `f:${path}`, kind: "file", file }, FILE);
+    items.push({ key: `f:${path}`, kind: "file", file, size: FILE, path });
     if (collapsed.has(path)) return;
-    const notes = notesOf(group, path);
-    // The file's own notes, and notes on lines no hunk shows, sit under its header as the app shows them; a rule ends them.
-    const own = notes.filter(note => !note.anchor);
-    for (const [i, note] of own.entries()) push({ key: `n:${path}:f${i}`, kind: "note", note, last: i === own.length - 1 }, noteHeight(note.text, width, false));
-    const whole = full.get(path), hunks = whole ? [{ header: null, rows: whole.rows }] : file.hunks;
-    if (!hunks) {
-      push({ key: `e:${path}`, kind: "empty", text: "Loading…", loading: true }, ROW);
-      return;
-    }
-    if (!hunks.length) {
-      push({ key: `e:${path}`, kind: "empty", text: file.isBinary ? "Binary file" : file.truncated ? "Too large to show" : "No text changes" }, ROW);
-      return;
-    }
-    // Split, an added or removed file has one side only: it takes the whole width rather than half.
-    const solo = split && (file.status === "added" || file.status === "removed");
-    const kind = !split ? "row" : solo ? "solo" : "pair";
-    // The anchored notes by the line they're on: each row looks up its own, not every note of the file.
-    const anchored = new Map();
-    for (const [i, note] of notes.entries()) {
-      const at = note.anchor && `${note.anchor.side}:${note.anchor.line}`;
-      if (at) anchored.set(at, [...anchored.get(at) ?? [], i]);
-    }
-    for (const [h, hunk] of hunks.entries()) {
-      if (hunk.header) push({ key: `h:${path}:${h}`, kind: "hunk", text: hunk.header }, HUNK);
-      const lines = split && !solo ? pairRows(hunk.rows) : hunk.rows;
-      let run = /** @type {any} */ (null);
-      for (const [r, line] of lines.entries()) {
-        if (!run || run.lines.length === RUN) { run = { key: `r:${path}:${h}:${r}`, kind, lines: [] }; items.push(run); }
-        run.lines.push(line); run.size = run.lines.length * ROW;
-        if (!anchored.size) continue;
-        const rows = kind === "pair" ? [line.left, line.right].filter(Boolean) : [line];
-        // A removed line holds the deletions side's notes, any other the additions'; a pair's two sides, in the file's order.
-        const here = [...new Set(rows.flatMap(row => anchored.get(row.kind === "-" ? `deletions:${row.old}` : `additions:${row.new}`) ?? []))];
-        for (const i of here.sort((a, b) => a - b)) {
-          push({ key: `n:${path}:${i}`, kind: "note", note: notes[i], anchored: true }, noteHeight(notes[i].text, width, true));
-          run = null;
-        }
-      }
-    }
-    // Past the bytes one read carries, the daemon sends the rows only so far: the next page comes as this row nears the view.
-    const stuck = (whole ?? file).stuck;
-    if (whole ? whole.truncated : file.clipped) push({ key: `e:${path}:cut`, kind: "empty", text: stuck ? "The rest of this file is too large to show" : "Loading…", loading: !stuck, more: !stuck }, ROW);
+    const notes = notesOf(group, path), whole = full.get(path), hunks = file.hunks;
+    // What its items show: rows arriving, a page more (a hunk added, or the last one's rows), a whole file, its notes (and
+    // the width they wrap at), the mode. A read's new file objects carry the rows already shown.
+    const stamp = [hunks, hunks?.length, hunks?.at(-1)?.rows, file.clipped, file.stuck, file.status, file.isBinary, file.truncated,
+      whole, whole?.rows, whole?.truncated, whole?.stuck, split, notes.length ? `${width}:${JSON.stringify(notes)}` : ""];
+    let part = parts.get(path);
+    if (!part || stamp.some((value, i) => value !== part.stamp[i])) parts.set(path, part = { stamp, items: fileItems(path, file, notes, whole, split, width) });
+    for (const item of part.items) items.push(item);
   };
-  // Each of a file's items names it: a path may hold ":", which its key can't be split at.
-  const addFile = (path) => { const from = items.length; fileItems(path); for (let i = from; i < items.length; i++) items[i].path = path; };
   for (const path of group.files) addFile(path);
   for (const child of group.children) {
-    push({ key: `g:${child.key}`, kind: "group", group: child }, GROUP);
+    items.push({ key: `g:${child.key}`, kind: "group", group: child, size: GROUP });
     for (const path of child.files) addFile(path);
   }
+  return items;
+}
+
+/** A file's items under its header: its own notes, then its rows (or the whole file's), with their lines' notes. */
+function fileItems(path, file, notes, whole, split, width) {
+  const items = [];
+  // Each names its file: a path may hold ":", which its key can't be split at.
+  const push = (item, size) => { items.push({ ...item, size, path }); };
+  // The file's own notes, and notes on lines no hunk shows, sit under its header as the app shows them; a rule ends them.
+  const own = notes.filter(note => !note.anchor);
+  for (const [i, note] of own.entries()) push({ key: `n:${path}:f${i}`, kind: "note", note, last: i === own.length - 1 }, noteHeight(note.text, width, false));
+  const hunks = whole ? [{ header: null, rows: whole.rows }] : file.hunks;
+  if (!hunks) {
+    push({ key: `e:${path}`, kind: "empty", text: "Loading…", loading: true }, ROW);
+    return items;
+  }
+  if (!hunks.length) {
+    push({ key: `e:${path}`, kind: "empty", text: file.isBinary ? "Binary file" : file.truncated ? "Too large to show" : "No text changes" }, ROW);
+    return items;
+  }
+  // Split, an added or removed file has one side only: it takes the whole width rather than half.
+  const solo = split && (file.status === "added" || file.status === "removed");
+  const kind = !split ? "row" : solo ? "solo" : "pair";
+  // The anchored notes by the line they're on: each row looks up its own, not every note of the file.
+  const anchored = new Map();
+  for (const [i, note] of notes.entries()) {
+    const at = note.anchor && `${note.anchor.side}:${note.anchor.line}`;
+    if (at) anchored.set(at, [...anchored.get(at) ?? [], i]);
+  }
+  for (const [h, hunk] of hunks.entries()) {
+    if (hunk.header) push({ key: `h:${path}:${h}`, kind: "hunk", text: hunk.header }, HUNK);
+    const lines = split && !solo ? pairRows(hunk.rows) : hunk.rows;
+    let run = /** @type {any} */ (null);
+    for (const [r, line] of lines.entries()) {
+      if (!run || run.lines.length === RUN) { run = { key: `r:${path}:${h}:${r}`, kind, lines: [], path }; items.push(run); }
+      run.lines.push(line); run.size = run.lines.length * ROW;
+      if (!anchored.size) continue;
+      const rows = kind === "pair" ? [line.left, line.right].filter(Boolean) : [line];
+      // A removed line holds the deletions side's notes, any other the additions'; a pair's two sides, in the file's order.
+      const here = [...new Set(rows.flatMap(row => anchored.get(row.kind === "-" ? `deletions:${row.old}` : `additions:${row.new}`) ?? []))];
+      for (const i of here.sort((a, b) => a - b)) {
+        push({ key: `n:${path}:${i}`, kind: "note", note: notes[i], anchored: true }, noteHeight(notes[i].text, width, true));
+        run = null;
+      }
+    }
+  }
+  // Past the bytes one read carries, the daemon sends the rows only so far: the next page comes as this row nears the view.
+  const stuck = (whole ?? file).stuck;
+  if (whole ? whole.truncated : file.clipped) push({ key: `e:${path}:cut`, kind: "empty", text: stuck ? "The rest of this file is too large to show" : "Loading…", loading: !stuck, more: !stuck }, ROW);
   return items;
 }

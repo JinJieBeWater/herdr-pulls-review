@@ -10,7 +10,7 @@ import { launch } from "./open.js";
 import { detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { glow, tip } from "./tip.js";
 import { step, scrollList } from "./list.js";
-import { stop } from "./focus.js";
+import { stop, pressed, justClosed } from "./focus.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -49,6 +49,14 @@ export const git = (cwd, args) => exec("git", ["--no-optional-locks", "-c", "cor
 // new files marked intent-to-add in a throwaway copy of the index so a moved file pairs up as one rename.
 const NET = `d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT && { cp "$(git rev-parse --git-path index)" "$d/i" 2>/dev/null; export GIT_INDEX_FILE="$d/i"; } && `
   + "git --no-optional-locks -c core.fsmonitor=false add -N -- . && git --no-optional-locks -c core.fsmonitor=false diff -M --name-only -z HEAD --";
+// Status counts a file staged then edited back, which the pane shows no diff for, and a moved file as two: `lines`, status's
+// count, stands only where the net read can't run.
+export async function changedFiles(root, lines) {
+  if (!lines) return 0;
+  const net = await exec("sh", ["-c", NET], { cwd: root }).catch(() => null);
+  // shortcut: no sh (Windows) or no commit yet falls back to status's count; follow the daemon's empty-tree base if that matters.
+  return net?.code === 0 ? net.stdout.split("\0").filter(Boolean).length : lines;
+}
 
 // A commit's age as the Inbox's settled rows read (t3-inbox's ago), but "now" for "just now": the column is narrow.
 function ago(ms, now) {
@@ -141,12 +149,7 @@ async function readReview(cwd) {
     else if (line.startsWith("# branch.ab ")) { ab = true; [review.ahead, review.behind] = line.slice(12).split(" ").map(n => Math.abs(parseInt(n, 10)) || 0); }
     else if (line && !line.startsWith("#")) lines++;
   }
-  // Status counts a file staged then edited back, which the pane shows no diff for, and a moved file as two.
-  if (lines) {
-    const net = await exec("sh", ["-c", NET], { cwd: root }).catch(() => null);
-    // shortcut: no sh (Windows) or no commit yet falls back to status's count; follow the daemon's empty-tree base if that matters.
-    review.changed = net?.code === 0 ? net.stdout.split("\0").filter(Boolean).length : lines;
-  }
+  review.changed = await changedFiles(root, lines);
   // git leaves out branch.ab when the upstream is set but gone, as after a merged PR's branch is deleted.
   review.gone = Boolean(review.upstream) && !ab;
   // The default branch as the CLI resolves it (resolveDefaultBranch): origin/HEAD, else main or master.
@@ -212,6 +215,8 @@ function reviewMatches(view) {
 export function initReviewMenu(view) {
   view.search = InputState.new({ placeholder: props().branches.length ? "Search commits and branches" : "Search commits" });
   view.at = 0;
+  // All the shas not pushed, which can far outnumber the menu's rows: looked up per row on every render.
+  view.unpushed = new Set(props().unpushed ?? []);
   view.tab = props().commits.length ? "commits" : "branches";
   view.search.on("change", (_e, cx) => {
     // A search that empties the page shown and not the other turns to the other.
@@ -240,7 +245,7 @@ function setTab(view, tab, cx) {
 
 // The logo's menu, this mod opened as an overlay with props.menu (main.js).
 export function reviewMenu(view) {
-  const t = theme(), { base, branch, height, upstream, unpushed = [] } = props(), { commits, branches } = reviewMatches(view);
+  const t = theme(), { base, branch, height, upstream } = props(), { commits, branches } = reviewMatches(view);
   const now = Date.now(), picks = menuPicks(view), lit = picks[view.at]?.id;
   // The card follows the highlight, by pointer or key: a commit's opens, anything else's closes it.
   const highlight = (at, cx) => {
@@ -266,9 +271,10 @@ export function reviewMenu(view) {
     })
     .on_mouse_move((e) => detailsAt(view, id, e))
     .role("button").accessibility_label(name).on_click(action).children(cells);
-  // Rows keep their handlers, as a virtual list's can't: a hovered commit opens its card. The wheel takes the highlight along, and a card moves off.
-  const list = (id, items) => scrollList(view, id, { count: items.length, row: MENU_ROW, at: items.findIndex(x => x.id === lit), draw: (i) => items[i].el, wheeled: (keep, cx) => {
-    if (keep >= 0) view.at = picks.findIndex(p => p.id === items[keep].id);
+  // Rows keep their handlers, as a virtual list's can't: a hovered commit opens its card. Only the rows in view are built.
+  // The list shown is the picks, row for row. The wheel takes the highlight along, and a card moves off.
+  const list = (id, count, draw) => scrollList(view, id, { count, row: MENU_ROW, at: view.at, draw, wheeled: (keep, cx) => {
+    if (keep >= 0) view.at = keep;
     view.hovered = null;
     detailsFor(view, null, cx);
   } }).flex_1().min_h(0);
@@ -292,9 +298,9 @@ export function reviewMenu(view) {
         .child(segment("commits", "Commits", commits.length)).child(segment("branches", "Branches", branches.length)))
       .child(div().flex_1()).child(div().min_w(0).truncate().text_size(12).text_color(t.dim).child(scope))))
     .when(!tabs, el => el.child(title(tab === "branches" ? `Branches vs ${base}` : branch === "(detached)" ? "Commits" : `Commits on ${branch}`)))
-    .when(tab === "branches", el => el.child(list("review-branches", branches.map(b => {
-      const id = `review-branch-${b.name}`;
-      return { id, el: row(id, `Review branch ${b.name}` + (b.count === undefined ? "" : `, ${b.count} ahead of ${base}`), (_e, cx) => openPick(branchArgs(b), cx), [
+    .when(tab === "branches", el => el.child(list("review-branches", branches.length, (i) => {
+      const b = branches[i], id = `review-branch-${b.name}`;
+      return row(id, `Review branch ${b.name}` + (b.count === undefined ? "" : `, ${b.count} ahead of ${base}`), (_e, cx) => openPick(branchArgs(b), cx), [
         svg("mods/pulls-review/icons/git-branch.svg").size(16).mx(-2).flex_none().text_color(t.dim),
         h_flex().flex_1().min_w(0).gap(8)
           .child(div().flex_none().max_w(160).truncate().child(b.name))
@@ -302,19 +308,18 @@ export function reviewMenu(view) {
         h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
           .when(b.count !== undefined, el => el.child(`${b.count} ahead`))
           .child(b.time ? ago(b.time, now) : ""),
-        branchCard(view, t, id, b, base, now)]) };
-    }))))
-    .when(tab === "commits", el => el.child(list("review-commit-list", commits.map(c => {
-        const id = `review-commit-${c.sha}`, prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = unpushed.includes(c.sha);
-        const r = row(id, `Review commit ${c.subject}` + (out ? ", not pushed" : ""), (_e, cx) => openPick([c.sha], cx), [
+        branchCard(view, t, id, b, base, now)]);
+    })))
+    .when(tab === "commits", el => el.child(list("review-commit-list", commits.length, (i) => {
+        const c = commits[i], id = `review-commit-${c.sha}`, prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = view.unpushed.has(c.sha);
+        return row(id, `Review commit ${c.subject}` + (out ? ", not pushed" : ""), (_e, cx) => openPick([c.sha], cx), [
           h_flex().flex_1().min_w(0).gap(4).when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
             .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))),
           h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
             .when(out, el => el.child(div().text_color(t.ansi2).child("↑")))
             .child(c.time ? ago(c.time, now) : ""),
           commitCard(view, t, id, c, upstream, out, now)]);
-        return { id, el: r };
-      }))))
+      })))
     .when(!picks.length, el => el.child(div().p(8).text_center().text_color(t.dim).child("No matches")));
 }
 
@@ -384,14 +389,13 @@ export function reviewBar(view, t, stopPress) {
     r.ahead > 0 && ["review-ahead", String(r.ahead), null, "arrow-up", `Review ${r.branch} → ${r.upstream}: ${n(r.ahead, "commit")} to push, on ${r.branch}, not on ${r.upstream}`, [`${r.upstream}...${r.branch}`], "↑"],
     r.behind > 0 && ["review-behind", String(r.behind), null, "arrow-down", `Review ${r.upstream} → ${r.branch}: ${n(r.behind, "commit")} to pull, on ${r.upstream} as of your last fetch, not on ${r.branch}`, [`${r.branch}...${r.upstream}`], "↓"],
   ].filter(Boolean);
-  const pressed = (e, cx) => { view.reviewPress = e.position; view.pressAt = Date.now(); stopPress(e, cx); };
+  const press = (e, cx) => { view.reviewPress = e.position; pressed(view); stopPress(e, cx); };
   const openMenu = (_e, cx) => {
     view.hot = null; cx.notify();
-    // The button toggles: the press that brought this click closed the menu, so the click leaves it closed. 50 ms, for
-    // a close reported just before the press. No press (assistive tech clicks without one), nothing to tell.
-    const closing = view.pressAt != null && (shared(MENU_CLOSED) ?? 0) >= view.pressAt - 50;
-    view.pressAt = null;
-    if (closing || view.readingPicks) return;
+    // Under this click's press, if it came with one; read now, as a press while git reads is another click's.
+    const at = view.pressAt == null ? undefined : underBar(view.reviewPress);
+    // The button toggles: the press that brought this click closed the menu, so the click leaves it closed.
+    if (justClosed(view, MENU_CLOSED) || view.readingPicks) return;
     view.readingPicks = true;
     const from = JSON.stringify(reviewLocation());
     cx.spawn(async () => { try {
@@ -401,7 +405,7 @@ export function reviewBar(view, t, stopPress) {
       // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
       const tabs = branches.length > 0 && commits.length > 0;
       const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);
-      openOverlay({ mod: MOD, kind: "popup", at: underBar(view.reviewPress), width: 368, height, props: { menu: "review", root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
+      openOverlay({ mod: MOD, kind: "popup", at, width: 368, height, props: { menu: "review", root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
     } finally { view.readingPicks = false; } });
   };
   // Outlined, not filled: a fill would read as an active tab. Each part's fill runs to the outline and the rules.
@@ -411,7 +415,7 @@ export function reviewBar(view, t, stopPress) {
     // Stays with no counts: on a clean default branch it's the only way in.
     .child(tip(view, t, "review-pick", "Change what to review", stop(view, t, "review-pick", h_flex().id("review-pick").h(22).w(segments.length ? 23 : 22).flex_none().items_center().justify_center().rounded_r(7).when(!segments.length, el => el.rounded_l(7))
       .hover(s => s.bg(t.hover)).on_hover(glow(view, "review-pick")).role("button").accessibility_label("Change what to review")
-      .on_mouse_down("left", pressed).on_click(openMenu)
+      .on_mouse_down("left", press).on_click(openMenu)
       // As T3's icon-xs, 24 with the outline's sides. image, not svg: svg would draw the logo in one tint.
       .child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()), 7), { below: true }));
 }
