@@ -33,6 +33,7 @@ A Review bar for Herdr App's top bar and a review pane beside the agent: the bar
 - The block's row needs `"resizable": false`: rows default to resizable, and a drag would fight the block sizing itself.
 - A layout naming `pulls-review` without the folder installed reports `no mod folder` in `herdr-app status`.
 - Herdr tells a mod pane neither its tab nor its folder: the pane claims the one review pane's tab no other has, and the bar takes a mod pane's folder from the terminals in its tab.
+- A review picked from the logo's menu loads as one from a count does: the review pane starts its first read on its own 0ms timer (`cx.timer.after(0, …)` in `init`). The pane is made as the menu closes, and a read started in `init` itself then never answers and times out after 30s.
 - The analysis start is fire-and-forget on the daemon: the pane shows running for up to 10 s before the first read sees the run.
 
 ## Done when
