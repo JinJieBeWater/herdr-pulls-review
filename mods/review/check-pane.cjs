@@ -23,7 +23,7 @@ const load = (file, env) => {
 // Values made in another realm compare unequal to this one's: compare them as JSON.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const rows = load("rows.js", {});
-const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk })", rows);
+const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD })", rows);
 
 const row = (kind, old, next) => ({ kind, old, new: next, tokens: [[`${kind}${old ?? ""}:${next ?? ""}`]] });
 // A run of deletions faces the additions after it; context faces itself.
@@ -46,12 +46,22 @@ assert.deepEqual(kinds(buildItems(review, review.groups[0], opts)), ["f", "n(who
 assert.deepEqual(plain(groupFiles(review.groups[0])), ["a.ts", "b.png", "c.ts"]);
 // Collapsed files show only their header; a whole file replaces the hunks; split pairs the rows.
 assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, collapsed: new Set(["a.ts", "c.ts"]) })), ["f", "f", "e", "g", "f"]);
-assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", [row(" ", 1, 1), row("+", undefined, 2)]]]), collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "r2", "n(on the new line 2)", "f", "e", "g", "f"]);
+assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", { rows: [row(" ", 1, 1), row("+", undefined, 2)] }]]), collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "r2", "n(on the new line 2)", "f", "e", "g", "f"]);
+// Rows that stop short of the file's end, past the bytes a read carries, say so after them: a whole file or a diff.
+const cut = (items) => plain(items).filter(i => i.key.endsWith(":cut")).map(i => i.key);
+assert.deepEqual(cut(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", { rows: [row("+", undefined, 1)], truncated: true }]]) })), ["e:a.ts:cut"]);
+assert.deepEqual(cut(buildItems({ ...review, files: review.files.map(f => f.path === "c.ts" ? { ...f, clipped: true } : f) }, review.groups[0], opts)), ["e:c.ts:cut"]);
+assert.deepEqual(cut(buildItems(review, review.groups[0], opts)), []);
 assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, split: true, collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "h", "r2", "n(on the new line 2)", "f", "e", "g", "f"]);
 // Code lines go in runs of up to 32, a line's note ending one: a few thousand changed lines stay far under v_virtual_list's 10000 items.
 const lines = (n) => Array.from({ length: n }, (_, i) => row("+", undefined, i + 1));
 const one = (n, notes = {}) => buildItems({ ...review, files: [file("x.ts", { hunks: [{ header: "@@", rows: lines(n) }] })] }, { key: "x", files: ["x.ts"], notes, children: [] }, opts);
 assert.deepEqual(kinds(one(70, { "x.ts": [{ text: "here", critical: false, anchor: { side: "additions", line: 40 } }] })), ["f", "h", "r32", "r8", "n(here)", "r30"]);
+// A line's notes come by its side and number, in the file's order: a split pair holds both sides', a context line only the additions'.
+const at = (side, line, text) => ({ text, critical: false, anchor: { side, line } });
+const both = { key: "g", files: ["a.ts"], children: [], notes: { "a.ts": [at("additions", 2, "new 2"), at("deletions", 2, "old 2"), at("deletions", 1, "old 1"), at("additions", 2, "new 2 again")] } };
+assert.deepEqual(kinds(buildItems(review, both, { ...opts, split: true })), ["f", "h", "r2", "n(new 2)", "n(old 2)", "n(new 2 again)"]);
+assert.deepEqual(kinds(buildItems(review, both, opts)), ["f", "h", "r2", "n(old 2)", "r1", "n(new 2)", "n(new 2 again)"]);
 const big = plain(one(20000));
 assert.ok(big.length < 1000 && big.filter(item => item.lines).every(item => item.size === item.lines.length * 20));
 assert.equal(big.reduce((n, item) => n + (item.lines?.length ?? 0), 0), 20000);
@@ -70,6 +80,14 @@ assert.equal(contentWidth([long("测".repeat(50))]), contentWidth([long("a".repe
 const sides = [{ kind: "pair", lines: [{ left: { tokens: [["a".repeat(10)]] }, right: { tokens: [["a".repeat(100)]] } }, { left: { tokens: [["a"]] } }] }];
 assert.deepEqual([contentWidth(sides, "left"), contentWidth(sides, "right"), contentWidth(sides)], [Math.ceil(52 + 10 * 7.25 + 16), Math.ceil(52 + 100 * 7.25 + 16), 108]);
 assert.equal(contentWidth([long("a".repeat(5000))]), contentWidth([long("a".repeat(1000))]));
+// A row is measured once: the list is rebuilt, and measured again, on every batch of rows that arrives.
+{
+  let reads = 0;
+  const measured = { kind: "+", get tokens() { reads++; return [["a".repeat(10)]]; } };
+  const list = [{ kind: "row", lines: [measured] }];
+  contentWidth(list); contentWidth(list);
+  assert.equal(reads, 1);
+}
 // A log or minified line runs to megabytes, which Herdr's engine can't measure in time: rows are cut at 1000 columns on arrival.
 const huge = [{ kind: "+", new: 1, tokens: [["{", "#fff"], ["x".repeat(100000), "#0f0"], ["}", "#fff"]] }];
 clipRows(huge);
@@ -140,12 +158,14 @@ const env = {
   // Shared values every mod sees.
   shared: (key) => sharedStore.get(key) ?? null, setShared: (key, value) => sharedStore.set(key, value),
   run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), theme: () => ({ foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888" }),
-  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk,
-  // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going.
+  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD,
+  // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going. A later batch's
+  // rows come on their own.
   review: async (_root, route, body) => {
     routes.push(route);
     if (route === "/api/review") bodies.push(body);
     if (route === "/api/review/status") return { running: false };
+    if (route === "/api/review/rows") return { files: review.files.filter(f => body.files.includes(f.path)).map(({ path, sha, hunks }) => ({ path, sha, hunks })) };
     const wanted = [...body.rows ?? [], ...body.firstRows ? groupFiles(review.groups[0]) : []];
     return route !== "/api/review" ? {} : { ...review, files: review.files.map(({ hunks, ...f }) => wanted.includes(f.path) ? { ...f, hunks } : { ...f }) };
   },
@@ -876,8 +896,9 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(pane.trailing(), 0);
   // A folder in the aside's tree doesn't fold, as the app's: its box marks its files.
   pane.width = 1200; setPref("fileList", "tree");
-  pane.review.files.push(file("x/y/z.ts"));
-  pane.review.groups[0].files.push("x/y/z.ts");
+  // As a read brings it: a new review, not the old one changed.
+  pane.review = { ...pane.review, files: [...pane.review.files, file("x/y/z.ts")],
+    groups: [{ ...pane.review.groups[0], files: [...pane.review.groups[0].files, "x/y/z.ts"] }, ...pane.review.groups.slice(1)] };
   pane.select("a.ts", cx); pane.version++; pane.visible = null; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("tree-d-folder:x/y/") && drawn.has("tree-f-x/y/z.ts") && !handlers.has("tree-d-folder:x/y/.on_click"));
   press("tree-dcheck-folder:x/y/");
@@ -1088,11 +1109,18 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   baseCommits.push({ sha: "c3", subject: "three" });
   fresh.load(cx); await wait(); fresh.render(cx);
   assert.equal(fresh.diffCommits().length, 3);
+  // A read of rows as the list scrolls changes no commit: the base isn't read again.
+  baseReads.length = 0; fresh.rowsWanted = () => ["a.ts"];
+  fresh.load(cx); await wait();
+  assert.deepEqual(plain(baseReads), [], "no base read after a rows read");
+  delete fresh.rowsWanted;
   // A daemon too old for `firstRows` ignores it: drawing the first group asks for its rows, once.
   const oldReads = [];
-  const older = new (load("main.js", { ...env, localStorage: { getItem: (k) => k === "handled" ? "99" : null, setItem() {} }, review: async (_root, _route, body) => {
-    oldReads.push(body.rows);
-    return { ...review, files: review.files.map(({ hunks, ...f }) => body.rows.includes(f.path) ? { ...f, hunks } : { ...f }) };
+  const older = new (load("main.js", { ...env, localStorage: { getItem: (k) => k === "handled" ? "99" : null, setItem() {} }, review: async (_root, route, body) => {
+    const asked = body.rows ?? body.files;
+    oldReads.push(asked);
+    const files = review.files.map(({ hunks, ...f }) => asked.includes(f.path) ? { ...f, hunks } : { ...f });
+    return route === "/api/review/rows" ? { files: files.filter(f => f.hunks) } : { ...review, files };
   } }).Mod)();
   older.init({}, cx); await wait(); older.render(cx); await wait(); older.render(cx); await wait();
   assert.deepEqual(plain(oldReads), [[], ["a.ts", "b.png", "c.ts"]]);
@@ -1147,5 +1175,261 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.open("/commit/c1", cx); await wait();
   assert.ok(pane.review === null && pane.error === "gone" && !pane.switching);
   mainScope.review = daemon;
+  // A pane of its own on /repo's /branch/fix, its daemon `api` until a test swaps the scope's.
+  const paneOf = async (extra = {}) => {
+    const scope = load("main.js", { ...env, localStorage: { getItem: (k) => k === "handled" ? "99" : null, setItem() {} }, ...extra });
+    const p = new scope.Mod();
+    p.init({}, cx); await wait();
+    return { p, scope };
+  };
+  {
+    // A rows read that fails gives its files back: Retry asks for them again, and they leave "Loading…".
+    const { p, scope } = await paneOf();
+    delete p.fileAt("a.ts").hunks; p.version++;
+    scope.review = () => Promise.reject(new Error("for now"));
+    p.load(cx); await wait();
+    assert.ok(p.error === "for now" && !p.asked.has("a.ts"));
+    const asks = [];
+    scope.review = (root, route, body) => { if (route === "/api/review") asks.push(body.rows); return daemon(root, route, body); };
+    p.render(cx); await wait();
+    assert.deepEqual(asks, [], "no read again by itself after a failure");
+    p.load(cx); await wait();
+    assert.deepEqual(plain(asks), [["a.ts"]]);
+    assert.ok(!p.error && p.fileAt("a.ts").hunks && !p.items().some(i => i.loading));
+    // So does one dropped because a reviewed mark landed meanwhile: the mark's own read asks for them.
+    delete p.fileAt("a.ts").hunks; p.asked.clear(); p.version++; asks.length = 0;
+    let answer, mark;
+    scope.review = (root, route, body) => route === "/api/review" ? (asks.push(body.rows), new Promise(r => { answer = () => r(daemon(root, route, body)); }))
+      : route === "/api/review/reviewed" ? new Promise(r => { mark = r; }) : daemon(root, route, body);
+    p.load(cx);
+    p.setReviewed(p.fileAt("c.ts"), true, cx);
+    answer(); await wait(); p.render(cx); await wait();
+    assert.ok(!p.asked.has("a.ts") && asks.length === 1, "dropped, and no read until the mark lands");
+    scope.review = (root, route, body) => { if (route === "/api/review") asks.push(body.rows); return daemon(root, route, body); };
+    mark({}); await wait();
+    assert.deepEqual(plain(asks.at(-1)), ["a.ts"]);
+    assert.ok(p.fileAt("a.ts").hunks);
+  }
+  {
+    // A whole file asked for before the file changed doesn't come back over the new version's diff.
+    const { p, scope } = await paneOf();
+    let whole;
+    scope.review = (root, route, body) => route === "/api/review/file" ? new Promise(r => { whole = r; }) : daemon(root, route, body);
+    p.toggleFull(p.fileAt("a.ts"), cx);
+    const next = { ...p.review, files: p.review.files.map(f => f.path === "a.ts" ? { ...f, sha: "a.ts-v2", hunks: [{ header: "@@", rows: [{ kind: "+", new: 1, tokens: [["NEW"]] }] }] } : f) };
+    p.apply(next);
+    whole({ rows: [{ kind: "+", new: 1, tokens: [["OLD"]] }] }); await wait();
+    const shown = p.items().flatMap(i => i.lines ?? []).flatMap(r => r.tokens.map(([text]) => text));
+    assert.ok(shown.includes("NEW") && !shown.includes("OLD") && !p.full.has("a.ts"));
+    // A file too large for its diff has no whole file to ask for: larger still, it would pass what a read carries.
+    Object.assign(p.fileAt("a.ts"), { truncated: true, hunks: [] });
+    p.toggleFull(p.fileAt("a.ts"), cx); p.headerPress(p.fileAt("a.ts"), p.view - 40, cx);
+    assert.ok(!p.full.has("a.ts"));
+  }
+  {
+    // A group of a thousand files draws only the aside's rows in view, and the rest as the tree scrolls.
+    const files = Array.from({ length: 1000 }, (_, i) => file(`f${i}.ts`));
+    const big = { ...review, files, groups: [{ key: "g", label: "G", files: files.map(f => f.path), missing: [], notes: {}, children: [] }] };
+    const { p } = await paneOf({ review: async () => structuredClone(big) });
+    setPref("fileList", "list"); p.width = 1200; p.listHeight = { "review-files": 280 };
+    const tree = () => { drawn.clear(); p.render(cx); return [...drawn].filter(id => id.startsWith("tree-f-")); };
+    assert.deepEqual(tree(), Array.from({ length: 10 }, (_, i) => `tree-f-f${i}.ts`));
+    handlers.get("review-files.on_scroll_wheel")({ delta: { y: -28 * 500 } }, cx);
+    assert.equal(tree()[0], "tree-f-f500.ts");
+    setPref("fileList", "tree");
+  }
+  {
+    // A file picked while rows arrive for the files before it: its header still lands at the top, not another's.
+    const files = Array.from({ length: 20 }, (_, i) => ({ ...file(`f${i}.ts`, { additions: 100, deletions: 0 }), hunks: undefined }));
+    const many = { ...review, files, groups: [{ key: "g", label: "G", files: files.map(f => f.path), missing: [], notes: {}, children: [] }] };
+    const { p, scope } = await paneOf({ review: async () => structuredClone(many) });
+    const held = [];
+    scope.review = (_root, _route, body) => new Promise(r => held.push(() => r({ ...structuredClone(many),
+      files: many.files.map(f => body.rows.includes(f.path) ? { ...f, hunks: [{ header: "@@", rows: lines(100) }] } : f) })));
+    p.load(cx); timers.length = 0; calls.length = 0;
+    p.select("f15.ts", cx);
+    held[0](); await wait();
+    for (let i = 0; i < 3; i++) { p.frames++; tick(); }
+    const scrolled = calls.filter(([name]) => name === "scroll").at(-1)[1];
+    assert.equal(p.items()[scrolled].key, "f:f15.ts");
+  }
+  {
+    // Away to another worktree and back before the first's watch returns: one watch goes on there, not two.
+    const watched = [];
+    const { p } = await paneOf({ watchFolder: (root) => new Promise((resolve, reject) => watched.push({ root, resolve, reject })) });
+    const to = async (root) => { p.root = root; p.watching = null; p.forget(); p.load(cx); await wait(); };
+    await to("/other"); await to("/repo");
+    timers.length = 0;
+    for (const w of watched.filter(w => w.root === "/repo")) w.resolve(["/repo/.git/refs/heads/fix"]);
+    await wait(); tick(); await wait();
+    assert.equal(watched.filter(w => w.root === "/repo").length, 3, "the first, the second, and the second's next");
+    // And the other worktree's watch failing late leaves this one's be.
+    watched.find(w => w.root === "/other").reject(new Error("late")); await wait();
+    assert.equal(p.watching?.root, "/repo");
+  }
+  {
+    // A language picked while the panel's read of the settings is out stays picked once that read, from before, lands.
+    let saved = { locale: "en", llm: { provider: "local-agent", agent: "pi" } }, before;
+    const { p } = await paneOf({ request: async (_root, method, route, body) => {
+      if (route === "/api/agents") return [{ name: "pi", label: "Pi", models: [] }];
+      if (method === "PUT") return (saved = structuredClone(body));
+      if (!before) return new Promise(r => { before = () => r({ locale: "en", llm: { provider: "local-agent", agent: "pi" } }); });
+      return structuredClone(saved);
+    } });
+    p.shared = structuredClone(saved);
+    p.togglePopup("settings", cx); await wait();
+    p.settingsPage = "language";
+    p.pageRows().find(r => r.id === "locale-ja").pick(cx); await wait();
+    before(); await wait();
+    assert.deepEqual([saved.locale, p.shared.locale], ["ja", "ja"]);
+  }
+  {
+    // A new list starts at its top, the diff and the aside's files: another worktree, a read after a failed one, an analysis's groups.
+    const { p, scope } = await paneOf();
+    const tops = () => calls.filter(([name, at]) => name === "scroll" && at === 0).length;
+    // The aside one row tall, so its few rows scroll.
+    const scrolledDown = () => { calls.length = 0; p.scrollTop = { "review-files": 50 }; };
+    const files = () => { p.width = 1200; p.listHeight = { "review-files": 28 }; p.render(cx); return p.scrollTop["review-files"]; };
+    files(); scrolledDown();
+    p.root = "/other"; p.watching = null; p.forget(); p.load(cx); await wait();
+    assert.deepEqual([tops(), files()], [1, 0], "another worktree");
+    scrolledDown();
+    scope.review = () => Promise.reject(new Error("down"));
+    p.open("/commit/c1", cx); await wait();
+    scope.review = daemon; p.load(cx); await wait();
+    assert.deepEqual([tops(), files()], [1, 0], "Retry after a failed switch");
+    scrolledDown();
+    scope.review = async (root, route, body) => ({ ...await daemon(root, route, body), groups: [{ ...review.groups[0], key: "ai-1" }] });
+    p.load(cx); await wait();
+    assert.deepEqual([tops(), files()], [1, 0], "an analysis's groups");
+    scrolledDown();
+    p.load(cx); await wait();
+    assert.deepEqual([tops(), files()], [0, 50], "the same list read again stays where it is");
+  }
+  {
+    // A path with ":" in it: its code lines in view still name it, for the stuck header and the files in view.
+    const { p } = await paneOf();
+    p.apply({ ...p.review, files: [file("a:b.ts")], groups: [{ key: "g", label: "G", files: ["a:b.ts"], children: [], notes: {}, missing: [] }] });
+    const at = p.items().findIndex(i => i.kind === "row");
+    p.visible = { start: at, end: at + 1 };
+    assert.deepEqual([[...p.visibleFiles()], p.stickyFile()?.path], [["a:b.ts"], "a:b.ts"]);
+  }
+  {
+    // A file asked for that comes back without rows, past what one read carries, is asked for again by the next read.
+    const { p, scope } = await paneOf();
+    for (const f of [p.fileAt("a.ts"), p.fileAt("c.ts")]) delete f.hunks;
+    p.asked.clear(); p.version++;
+    const asks = [];
+    scope.review = async (root, route, body) => {
+      if (route !== "/api/review" && route !== "/api/review/rows") return daemon(root, route, body);
+      const asked = body.rows ?? body.files;
+      asks.push([route, asked]);
+      const r = await daemon(root, route, body);
+      // The first file asked for only.
+      return { ...r, files: r.files.flatMap(({ hunks, ...f }) => f.path === asked[0] ? [{ ...f, hunks }] : route === "/api/review" ? [f] : []) };
+    };
+    p.load(cx); await wait(); p.render(cx); await wait();
+    assert.deepEqual(plain(asks), [["/api/review", ["a.ts", "c.ts"]], ["/api/review/rows", ["c.ts"]]]);
+    assert.ok(p.fileAt("a.ts").hunks && p.fileAt("c.ts").hunks);
+  }
+  // The list draws only a window of its items, from `top`, as a scrolled v_virtual_list does.
+  let top = 0;
+  const windowed = { v_virtual_list: (_id, count, _sizes, _key, render) => { render({ start: top, end: Math.min(count, top + 40) }).forEach(Boolean); return element(); } };
+  {
+    // Scrolling a big group, a batch's rows come on their own, not inside the page's every file and group again. The old
+    // read's cost is replayed beside each: the same rows inside the whole page, as the daemon answered them before.
+    const files = Array.from({ length: 1554 }, (_, i) => ({ ...file(`apps/web/src/features/module-${Math.floor(i / 20)}/component-${i}.tsx`, { additions: 40, deletions: 0 }), hunks: undefined }));
+    const hunks = () => [{ header: "@@ -0,0 +1,40 @@", rows: Array.from({ length: 40 }, (_, k) => ({ kind: "+", new: k + 1, tokens: [["const ", "#ff00ff"], [`value${k}`], [" = ", "#888888"], [`"${k}"`, "#00ff00"]] })) }];
+    const group = (key, list) => ({ key, label: key, category: "core", critical: false, missing: [], notes: {}, children: [], files: list.map(f => f.path) });
+    const page = { ...review, files, groups: [group("code", files.slice(0, 1164)), group("docs", files.slice(1164))] };
+    const whole = (rows) => ({ ...page, files: files.map(f => rows.includes(f.path) ? { ...f, hunks: hunks() } : f) });
+    const before = [], after = [], reads = [];
+    const { p } = await paneOf({ ...windowed, review: async (_root, route, body) => {
+      reads.push(route);
+      if (route === "/api/review") return structuredClone(whole([...body.rows, ...body.firstRows ? page.groups[0].files.slice(0, 75) : []]));
+      if (route !== "/api/review/rows") return {};
+      const now = { files: body.files.map(path => ({ path, sha: path, hunks: hunks() })) };
+      before.push(JSON.stringify(whole(body.files)).length); after.push(JSON.stringify(now).length);
+      return now;
+    } });
+    top = 0;
+    for (let n = 0; n < 500 && p.items().some(i => i.loading); n++) { top = p.items().findIndex(i => i.loading); p.render(cx); await wait(); }
+    assert.ok(page.groups[0].files.every(path => p.fileAt(path).hunks), "the whole group read");
+    assert.deepEqual(reads.filter(r => r === "/api/review").length, 1, "only the open reads the page");
+    const kb = (list) => Math.round(list.reduce((a, b) => a + b, 0) / list.length / 1024), mb = (list) => (list.reduce((a, b) => a + b, 0) / 1e6).toFixed(1);
+    console.log(`big group, ${after.length} batches: before ${kb(before)} KB a batch (${mb(before)} MB in all), after ${kb(after)} KB (${mb(after)} MB)`);
+    assert.ok(Math.max(...after) * 3 < Math.min(...before), "a batch carries its rows, not the page");
+    top = 0;
+  }
+  {
+    // A file cut short, past what one read carries, is read to its end as the list nears it: page by page, each from the
+    // row the last stopped top, a page's first hunk going on from the last. A daemon whose diff moved on reads the page again.
+    const total = 170000, size = 50000;
+    const slice = (from) => {
+      const rows = Array.from({ length: Math.min(size, total - from) }, (_, k) => ({ kind: "+", new: from + k + 1, tokens: [["1"]] }));
+      return { hunks: [from ? { rows } : { header: "@@ -0,0 +1,170000 @@", rows }], ...from + rows.length < total ? { clipped: true } : {} };
+    };
+    const big = { ...file("big.js", { status: "added", additions: total, deletions: 0 }), hunks: undefined };
+    const page = { ...review, files: [big], groups: [{ key: "g", label: "G", category: "core", critical: false, missing: [], notes: {}, children: [], files: ["big.js"] }] };
+    const froms = [], wholes = [];
+    let stale = 1, empty = false;
+    const { p } = await paneOf({ ...windowed, review: async (_root, route, body) => {
+      if (route === "/api/review") return { ...structuredClone(page), files: [{ ...big, ...body.firstRows || body.rows.includes("big.js") ? slice(0) : {} }] };
+      if (route === "/api/review/rows") {
+        if (body.from && stale-- > 0) return { stale: true };
+        froms.push(body.from);
+        return { files: [{ path: "big.js", sha: "big.js", ...empty ? { hunks: [], clipped: true } : slice(body.from) }] };
+      }
+      if (route === "/api/review/file") {
+        const from = body.from ?? 0;
+        wholes.push(from);
+        const rows = Array.from({ length: Math.min(size, total - from) }, (_, k) => ({ kind: " ", old: from + k + 1, new: from + k + 1, tokens: [["1"]] }));
+        return { rows, ...from + rows.length < total ? { truncated: true } : {} };
+      }
+      return {};
+    } });
+    const cutRow = () => p.items().find(i => i.key === "e:big.js:cut");
+    assert.ok(cutRow().loading && cutRow().text === "Loading…", "more to come");
+    // Far from its end, no page is asked for.
+    top = 0; p.render(cx); await wait();
+    assert.deepEqual(froms, []);
+    const scroll = async () => { for (let n = 0; n < 20 && cutRow()?.more; n++) { top = p.items().indexOf(cutRow()); p.render(cx); await wait(); } };
+    await scroll();
+    assert.deepEqual(froms, [50000, 100000, 150000], "after the page read again, from where each stopped");
+    const shown = p.fileAt("big.js").hunks;
+    assert.ok(shown.length === 1 && shown[0].rows.every((r, i) => r.new === i + 1) && shown[0].rows.length === total, "end to end, in order");
+    assert.ok(!cutRow() && !p.fileAt("big.js").clipped);
+    // The whole file, cut short too, pages the same way.
+    p.toggleFull(p.fileAt("big.js"), cx); await wait();
+    await scroll();
+    assert.deepEqual(wholes, [0, 50000, 100000, 150000]);
+    assert.ok(p.full.get("big.js").rows.every((r, i) => r.new === i + 1) && p.full.get("big.js").rows.length === total && !cutRow());
+    // A page that brings nothing can't be got: the rest stays out, said so, and isn't asked for again.
+    p.toggleFull(p.fileAt("big.js"), cx);
+    Object.assign(p.fileAt("big.js"), slice(0)); p.version++; empty = true; froms.length = 0;
+    await scroll();
+    assert.deepEqual([froms.length, cutRow().text, cutRow().loading], [1, "The rest of this file is too large to show", false]);
+    top = 0;
+  }
+  {
+    // A daemon without the rows route, older than the pane: a batch comes with the whole page instead, no error shown.
+    const routes = [];
+    const { p } = await paneOf({ review: async (root, route, body) => {
+      routes.push(route);
+      if (route === "/api/review/rows") throw new Error("jin.review answered 404");
+      return daemon(root, route, body);
+    } });
+    delete p.fileAt("a.ts").hunks; p.version++; routes.length = 0;
+    p.render(cx); await wait();
+    assert.deepEqual(routes, ["/api/review/rows", "/api/review"]);
+    assert.ok(p.fileAt("a.ts").hunks && !p.error && !p.stale);
+  }
+  {
+    // A range with no changes says so, not that a group it doesn't have is empty.
+    const { p } = await paneOf();
+    p.apply({ ...p.review, files: [], groups: [] });
+    drawn.clear(); p.render(cx);
+    assert.equal(texts.get("review-empty"), "No changes in this range");
+  }
   console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files following the list, as a tree or a list; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom.");
 })();

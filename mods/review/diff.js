@@ -76,8 +76,8 @@ export function setReviewed(view, files, reviewed, cx) {
   cx.notify();
 }
 
-// A removed or binary file has no new side to show whole.
-function canFull(file) { return file.status !== "removed" && !file.isBinary; }
+// A removed or binary file has no new side to show whole; one too large for its diff is larger whole.
+function canFull(file) { return file.status !== "removed" && !file.isBinary && !file.truncated; }
 
 export function toggleFull(view, file, cx) {
   if (view.switching || !canFull(file)) return;
@@ -87,12 +87,13 @@ export function toggleFull(view, file, cx) {
   view.full.set(file.path, null);
   const { root, page } = view;
   cx.spawn(async (cx) => {
-    let rows = null, error = null;
-    try { rows = clipRows((await review(root, "/api/review/file", { page, file: file.path, colors: colors(theme()) })).rows); }
+    // The answer as it comes, `{ rows, truncated }`: past the bytes a read carries, the rows stop short of the file's end.
+    let whole = null, error = null;
+    try { const r = await review(root, "/api/review/file", { page, file: file.path, colors: colors(theme()) }); clipRows(r.rows); whole = r; }
     catch (e) { error = e?.message ?? String(e); }
-    // Another diff opened meanwhile: this file's rows are the old one's.
-    if (root !== view.root || page !== view.page) return;
-    if (rows) { view.full.set(file.path, rows); view.collapsed.delete(file.path); } else { view.full.delete(file.path); view.error = error; }
+    // Another diff opened meanwhile, or this file changed (which dropped the ask): these rows are the old one's.
+    if (root !== view.root || page !== view.page || view.full.get(file.path) !== null || view.fileAt(file.path)?.sha !== file.sha) return;
+    if (whole) { view.full.set(file.path, whole); view.collapsed.delete(file.path); } else { view.full.delete(file.path); view.error = error; }
     view.version++;
     cx.notify();
   });
@@ -172,8 +173,9 @@ export function diffView(view, t) {
         .child(diffItem(view, t, { key: `f:${sticky.path}`, kind: "file", file: sticky, size: FILE }))))
       .child(Scrollbar.vertical("review-diff").absolute().inset_0())
       .children(view.hbars(t))
-      // As T3's DiffPanel with nothing to show.
-      .when(!items.length, el => el.child(div().absolute().inset_0().px(20).flex().items_center().justify_center().text_center().text_color(t.dim).child("No files in this group"))));
+      // As T3's DiffPanel with nothing to show: a diff with no files has no group either.
+      .when(!items.length, el => el.child(div().id("review-empty").absolute().inset_0().px(20).flex().items_center().justify_center().text_center().text_color(t.dim)
+        .child(view.review?.files.length ? "No files in this group" : "No changes in this range"))));
 }
 
 // Code scrolls sideways by the wheel alone: while it does, as T3's ScrollArea, a 6px bar says where it is, for each

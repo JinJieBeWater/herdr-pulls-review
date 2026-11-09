@@ -6,9 +6,9 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, h_resizable, resizable_panel, VirtualListScrollHandle, InputState } from "gpui-base";
 import { focused, panes, props, setShared, shared, spaces, theme, window as appWindow } from "herdr";
-import { buildItems, contentWidth, groupFiles, pageLabel, rowsToAsk } from "./rows.js";
+import { buildItems, contentWidth, groupFiles, pageLabel, rowsToAsk, LOOKAHEAD } from "./rows.js";
 import { PANE, WIDE, SPLIT_MIN, DISABLED, pref, setPref, zoom, button } from "./controls.js";
-import { colors, loadReview, pollReview, applyReview, analyzeReview } from "./review-load.js";
+import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel } from "./settings.js";
 import { diffCommits, showPage, commitRows, commitMenu } from "./commits.js";
 import { groupSidebar, groupHeader, groupTabs } from "./groups.js";
@@ -90,6 +90,8 @@ export default class ReviewPane extends View {
   refresh(cx) { if (this.onScreen()) this.load(cx); else this.dirty = true; }
 
   load(cx, poll = false) { return loadReview(this, cx, poll); }
+
+  loadRows(cx) { return loadRows(this, cx); }
 
   poll(cx) { return pollReview(this, cx); }
 
@@ -173,7 +175,7 @@ export default class ReviewPane extends View {
       // Kept only once all of it is built: a throw part way would leave the list and its lookups out of step, never rebuilt.
       const list = group ? buildItems(this.review, group, { collapsed: this.collapsed, full: this.full, split, width: this.view }) : [];
       const widths = split ? ["left", "right", "solo"].map(side => contentWidth(list, side)) : [0, 0, contentWidth(list)];
-      const files = new Map(list.map(item => [item.key, item.file?.path ?? item.key.split(":")[1]]));
+      const files = new Map(list.map(item => [item.key, item.path]));
       // The range last drawn was another list's: until this one draws, scrollToTop mustn't go by it.
       this.itemsId = id; this.visible = null; this.itemList = list; this.sideWidth = widths; this.itemFile = files;
     }
@@ -207,10 +209,11 @@ export default class ReviewPane extends View {
    * Brings an item's top to the list's top, exactly. The list scrolls only to the near edge: an item above the view lands at
    * the top, one below at the bottom. So below, first bottom-align the first item a view's height past it, which puts this
    * one just over the top; once that frame is drawn, scroll to this one, now above the view, so its top lands at the top.
+   * Rows arriving in between rebuild the list: the item is found again by its key, and brought up afresh.
    */
   scrollToTop(index, cx) {
     const sizes = [...this.items().map(item => item.size), this.trailing()], start = this.visible?.start ?? 0;
-    const token = this.settling = {};
+    const token = this.settling = {}, key = this.itemList[index]?.key, built = this.itemsId;
     if (index <= start) return this.scroll.scroll_to_item(index);
     let last = index, height = sizes[index];
     // A pixel's margin, so a rounded height still carries it past the top.
@@ -220,6 +223,9 @@ export default class ReviewPane extends View {
     let tries = 0;
     const settle = (cx) => {
       if (this.settling !== token) return;
+      const at = this.items().findIndex(item => item.key === key);
+      if (at < 0) return;
+      if (this.itemsId !== built) return this.scrollToTop(at, cx);
       if (this.frames > drawn) { this.scroll.scroll_to_item(index); cx.notify(); }
       else if (++tries < 30) cx.timer.after(8, settle);
     };
@@ -239,6 +245,12 @@ export default class ReviewPane extends View {
   rowsWanted() {
     const g = this.switching ? null : this.group();
     return g ? rowsToAsk(groupFiles(g), path => this.fileAt(path), this.visibleFiles(), this.asked) : [];
+  }
+
+  // The file cut short whose end the list shows or nears, as many items on as a batch looks files ahead: its next page is due.
+  pageWanted() {
+    const { start = 0, end = 0 } = this.visible ?? {};
+    return this.switching ? null : (this.itemList ?? []).slice(start, end + LOOKAHEAD).find(item => item.more)?.path ?? null;
   }
 
   // A file by its path, from a map made once per read: a branch's files run to thousands, and a render looks up a group's every one.
@@ -288,8 +300,10 @@ export default class ReviewPane extends View {
         this.load(cx);
       }
     }
-    // Files in view or just after have no rows (just opened, scrolled to, or changed since): ask for them, once per version.
-    if (this.rowsWanted().length && !this.loading) this.load(cx);
+    // Files in view or just after have no rows (just opened, scrolled to, or changed since): ask for them, once per version;
+    // or a file cut short nears its end: its next page. Not after a failed read (Retry and the slow timer read again) nor
+    // while a mark lands (its own read follows): a read then would fail or be dropped, give its files back, and ask again at once.
+    if ((this.rowsWanted().length || this.pageWanted()) && !this.loading && !this.error && !this.marking) this.loadRows(cx);
     const wide = this.width >= WIDE, sidebar = this.sidebarShown(), group = this.group();
     // A group newly shown, however it came to be, opens its subgroups; its tab's caret folds them.
     if (this.groupKey !== this.expandedFor) { this.expandedFor = this.groupKey; this.expandedTab = this.groupKey; }
@@ -371,7 +385,7 @@ export default class ReviewPane extends View {
     return new Set((this.itemList ?? []).slice(start, end).filter(item => item.kind !== "group").map(item => this.itemFile.get(item.key)));
   }
 
-  spied() { return this.review ? JSON.stringify([this.asideGroup()?.key, [...this.visibleFiles()], [...this.visibleGroups()], this.atTop(), this.stickyFile()?.path]) : ""; }
+  spied() { return this.review ? JSON.stringify([this.asideGroup()?.key, [...this.visibleFiles()], [...this.visibleGroups()], this.atTop(), this.stickyFile()?.path, this.pageWanted()]) : ""; }
 
   // Whether the list is at its first item: the group's header shows only then.
   atTop() { return (this.visible?.start ?? 0) === 0; }
@@ -379,7 +393,7 @@ export default class ReviewPane extends View {
   // The file whose rows open the view once its header has scrolled past the top: that header sticks there, as the app's.
   stickyFile() {
     const item = (this.itemList ?? [])[this.visible?.start ?? 0];
-    return item && item.kind !== "file" && item.kind !== "group" ? this.review.files.find(f => f.path === this.itemFile.get(item.key)) ?? null : null;
+    return item && item.kind !== "file" && item.kind !== "group" ? this.fileAt(item.path) ?? null : null;
   }
 
   hbars(t) { return hbars(this, t); }

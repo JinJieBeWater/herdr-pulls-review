@@ -22,20 +22,43 @@ async function touchesDiff(root, paths) {
   return r?.code !== 0 || r.stdout.trim().split("\n").length < files.length;
 }
 
+// Each watch its own: one left waiting on a root the pane went away from and came back to must end, not run beside the new one.
 function watchReview(view, cx) {
   const root = view.root;
-  if (view.watching === root) return;
-  view.watching = root;
+  if (view.watching?.root === root) return;
+  const me = view.watching = { root };
   cx.spawn(async (cx) => {
     try {
-      while (view.watching === root) {
+      while (view.watching === me) {
         const paths = await watchFolder(root);
-        if (view.watching === root && await touchesDiff(root, paths)) view.refresh(cx);
+        if (view.watching === me && await touchesDiff(root, paths)) view.refresh(cx);
         // At most one change read a second: what changes meanwhile comes in the next batch.
         await new Promise(resolve => cx.timer.after(1000, resolve));
       }
-    } catch { view.watching = null; }
+    } catch { if (view.watching === me) view.watching = null; }
   });
+}
+
+// A read of the page shown. Only the latest counts: one that doesn't answer in LOAD_TIMEOUT says so and offers Retry.
+function startRead(view, cx) {
+  const id = ++view.loadId;
+  view.loading = { root: view.root, page: view.page }; view.again = false;
+  cx.timer.after(LOAD_TIMEOUT, (cx) => {
+    if (id !== view.loadId || !view.loading) return;
+    view.loading = null; view.error = `jin.review didn't answer in ${LOAD_TIMEOUT / 1000} s`;
+    // Not under the new page's title.
+    if (view.switching) view.forget();
+    cx.notify();
+  });
+  return id;
+}
+
+function endRead(view, cx, id) {
+  if (id !== view.loadId) return;
+  view.loading = null;
+  view.report();
+  cx.notify();
+  if (view.again) view.load(cx);
 }
 
 // Rows come only for the group shown (a large diff's run to megabytes), and none while polling a run:
@@ -47,19 +70,15 @@ export function loadReview(view, cx, poll = false) {
   if (!view.root || !view.page) return;
   if (view.loading?.root === view.root && view.loading.page === view.page) { view.again = true; return; }
   // Switching, the group shown is the old page's: the new page's first group comes with the read instead.
-  const { root, page } = view, t = theme(), group = view.switching ? null : view.group(), marks = view.marks, id = ++view.loadId;
-  view.loading = { root, page }; view.again = false; view.dirty = false;
+  const { root, page } = view, t = theme(), group = view.switching ? null : view.group(), marks = view.marks, id = startRead(view, cx);
+  view.dirty = false;
   // Rows only for the files in view or just after that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
   const rows = poll || !group ? [] : view.rowsWanted();
-  for (const file of view.review?.files ?? []) if (rows.includes(file.path)) view.asked.add(file.sha);
+  // Asked until this read's answer is applied: one that fails or is dropped gives them back, for the next read to ask again.
+  const mine = (view.review?.files ?? []).filter(file => rows.includes(file.path) && !view.asked.has(file.sha)).map(file => file.sha);
+  for (const sha of mine) view.asked.add(sha);
+  let applied = false;
   const key = JSON.stringify(colors(t));
-  cx.timer.after(LOAD_TIMEOUT, (cx) => {
-    if (id !== view.loadId || !view.loading) return;
-    view.loading = null; view.error = `jin.review didn't answer in ${LOAD_TIMEOUT / 1000} s`;
-    // Not under the new page's title.
-    if (view.switching) view.forget();
-    cx.notify();
-  });
   cx.spawn(async (cx) => {
     try {
       const r = await review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group });
@@ -68,10 +87,11 @@ export function loadReview(view, cx, poll = false) {
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       // Read before a reviewed mark landed, it would undo the mark on screen: the mark's own read follows.
       if (view.marking || marks !== view.marks) return;
-      view.apply(r);
-      view.error = null;
+      view.apply(r); applied = true;
+      view.error = null; view.stale = false;
       watchReview(view, cx);
-      loadBaseCommits(view, cx);
+      // A rows read changes no commit, and the base's whole read can outweigh it.
+      if (!rows.length) loadBaseCommits(view, cx);
       // Only a count's click starts a run, on a page with no analysis. An outdated one waits for Re-analyze: every commit
       // on the branch would otherwise start another. The setting is off by default: the app never starts a paid, slow AI run by itself.
       if (view.analyzeFor === page) {
@@ -88,12 +108,59 @@ export function loadReview(view, cx, poll = false) {
       }
     }
     finally {
-      if (id === view.loadId) {
-        view.loading = null;
-        view.report();
-        cx.notify();
-        if (view.again) view.load(cx);
+      // Applied, a file can still come back without rows: past the bytes one read carries, it's left for the next.
+      for (const sha of mine) if (!applied || !view.review?.files.some(f => f.sha === sha && f.hunks)) view.asked.delete(sha);
+      endRead(view, cx, id);
+    }
+  });
+}
+
+const rowCount = (hunks) => hunks.reduce((n, hunk) => n + hunk.rows.length, 0);
+
+// After the open, a batch's rows, or the next page of a file cut short as its end nears the view, come on their own: a read
+// of the whole page for them weighed half a megabyte a batch, nearly all of it the files and groups already shown. The daemon
+// serves them from the diff shown; one it no longer holds is `stale`, and the whole page is read again, rows and all.
+export function loadRows(view, cx) {
+  const rows = view.rowsWanted(), more = rows.length ? null : view.pageWanted();
+  if (!rows.length && !more) return;
+  if (view.stale || view.loading) return view.load(cx);
+  const { root, page, review: shown } = view, t = theme(), key = JSON.stringify(colors(t)), id = startRead(view, cx);
+  const whole = more && view.full.get(more), mine = shown.files.filter(file => rows.includes(file.path) && !view.asked.has(file.sha)).map(file => file.sha);
+  for (const sha of mine) view.asked.add(sha);
+  cx.spawn(async (cx) => {
+    try {
+      const r = whole
+        ? await review(root, "/api/review/file", { page, file: more, colors: colors(t), from: whole.rows.length })
+        : await review(root, "/api/review/rows", { page, colors: colors(t), files: more ? [more] : rows, base: shown.base?.sha ?? "", head: shown.head?.sha ?? "", ...more ? { from: rowCount(view.fileAt(more).hunks) } : {} });
+      if (id !== view.loadId) return;
+      if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
+      if (r.stale) { view.stale = view.again = true; return; }
+      // shortcut: a whole file changed between its pages goes on from the new text until the read that drops it, a second at most; the answer could name its sha.
+      if (whole) {
+        if (view.full.get(more) !== whole) return;
+        whole.rows = whole.rows.concat(clipRows(r.rows)); whole.truncated = r.truncated;
+        whole.stuck = Boolean(r.truncated) && !r.rows.length;
+      } else {
+        const file = more && view.fileAt(more), before = file ? rowCount(file.hunks) : 0;
+        for (const got of r.files) {
+          const file = view.fileAt(got.path);
+          if (file?.sha !== got.sha) continue;
+          for (const hunk of got.hunks ?? []) clipRows(hunk.rows);
+          if (!more) { Object.assign(file, { hunks: got.hunks, clipped: got.clipped, stuck: false }); continue; }
+          // A page's first hunk without a header goes on from the last one shown.
+          for (const hunk of got.hunks ?? []) { const last = file.hunks.at(-1); if (hunk.header === undefined && last) last.rows = last.rows.concat(hunk.rows); else file.hunks.push(hunk); }
+          file.clipped = got.clipped;
+        }
+        // A page that brings nothing more can't be got: the rest stays out.
+        if (file?.clipped && rowCount(file.hunks) === before) file.stuck = true;
       }
+      view.version++;
+    } catch (e) {
+      // A batch a daemon without the route (an older one) or a failed read didn't bring: the whole page brings it, or says why.
+      if (id === view.loadId) { if (more) view.error = e?.message ?? String(e); else view.stale = view.again = true; }
+    } finally {
+      for (const sha of mine) if (!view.review?.files.some(f => f.sha === sha && f.hunks)) view.asked.delete(sha);
+      endRead(view, cx, id);
     }
   });
 }
@@ -127,7 +194,8 @@ export function applyReview(view, r) {
   }
   for (const file of r.files) for (const hunk of file.hunks ?? []) clipRows(hunk.rows);
   const old = new Map(view.review?.files.map(file => [file.path, file]));
-  for (const file of r.files) if (!file.hunks && old.get(file.path)?.sha === file.sha) file.hunks = old.get(file.path).hunks;
+  // With its pages so far, and whether more can come.
+  for (const file of r.files) if (!file.hunks && old.get(file.path)?.sha === file.sha) { const o = old.get(file.path); Object.assign(file, { hunks: o.hunks, clipped: o.clipped, stuck: o.stuck }); }
   // A read that says what the one shown does changes nothing: the list isn't rebuilt, and its files stay the ones marks change.
   const said = (x) => JSON.stringify([x.key, x.title, x.base, x.head, x.commits, x.source, x.groups, x.analysis,
     x.files.map(f => [f.path, f.sha, f.reviewed, f.changed, Boolean(f.hunks)])]);
@@ -139,13 +207,13 @@ export function applyReview(view, r) {
   if (r.analysis.state === "running") view.startingUntil = 0;
   // The diff's commits, for stepping through them while one is shown on its own (its page lists only itself).
   if (view.page === view.base) view.baseCommits = r.commits;
-  if (!r.groups.some(g => g.key === view.groupKey)) view.groupKey = r.groups[0]?.key ?? null;
+  // Another list - another page or worktree, a read after a failed one, an analysis's groups - starts at its top: the
+  // scroll handle keeps the old list's place. forget() leaves no group, so every one of them comes through here.
+  if (!r.groups.some(g => g.key === view.groupKey)) { view.groupKey = r.groups[0]?.key ?? null; view.scroll.scroll_to_item(0); view.treeOf = null; }
   view.version++;
-  // The old page's list was kept on screen, scrolled: the new one starts at its top.
-  if (switched) view.scroll.scroll_to_item(0);
 }
 
-// One commit's page lists only itself: the diff's commits come from its base, read without rows after each read, so a new
+// One commit's page lists only itself: the diff's commits come from its base, read without rows after each read of none, so a new
 // commit reaches the header's list. A failed read leaves the list as it was.
 function loadBaseCommits(view, cx) {
   const { root, base } = view;
