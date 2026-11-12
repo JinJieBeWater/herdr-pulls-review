@@ -35,6 +35,7 @@ function fire(node, event, ...args) {
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+const commands = [];
 const zoom = 1.1, calls = [], overlays = [], closed = [], notes = [], launched = [], state = {}, shown = { pane: "p1", tab: "b" };
 const theme = new Proxy({ foreground: "#f4f4f6", dim: "#77777f", border: "#2a2a30", hover: "#202024" }, { get: (t, k) => t[k] ?? "#a9a9b4" });
 const env = {
@@ -47,9 +48,13 @@ const env = {
   shared: (key) => state[key], setShared: (key, value) => { state[key] = value; },
   run: (name, args) => calls.push([name, plain(args)]), notify: (n) => notes.push(n),
   openOverlay: (spec) => overlays.push(spec), closeOverlay: (id) => closed.push(id),
+  // `pulls-review.<command>`, handed to whichever copy waits.
+  nextCommand: () => new Promise(done => { commands.push(done); }),
   appHome: () => "/app", home: () => "/Users/me", readTextFile: async () => '{ "open": "herdr" }',
+  // Herdr T3's layout: the space panel, its pages Files and Review.
+  layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", hidden: true, children: [{ id: "panel-body", active: "files", children: [{ id: "files" }, { id: "review" }] }] }] }),
 };
-const source = ["details.js", "tip.js", "list.js", "zoom.js", "focus.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
+const source = ["store.js", "details.js", "tip.js", "list.js", "focus.js", "panel.js", "review-git.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
   .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
 // Timers fire at once: a card that waits 150ms is up by the next render.
 const cx = { notify() {}, stop_propagation() {}, spawn: (f) => f(cx), focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every() {}, after: (_ms, f) => (f(cx), { cancel() {} }) } };
@@ -84,16 +89,17 @@ const load = (props = {}, setup = record) => {
   const drawn = bar.render();
   assert.deepEqual(strings(find(drawn, "review-open")), ["4", "ahead of main"], "the branch's count says what it is against");
   assert.deepEqual(strings(find(drawn, "review-changes")), ["3", "uncommitted"]);
-  // One outline, its parts ruled apart: a control group on its own in any bar.
-  assert.ok(find(drawn, "pulls-review").style.border);
+  // Ghost buttons, as the tab bar's own: no outline, no rules between them.
+  assert.ok(!("border" in find(drawn, "pulls-review").style));
   // The counts, then the logo, last so they can come and go without moving it.
-  assert.deepEqual(keys(find(drawn, "pulls-review")), ["tip-review-changes", "div", "tip-review-open", "div", "tip-review-ahead", "div", "tip-review-behind", "div", "tip-review-pick"]);
+  assert.deepEqual(keys(find(drawn, "pulls-review")), ["tip-review-changes", "tip-review-open", "tip-review-ahead", "tip-review-behind", "tip-review-pick"]);
   assert.equal(strings(find(drawn, "tip-review-ahead").style.content).length, 0, "its card waits for the hover");
-  assert.ok("rounded_l" in find(drawn, "review-changes").style && "rounded_r" in find(drawn, "review-pick").style && !("rounded_l" in find(drawn, "review-pick").style), "the end parts' fills follow the outline's corners");
+  for (const id of ["review-changes", "review-pick"]) assert.deepEqual([find(drawn, id).style.h, find(drawn, id).style.rounded, "border" in find(drawn, id).style], [24, 8, false], id);
+  assert.equal(find(drawn, "review-pick").style.w, 24);
   // In keyboard mode Tab reaches each count and the logo, as it does the Actions beside them.
-  state["t3-focus"] = "someone";
+  state["t3.focus"] = "someone";
   for (const id of ["review-changes", "review-open", "review-ahead", "review-behind", "review-pick"]) assert.equal(find(bar.render(), id).style.tab_index, 0, `${id} is a Tab stop`);
-  delete state["t3-focus"];
+  delete state["t3.focus"];
   assert.equal(find(bar.render(), "review-pick").style.tab_index, undefined, "out of it, a press keeps the terminal's keyboard");
   assert.equal(find(drawn, "review-open").style.accessibility_label, "Review the branch: 4 commits on feat, not on main");
   for (const n of walk(drawn)) if (n.hoverStyle.text_color) assert.ok(!walk(n).some(c => c.kind === "svg"), `${n.key}: a hover style can't brighten its icon`);
@@ -106,14 +112,17 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual(strings(find(bar.render(), "tip-review-pick").style.content), ["Change what to review"], "its card shows on hover");
   fire(find(drawn, "review-pick"), "on_hover", false, cx);
   fire(find(drawn, "tip-over-review-pick"), "on_hover", false, cx);
-  // No color: here it means an agent's state. Hovered, only the fill changes.
-  const countOf = id => find(bar.render(), id).items.find(n => n.style?.text_color);
+  // No color: here it means an agent's state. Quiet: dim and regular weight, the number with its words; hovered, foreground on the fill.
+  const colorOf = id => find(bar.render(), id).style.text_color;
   const counted = ["review-changes", "review-open", "review-ahead", "review-behind"];
-  assert.deepEqual(counted.map(id => countOf(id).style.text_color), counted.map(() => theme.foreground));
+  assert.deepEqual(counted.map(colorOf), counted.map(() => theme.dim));
+  for (const id of counted) assert.ok(find(bar.render(), id).style.font_medium === undefined && !find(bar.render(), id).items.flatMap(walk).some(n => n.style.text_color || n.style.font_medium !== undefined), `${id}: nothing inside sets its own color or weight`);
   for (const id of counted) assert.deepEqual(plain(find(bar.render(), id).hoverStyle), { bg: theme.hover }, id);
   fire(find(drawn, "review-open"), "on_hover", true, cx);
-  assert.equal(countOf("review-open").style.text_color, theme.foreground, "hovered, the same color");
+  assert.equal(colorOf("review-open"), theme.foreground, "hovered, lit");
+  assert.equal(colorOf("review-changes"), theme.dim, "only the one hovered");
   fire(find(drawn, "review-open"), "on_hover", false, cx);
+  assert.equal(colorOf("review-open"), theme.dim);
   assert.equal(find(drawn, "review-ahead").style.accessibility_label, "Review feat → origin/feat: 2 commits to push, on feat, not on origin/feat", "the label says what a count compares");
   assert.equal(find(drawn, "review-behind").style.accessibility_label, "Review origin/feat → feat: 1 commit to pull, on origin/feat as of your last fetch, not on feat");
   assert.equal(walk(drawn).filter(n => "tooltip" in n.style).length, 0, "the shell's tooltip isn't Herdr T3's");
@@ -125,36 +134,33 @@ const load = (props = {}, setup = record) => {
   assert.equal(find(bar.render(), "pulls-review"), null, "another location never shows this one's counts, even before its own read");
   Object.assign(shown, { pane: "p1", cwd: undefined });
   assert.ok(find(bar.render(), "review-open"), "coming back shows the last read at once");
-  // The review pane focused, in a tab of its own: the repository it shows, not the space's folder.
+  // A mod pane focused: the folder of a terminal in its tab.
   const allPanes = scope.panes;
-  scope.panes = () => [{ pane: "p7", mod: "review", tab: "r", cwd: null }];
-  state["review.shown"] = { r: { root: "/repo" } };
-  Object.assign(shown, { pane: "p7", tab: "r" });
-  assert.deepEqual(plain(scope.reviewLocation()), { cwd: "/repo", on: null });
-  scope.panes = allPanes; delete state["review.shown"];
-  Object.assign(shown, { pane: "p1", tab: "b" });
+  scope.panes = () => [{ pane: "p7", mod: "notes", tab: "b", cwd: null }, ...allPanes()];
+  Object.assign(shown, { pane: "p7" });
+  assert.deepEqual(plain(scope.reviewLocation()), { cwd: "/repo/src", on: null });
+  scope.panes = allPanes; Object.assign(shown, { pane: "p1" });
   show({ ...review, unmerged: 0, changed: 0, ahead: 0, behind: 0 });
   assert.deepEqual(keys(find(bar.render(), "pulls-review")), ["tip-review-pick"], "no counts: the icon stays, the way in on a clean default branch");
-  assert.ok("rounded_r" in find(bar.render(), "review-pick").style && "rounded_l" in find(bar.render(), "review-pick").style);
   show({ ...review, newer: 1, gone: true });
   assert.deepEqual(strings(find(bar.render(), "review-open")), ["4", "ahead of main · merged?"], "a deleted upstream shows, not only in the label");
   assert.deepEqual(strings(find(bar.render(), "review-ahead")), ["↑2"]);
   assert.deepEqual(walk(find(bar.render(), "review-open")).filter(n => n.kind === "svg"), [], "wide, the words tell them apart");
   // In a narrow bar each count has a Lucide icon in place of its words, or its arrow; the hover label gives back the words, and the accessibility label stays whole.
-  state["bar.compact"] = true;
+  state["t3-tabs.compact"] = true;
   assert.deepEqual(strings(find(bar.render(), "review-open")), ["4"]);
   assert.deepEqual(strings(find(bar.render(), "review-ahead")), ["2"]);
   for (const [id, icon] of [["review-changes", "file-diff"], ["review-open", "git-branch"], ["review-ahead", "arrow-up"], ["review-behind", "arrow-down"]]) {
     assert.equal(walk(find(bar.render(), id)).find(n => n.kind === "svg").source, `mods/pulls-review/icons/${icon}.svg`);
     assert.match(fs.readFileSync(path.join(__dirname, "icons", `${icon}.svg`), "utf8"), /stroke-width="1\.75"/, `${icon}: as the mod's other icons`);
   }
-  assert.deepEqual(counted.map(id => countOf(id).style.text_color), counted.map(() => theme.foreground), "still no color");
+  assert.deepEqual(counted.map(colorOf), counted.map(() => theme.dim), "still no color");
   fire(find(bar.render(), "review-open"), "on_hover", true, cx);
   fire(find(bar.render(), "tip-over-review-open"), "on_hover", true, cx);
   assert.deepEqual(strings(find(bar.render(), "tip-review-open").style.content), ["4 ahead of main · merged?"]);
   fire(find(bar.render(), "review-open"), "on_hover", false, cx);
   assert.match(find(bar.render(), "review-open").style.accessibility_label, /^Review the branch: 4 commits on feat/);
-  delete state["bar.compact"];
+  delete state["t3-tabs.compact"];
   assert.equal(find(bar.render(), "review-open").style.accessibility_label,
     "Review the branch: 4 commits on feat, not on main · main has 1 newer commit · origin/feat is gone, likely merged");
   const full = status;
@@ -183,9 +189,9 @@ const load = (props = {}, setup = record) => {
   const fit = () => find(bar.render(), "review-fit");
   assert.equal(fit().style.pr, 8);
   // Herdr T3's Home has no worktree to count: no bar, and its block closes.
-  state["t3-home.space"] = "s";
+  state["t3-tabs.home"] = "s";
   assert.equal(fit().style.pr, undefined);
-  delete state["t3-home.space"];
+  delete state["t3-tabs.home"];
   fire(fit(), "on_size_change", { width: 220 });
   fire(fit(), "on_size_change", { width: 220 });
   assert.deepEqual(calls.splice(0), [["layout.resize", { id: "review", px: 200 }]]);
@@ -252,10 +258,10 @@ const load = (props = {}, setup = record) => {
     assert.equal((await watcher.readReview(repo)).changed, 2, "and a new file");
     assert.equal(fs.readFileSync(path.join(repo, ".git/index")).includes("n.txt"), false, "the person's index untouched");
     // Herdr T3's Home draws no bar: nothing reads its folder, which may be a whole home directory's repository.
-    view.reviewAt.clear(); state["t3-home.space"] = "s";
+    view.reviewAt.clear(); state["t3-tabs.home"] = "s";
     tick(wcx); await new Promise(setImmediate);
     assert.equal(view.reviewAt.size, 0);
-    delete state["t3-home.space"];
+    delete state["t3-tabs.home"];
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 
   // The logo reads on click, then its menu's rows open one commit, or one branch against the base.
@@ -282,7 +288,7 @@ const load = (props = {}, setup = record) => {
   const run = { ...cx, spawn: fn => { reading = fn(run); } };
   const click = async (picked) => {
     show(picked);
-    fire(find(bar.render(), "review-pick"), "on_mouse_down:left", { position: { x: 900, y: 20 } }, cx);
+    fire(find(bar.render(), "review-pick"), "on_mouse_down:left", { position: { x: 900, y: 20 }, bounds: { x: 890 * zoom, y: 8 * zoom, width: 24 * zoom, height: 24 * zoom } }, cx);
     fire(find(bar.render(), "review-pick"), "on_click", {}, run);
     await reading;
     return overlays.at(-1);
@@ -298,7 +304,10 @@ const load = (props = {}, setup = record) => {
   assert.equal(spec.height, 8 + 43 + 32 + 28, "the popup fits the switch and the longer page, so turning pages doesn't resize it");
   assert.equal(spec.props.height, spec.height, "and the menu sets that height itself: a popup's is only a maximum");
   assert.deepEqual([spec.mod, spec.props.menu], ["pulls-review", "review"]);
-  assert.deepEqual(plain(spec.at), { x: 892, y: 36 * zoom }, "it hangs 4 under the 24 tall button, under the press, not over the bar");
+  // The Review page reads git itself for its scope menu (shared/review-git.js): the bar takes no command from it.
+  assert.equal(commands.length, 0, "no copy waits on a command");
+  assert.ok(!fs.readFileSync(path.join(__dirname, "bar.js"), "utf8").includes("async function readReview"), "the reads are review-git.js's, one source for both mods");
+  assert.deepEqual([spec.at.x / zoom, spec.at.y / zoom].map(v => Math.round(v * 1000) / 1000), [890 + 24 - 368, 36], "4 under the button, right edges together, wherever the press was");
   fire(find(bar.render(), "review-open"), "on_click", {}, cx);
   assert.deepEqual(launched.at(-1), { root: "/repo", args: [], page: "/branch/feat", analyze: true }, "a count's click opens its page, known without git, and starts the analysis");
   const { mod: menu } = load({ ...spec.props, overlay: "m1" });
@@ -312,38 +321,35 @@ const load = (props = {}, setup = record) => {
     "a branch's row: its name, its last commit, how far ahead and how old");
   fire(find(menu.render(), "review-branch-Other"), "on_click", {}, cx);
   assert.deepEqual([launched.at(-1).args, launched.at(-1).page], [["origin/main...Other"], "/compare/origin/main...Other"]);
-  // The space's review pane lights the count of the diff it shows, whichever of its commits it's on, whichever tab it's in.
-  const pane = (page, base = "/branch/feat", tab = "b") => { state["review.shown"] = { [tab]: { root: "/repo", page, base } }; };
-  const withPane = (...tabs) => [...allPanes(), ...tabs.map(tab => ({ pane: `p-${tab}`, mod: "review", tab, cwd: null }))];
-  const allSpaces = scope.spaces, isLit = (id) => find(bar.render(), id).style.bg === theme.hover;
-  scope.panes = () => withPane("b");
+  // The space's review lights the count of the diff it shows, whichever of its commits it's on.
+  const pane = (page, base = "/branch/feat", space = "s") => { state["review.shown"] = { [space]: { root: "/repo", page, base } }; };
+  // The diff shown: lit, foreground on the hover's fill.
+  const isLit = (id) => find(bar.render(), id).style.bg === theme.hover && find(bar.render(), id).style.text_color === theme.foreground;
   pane("/branch/feat"); show(r);
   let lit = bar.render();
   assert.ok(isLit("review-open"));
   assert.equal(find(lit, "review-open").style.accessibility_label, "Review the branch: 4 commits on feat, not on origin/main, shown");
   pane("/commit/c2"); lit = bar.render();
   assert.ok(isLit("review-open"), "on one of its commits it's still that diff");
-  for (const id of ["review-commits", "commit-older", "commit-newer"]) assert.equal(find(lit, id), null, "the bar has no commit steps: they're the pane's");
-  scope.spaces = () => [{ id: "s", active: true, folder: "/space", tabs: [{ id: "b" }, { id: "r" }] }, { id: "o", active: false, folder: "/o", tabs: [{ id: "x" }] }];
-  scope.panes = () => withPane("r"); pane("/branch/feat", "/branch/feat", "r");
-  assert.ok(isLit("review-open"), "the space's review, not only the focused tab's");
-  scope.panes = () => withPane("x"); pane("/branch/feat", "/branch/feat", "x");
+  for (const id of ["review-commits", "commit-older", "commit-newer"]) assert.equal(find(lit, id), null, "the bar has no commit steps: they're the review's");
+  pane("/branch/feat", "/branch/feat", "o");
   assert.ok(!isLit("review-open"), "another space's review lights nothing");
-  // Panes from when each tab had its own: the focused tab's speaks.
-  show({ ...r, changed: 1 });
-  scope.panes = () => withPane("r", "b");
-  state["review.shown"] = { r: { root: "/repo", page: "/branch/feat", base: "/branch/feat" }, b: { root: "/repo", page: "/worktree", base: "/worktree" } };
-  assert.deepEqual([isLit("review-changes"), isLit("review-open")], [true, false]);
-  scope.spaces = allSpaces; scope.panes = () => withPane("b"); show(r);
+  // How the space's review analysis goes, after the logo, as the panel head marks it: another space's isn't this one's.
+  const pick = () => find(bar.render(), "review-pick");
+  const marked = () => walk(pick()).some(n => n.source === "mods/workspace-chrome/spinner.svg" || strings(n).includes("!") || n.style.rounded_full !== undefined);
+  for (const [word, label] of [["working", "running"], ["done", "done"], ["blocked", "failed"]]) {
+    state["review.status"] = { s: word };
+    assert.ok(marked() && pick().style.accessibility_label === `Change what to review, analysis ${label}`, word);
+  }
+  state["review.status"] = { o: "working" };
+  assert.ok(!marked() && pick().style.accessibility_label === "Change what to review" && pick().style.w === 24);
+  delete state["review.status"];
   pane("/commit/abc", "/commit/abc");
   assert.ok(!isLit("review-open"), "a commit opened as its own diff lights no count");
-  pane("/branch/feat"); state["review.shown"].b.root = "/other";
+  pane("/branch/feat"); state["review.shown"].s.root = "/other";
   assert.ok(!isLit("review-open"), "another repository's diff lights nothing");
-  // The pane closed, its entry stays until another review pane drops it: nothing lit.
-  pane("/branch/feat"); scope.panes = allPanes;
-  assert.ok(!isLit("review-open"));
-  // The logo's menu picks what to review, whatever the pane shows: the log and the branches, both on their own page.
-  scope.panes = () => withPane("b"); pane("/commit/c2");
+  // The logo's menu picks what to review, whatever the review shows: the log and the branches, both on their own page.
+  pane("/commit/c2");
   gits.length = 0;
   const onCommit = await click(r);
   assert.deepEqual(gits.splice(0), ["log", "for-each-ref"], "the log, not the review's commits");
@@ -458,7 +464,7 @@ const load = (props = {}, setup = record) => {
   alone.scope.InputState = scoped.scope.InputState;
   alone.scope.initReviewMenu(alone.mod);
   assert.deepEqual(placeholders, ["Search commits and branches", "Search commits"]);
-  delete state["review.shown"]; scope.panes = allPanes;
+  delete state["review.shown"];
   // Search narrows both lists; Enter opens the first left.
   const searching = load(spec.props);
   let typed = "", submit, change;
@@ -521,14 +527,16 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual([strings(uncounted), uncounted.style.accessibility_label], [["Other", "add other", "3h"], "Review branch Other"]);
 
   // Opened as an overlay (`mod.open:pulls-review`) it reviews the focused pane's worktree and closes itself: in "herdr"
-  // mode, a review pane split off the focused one.
+  // mode, on the review page of the window's panel, the request naming the space.
   calls.length = 0;
   const { mod: launcher, scope: opener } = load({ overlay: "o1" }, (scope) => {
     // No sh: status's count, as on Windows.
     scope.exec = async (command, args) => command === "sh" ? { code: 1, stdout: "" } : args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" } : { code: 0, stdout: args.includes("status") ? " M a.js\n" : "" };
   });
   await new Promise(setImmediate);
-  assert.deepEqual(calls.map(([name, args]) => [name, args.mod, args.pane, args.props?.root, args.props?.page]), [["pane.split", "review", "p1", "/repo", "/worktree"]]);
+  const panelShown = [["layout.select", { stack: "panel-body", child: "review" }], ["layout.show", { id: "panel" }]];
+  assert.deepEqual(calls, panelShown);
+  assert.deepEqual(plain({ ...state.review, n: 0 }), { space: "s", root: "/repo", page: "/worktree", n: 0, analyze: false });
   assert.deepEqual(closed.at(-1), "o1");
   assert.equal(find(launcher.render(), "review-fit"), null, "nothing to see while it works");
   // A file staged then edited back is no change to review, as the bar counts it: the shortcut opens the branch's commit.
@@ -543,69 +551,80 @@ const load = (props = {}, setup = record) => {
     shortcut.panes = () => [{ pane: "p1", tab: "b", cwd: netRepo }];
     shortcut.exec = async (command, args, { cwd }) => { const r = spawnSync(command, args, { cwd, encoding: "utf8" }); return { code: r.status, stdout: r.stdout }; };
     await shortcut.launch({});
-    assert.deepEqual(calls.map(([name, args]) => [name, args.props?.page]), [["pane.split", "/branch/feat"]], "staged then edited back: the branch, not an empty worktree");
+    assert.equal(state.review.page, "/branch/feat", "staged then edited back: the branch, not an empty worktree");
     sh("echo edited > a.txt"); calls.length = 0;
     await shortcut.launch({});
-    assert.deepEqual(calls.map(([name, args]) => [name, args.props?.page]), [["pane.split", "/worktree"]], "a real change: the worktree");
+    assert.equal(state.review.page, "/worktree", "a real change: the worktree");
   } finally { fs.rmSync(netRepo, { recursive: true, force: true }); }
   // From the bar, what it already knows: no git, no overlay to close.
   calls.length = 0;
   const shutBefore = closed.length;
   opener.exec = async (_command, args) => assert.fail(`git ${args.join(" ")}`);
   await opener.launch({ root: "/repo", args: ["origin/feat...feat"], page: "/compare/origin/feat...feat", analyze: true });
-  assert.deepEqual(calls.map(([name, args]) => [name, args.props?.page]), [["pane.split", "/compare/origin/feat...feat"]]);
+  assert.deepEqual([calls, state.review.page, state.review.analyze], [panelShown, "/compare/origin/feat...feat", true], "the request carries the ask");
   assert.equal(closed.length, shutBefore);
   assert.deepEqual(plain(notes), []);
 
-  // One review per space: one in another of its tabs is focused and told the new page; another space's isn't this one's.
-  const twoTabs = () => [{ id: "s", active: true, folder: "/space", tabs: [{ id: "b" }, { id: "r" }] }, { id: "o", active: false, folder: "/o", tabs: [{ id: "x" }] }];
-  const panesWith = (tab) => () => [{ pane: "p1", tab: "b", cwd: "/repo/src" }, { pane: "p-rev", mod: "review", tab }];
-  const opens = async (input) => { calls.length = 0; delete state.review; await opener.launch({ root: "/repo", args: [], page: "/branch/feat", ...input }); return plain(calls); };
-  opener.spaces = twoTabs; opener.panes = panesWith("r");
-  assert.deepEqual(await opens({ analyze: true }), [["pane.focus", { pane: "p-rev" }]], "no new pane, even with the default split");
-  assert.deepEqual(plain({ ...state.review, n: 0 }), { tab: "r", root: "/repo", page: "/branch/feat", n: 0, analyze: true }, "the request carries the ask");
-  assert.deepEqual(await opens({ args: ["abc"], page: "/commit/abc" }), [["pane.focus", { pane: "p-rev" }]]);
-  assert.equal(state.review.analyze, false, "a menu's pick doesn't ask");
-  state["review.prefs"] = { openIn: "tab" };
-  assert.deepEqual((await opens({})).map(([name]) => name), ["pane.focus"], "Open in decides only where a new one goes");
-  opener.panes = panesWith("x");
-  const newTab = await opens({ analyze: true });
-  assert.deepEqual(newTab.map(([name, args]) => [name, args.mod, args.props.page, args.props.analyze]), [["tab.new", "review", "/branch/feat", true]], "with none in this space, a new one, whose props carry the ask");
-  delete state["review.prefs"];
-  const newSplit = await opens({ analyze: true });
-  assert.deepEqual(newSplit.map(([name, args]) => [name, args.direction, args.pane, args.props.analyze]), [["pane.split", "right", "p1", true]], "the default is a split");
-  const made = (await opens({}))[0][1].props;
-  assert.equal(made.analyze, false);
-  assert.deepEqual(plain(state.review), { tab: null, n: made.n }, "a new pane has no request to read; the record keeps its number");
-  // The pane takes only a number past the last it handled, and its own switch sends the last one + 1: each request's is
+  // A layout whose panel has no review page says so.
+  const noPage = opener.layout;
+  opener.layout = () => ({ id: "root", children: [{ id: "panel", children: [{ id: "panel-body", children: [{ id: "files" }] }] }] });
+  calls.length = 0; await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  assert.deepEqual([calls, notes.splice(0).map(n => n.body)], [[], ["This layout's panel has no review page: add the review block to its panel-body stack."]]);
+  opener.layout = noPage;
+  // The review takes only a number past the last it handled, and its own switch sends the last one + 1: each request's is
   // past the last sent, whatever the clock says.
-  opener.panes = panesWith("r");
   const OpenerDate = vm.runInContext("Date", opener), clock = OpenerDate.now;
   OpenerDate.now = () => 100000;
-  state.review = { tab: "r", root: "/repo", page: "/commit/previous", base: "/branch/feat", n: 101000 };
+  state.review = { space: "s", root: "/repo", page: "/commit/previous", base: "/branch/feat", n: 101000 };
   await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
   assert.ok(state.review.n > 101000, "the clock set back");
   const first = state.review.n;
   await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
   assert.ok(state.review.n > first, "two in the same millisecond");
-  opener.panes = panesWith("x"); OpenerDate.now = () => 200000;
-  const fresh = (await opens({}))[0][1].props.n;
-  opener.panes = panesWith("r"); OpenerDate.now = () => 100000;
-  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
-  assert.ok(state.review.n > fresh, "past a new pane's, whose props start it");
   OpenerDate.now = clock; delete state.review;
-  // Switching space while it reads: the review stays out of the new space's pane.
+  // Switching space while it reads: the review stays out of the new space's.
   let config;
   opener.readTextFile = () => new Promise(done => { config = done; });
-  opener.panes = panesWith("r"); calls.length = 0;
+  calls.length = 0;
   const late = opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
-  opener.spaces = () => twoTabs().map(s => ({ ...s, active: !s.active })); opener.panes = panesWith("x");
+  opener.spaces = () => [{ id: "s", active: false, folder: "/space", tabs: [] }, { id: "o", active: true, folder: "/o", tabs: [] }];
   config('{ "open": "herdr" }'); await late;
   assert.deepEqual([plain(calls), state.review], [[], undefined], "started in one space, nothing done in another");
-  opener.readTextFile = env.readTextFile; opener.spaces = twoTabs;
+  opener.readTextFile = env.readTextFile; opener.spaces = env.spaces;
 
-  // A review pane starts only when shown and shared outlives the app, so a run's word from before a restart would spin on
-  // in its tab and its Inbox row. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
+  // In Herdr T3 (`toggle` in its props) the bar is the panel's toggle alone: no counts, so no git reads; the panel's scope menu
+  // has them. The logo is the panel's Review tab.
+  const { mod: merged, scope: mergedScope } = load({ block: "review-bar", toggle: true });
+  const joined = merged.render();
+  assert.deepEqual(keys(find(joined, "pulls-review")), ["tip-review-panel"]);
+  assert.equal(merged.reviews, undefined, "nothing reads git for counts it doesn't show");
+  assert.ok(!walk(joined).some(n => n.kind === "image"), "no logo in the bar");
+  // A 24 ghost icon button, as t3-tabs' panel-toggle: no outline, the fill only on hover.
+  const toggleOf = () => find(merged.render(), "review-panel");
+  assert.deepEqual([toggleOf().style.w, toggleOf().style.h, toggleOf().style.rounded, "border" in toggleOf().style, "bg" in toggleOf().style, toggleOf().hoverStyle.bg], [24, 24, 8, false, false, theme.hover]);
+  assert.equal(walk(toggleOf()).find(n => n.kind === "svg").source, "mods/pulls-review/icons/panel-right.svg");
+  assert.equal(toggleOf().items.length, 1, "no analysis, the icon alone");
+  // Last on the bar, 2 in as the ghost buttons after it; the tab bar's end makes up the rest, so its box ends 12 from the window's edge.
+  assert.equal(find(joined, "review-fit").style.pr, 2, "2 in, as the bar's other ghost buttons");
+  // While the panel is closed the analysis's mark sits inside the button, left of the icon: the button grows leftward, its
+  // icon staying put at the bar's end. Never a badge over the icon. Open, the panel head's Review tab shows it: not twice.
+  for (const [word, label] of [["working", "running"], ["done", "done"], ["blocked", "failed"]]) {
+    state["review.status"] = { s: word };
+    const [first, second] = toggleOf().items;
+    assert.ok(toggleOf().items.length === 2 && second.source === "mods/pulls-review/icons/panel-right.svg" && first.source !== second.source && toggleOf().style.px === 6 && toggleOf().style.w === undefined, word);
+    assert.ok(!walk(toggleOf()).some(n => n.style?.absolute !== undefined), `${word}: in the flow, not a badge`);
+    assert.equal(toggleOf().style.accessibility_label, `Show panel, analysis ${label}`);
+  }
+  mergedScope.layout = () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: [{ id: "files" }, { id: "review" }] }] }] });
+  assert.deepEqual([toggleOf().items.length, toggleOf().style.w, toggleOf().style.accessibility_label, toggleOf().style.text_color], [1, 24, "Hide panel", theme.foreground], "open: the Review tab has the mark, the button its icon, lit");
+  mergedScope.layout = env.layout;
+  delete state["review.status"];
+  calls.length = 0;
+  fire(find(joined, "review-panel"), "on_click", {}, cx);
+  assert.deepEqual(plain(calls), [["layout.select", { stack: "panel-body", child: "files" }], ["layout.show", { id: "panel" }]], "it opens the panel on its page");
+
+  // The panel's review page starts only when first shown and shared outlives the app, so a run's word from before a restart
+  // would spin on in the bar and the panel head. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
   state["review.status"] = { a: "working", b: "done", c: "blocked" };
   load({ overlay: "o", page: "/x" });
   assert.equal(state["review.status"].a, "working", "opening a review isn't a restart");
@@ -618,5 +637,5 @@ const load = (props = {}, setup = record) => {
   const code = ["bar.js", "details.js", "tip.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");
   for (const file of fs.readdirSync(path.join(__dirname, "icons"))) assert.ok(code.includes(path.basename(file, ".svg")), `${file} is used`);
 
-  console.log("ok: the Review bar's counts outlined and ruled, its block sized to fit, the branch menu and its search, opening a review");
+  console.log("ok: the Review bar's counts quiet ghost buttons, lit hovered or shown, its block sized to fit, the branch menu and its search, opening a review on the panel's review page, the space's analysis marked by the logo, in Herdr T3 the panel's toggle alone, no counts and no git reads, the analysis's mark left of its icon while the panel's closed, the git reads shared with the Review page");
 })().catch(e => { console.error(e); process.exit(1); });

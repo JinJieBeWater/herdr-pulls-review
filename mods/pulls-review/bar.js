@@ -1,16 +1,21 @@
 // The Review bar: the focused worktree's uncommitted files and its commits ahead of and behind
 // its upstream, each opening that diff.
-// Its logo lists what else there is to pick: a commit, or another branch.
+// Its logo lists what else there is to pick: a commit, or another branch. The git reads are review-git.js's, shared with the
+// Review page's scope menu.
+// In Herdr T3 (`toggle` in its props) the bar is the panel's toggle alone, no counts: the logo is the panel's Review tab.
 // The counts read the remote-tracking refs as they are; fetching is left to you.
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popup } from "gpui-base";
-import { spaces, panes, focused, exec, watchFolder, window, openOverlay, props, setShared, shared, theme, settings, home } from "herdr";
+import { spaces, panes, focused, watchFolder, window, openOverlay, props, setShared, shared, theme, settings, home } from "herdr";
 import { launch } from "./open.js";
 import { detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { glow, tip } from "./tip.js";
 import { step, scrollList } from "./list.js";
 import { stop, pressed, justClosed } from "./focus.js";
+import { KEY } from "./store.js";
+import { git, argPage, readReview, readPicks } from "./review-git.js";
+import { panelState, togglePanel } from "./panel.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -19,43 +24,21 @@ const PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
 const MENU_CLOSED = `${MOD}.menuClosed`;
 export const menuClosed = () => setShared(MENU_CLOSED, Date.now());
 
-// A menu hangs 4 under its button (T3's sideOffset), 24 tall in the 40 bar, and under the click, not on the pointer, where it
-// would cover the bar; the app keeps it in the window. With no press to read (assistive tech clicks without one), the app's default: the pointer.
-const underBar = (press) => press && { x: press.x - 8, y: 36 * settings().zoom };
+// A menu hangs 4 under its button (T3's sideOffset), right edges together, as T3's (align end) and the layout's other menus
+// from a right-side button: `b` is its bounds from the press. With none (assistive tech clicks without one), the app's default: the pointer.
+const underBar = (b) => { const z = Number(settings()?.zoom) || 1; return b && { x: b.x + b.width - MENU_W * z, y: b.y + b.height + 4 * z }; };
 
 // The menu's rows (T3's MenuItem), and what sits above them: its padding, search field and either the pages' switch or a title.
-const MENU_ROW = 28, menuChrome = (tabs) => 8 + 43 + (tabs ? 32 : 28);
+const MENU_ROW = 28, MENU_W = 368, menuChrome = (tabs) => 8 + 43 + (tabs ? 32 : 28);
 
 // The shipped `changes` mod's lookup, except for a mod pane (below).
 export function reviewLocation() {
   const space = spaces().find((s) => s.active), f = focused();
   const ps = panes(), pane = f?.pane ? ps.find(p => p.pane === f.pane) : null;
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
-  // A mod pane has no folder. The review pane says which repository it shows; for another, its tab's terminals stand in.
-  const reviewed = pane?.mod === "review" ? shared("review.shown")?.[pane.tab]?.root : null;
+  // A mod pane has no folder: its tab's terminals stand in.
   const beside = pane && !pane.cwd ? ps.find(p => p.tab === pane.tab && p.cwd)?.cwd : null;
-  return { cwd: reviewed || pane?.cwd || beside || f?.cwd || space?.folder, on };
-}
-
-// A space has one review pane, in any of its tabs. Several, left from when each tab had its own: the focused tab's first.
-export function spaceReview() {
-  const tabs = spaces().find(s => s.active)?.tabs ?? [], all = panes().filter(p => p.mod === "review" && tabs.some(c => c.id === p.tab));
-  return all.find(p => p.tab === focused()?.tab) ?? all[0];
-}
-
-// Reads write nothing under .git, so the folder watch doesn't wake on them.
-export const git = (cwd, args) => exec("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", ...args], { cwd });
-// The files the pane lists for the working tree, as the daemon's worktreeDiff reads them: HEAD to the working tree, net,
-// new files marked intent-to-add in a throwaway copy of the index so a moved file pairs up as one rename.
-const NET = `d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT && { cp "$(git rev-parse --git-path index)" "$d/i" 2>/dev/null; export GIT_INDEX_FILE="$d/i"; } && `
-  + "git --no-optional-locks -c core.fsmonitor=false add -N -- . && git --no-optional-locks -c core.fsmonitor=false diff -M --name-only -z HEAD --";
-// Status counts a file staged then edited back, which the pane shows no diff for, and a moved file as two: `lines`, status's
-// count, stands only where the net read can't run.
-export async function changedFiles(root, lines) {
-  if (!lines) return 0;
-  const net = await exec("sh", ["-c", NET], { cwd: root }).catch(() => null);
-  // shortcut: no sh (Windows) or no commit yet falls back to status's count; follow the daemon's empty-tree base if that matters.
-  return net?.code === 0 ? net.stdout.split("\0").filter(Boolean).length : lines;
+  return { cwd: pane?.cwd || beside || f?.cwd || space?.folder, on };
 }
 
 // A commit's age as the Inbox's settled rows read (t3-inbox's ago), but "now" for "just now": the column is narrow.
@@ -74,12 +57,6 @@ function when(ms, now) {
   return `${short === "now" ? "just now" : `${short} ago`} · ${MONTHS[d.getMonth()]} ${d.getDate()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export const browserPath = page => encodeURI(page).replaceAll("#", "%23");
-
-// The page the CLI opens for `args` (its pageFor), `branch` standing in for its default-branch lookup: what the bar knows without git.
-export const argPage = (args, branch) => browserPath(args[0] === "--worktree" ? "/worktree"
-  : args[0] ? `/${args[0].includes("...") ? "compare" : "commit"}/${args[0]}` : `/branch/${branch}`);
-
 // Worth a read? Of Git's own files only HEAD and refs, and nothing Git ignores: macOS reports those too.
 async function touchesDiff(root, paths) {
   if (paths.some(p => /\/\.git\/(HEAD|refs\/)/.test(p))) return true;
@@ -94,7 +71,7 @@ async function touchesDiff(root, paths) {
 // Focus is checked every 250 ms (memory reads only); git is read on a new location, a change in the worktree (a second
 // after the last read at the soonest), else every 10 s.
 // Herdr T3's Home: no worktree to count.
-const onHome = () => shared("t3-home.space") && spaces().some((s) => s.active && s.id === shared("t3-home.space"));
+const onHome = () => shared(KEY.home) && spaces().some((s) => s.active && s.id === shared(KEY.home));
 
 export function watchReview(view, cx) {
   view.reviews = new Map();
@@ -133,70 +110,6 @@ export function watchReview(view, cx) {
       finally { view.reviewBusy.delete(key); cx.notify(); }
     });
   });
-}
-
-async function readReview(cwd) {
-  const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
-  if (top.code !== 0) return null;
-  // File by file, as the page it opens lists them: plain status folds a new folder into one line.
-  const root = top.stdout.trim(), status = await git(root, ["status", "--porcelain=v2", "--branch", "--untracked-files=all"]);
-  if (status.code !== 0) return null;
-  const review = { root, branch: null, upstream: null, base: null, baseRef: null, changed: 0, ahead: 0, behind: 0, unmerged: 0, newer: 0, gone: false };
-  let ab = false, lines = 0;
-  for (const line of status.stdout.split("\n")) {
-    if (line.startsWith("# branch.head ")) review.branch = line.slice(14);
-    else if (line.startsWith("# branch.upstream ")) review.upstream = line.slice(18);
-    else if (line.startsWith("# branch.ab ")) { ab = true; [review.ahead, review.behind] = line.slice(12).split(" ").map(n => Math.abs(parseInt(n, 10)) || 0); }
-    else if (line && !line.startsWith("#")) lines++;
-  }
-  review.changed = await changedFiles(root, lines);
-  // git leaves out branch.ab when the upstream is set but gone, as after a merged PR's branch is deleted.
-  review.gone = Boolean(review.upstream) && !ab;
-  // The default branch as the CLI resolves it (resolveDefaultBranch): origin/HEAD, else main or master.
-  const originHead = (await git(root, ["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"])).stdout.trim();
-  const names = originHead ? [originHead.replace(/^origin\//, "")] : ["main", "master"];
-  for (const ref of names.flatMap(name => [`origin/${name}`, name])) {
-    const count = await git(root, ["rev-list", "--left-right", "--count", `${ref}...HEAD`]);
-    if (count.code !== 0) continue; // No such ref.
-    // `base` is the branch name; `baseRef` is what was compared, named in the label so a fork's stale origin/main reads as itself.
-    review.base = ref.replace(/^origin\//, "");
-    review.baseRef = ref;
-    // On the default branch or a detached HEAD the CLI opens its ref picker instead: nothing to show.
-    if (review.branch !== review.base && review.branch !== "(detached)") {
-      [review.newer, review.unmerged] = count.stdout.trim().split(/\s+/).map(n => parseInt(n, 10) || 0);
-      // A branch tracking the default branch: its ↑ is the same commits as N ahead of base.
-      if (review.upstream === `origin/${review.base}`) review.ahead = 0;
-    }
-    break;
-  }
-  return review;
-}
-
-// Read on click, so the bar's 10 s poll stays as cheap as it was.
-// shortcut: the menu holds the newest 200 commits and 20 branches, so search can't reach past them; read more if a repo needs it.
-// `unpushed`: the shas not on the upstream, for the menu's ↑.
-async function readPicks(r) {
-  const [read, ahead] = await Promise.all([
-    // log.showSignature would add lines of its own.
-    git(r.root, ["log", "-200", "--no-show-signature", "--format=%H%x1f%s%x1f%ct%x1f%an", r.unmerged ? `${r.baseRef}..HEAD` : "HEAD"]),
-    // All of them: a menu commit can be past the first 200 to push, and one missing here reads as pushed.
-    r.upstream && !r.gone ? git(r.root, ["rev-list", `${r.upstream}..HEAD`]) : { code: 0, stdout: "" },
-  ]);
-  const commits = read.stdout.split("\n").filter(Boolean).map(line => { const [sha, subject, time, author] = line.split("\x1f"); return { sha, subject, time: Number(time) * 1000, author }; });
-  const unpushed = ahead.code === 0 ? ahead.stdout.split("\n").filter(Boolean) : [];
-  if (!r.baseRef) return { commits, branches: [], unpushed };
-  // Each branch's last commit, upstream and worktree, and how far it is ahead of and behind the base, in the same call.
-  // %(ahead-behind) is Git 2.41's: an older Git fails it, and the menu goes without counts.
-  const fields = "%(refname:short)%1f%(contents:subject)%1f%(committerdate:unix)%1f%(authorname)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(worktreepath)";
-  const refs = (format) => git(r.root, ["for-each-ref", "--sort=-committerdate", "--count=21", `--no-merged=${r.baseRef}`, `--format=${format}`, "refs/heads"]);
-  let listed = await refs(`${fields}%1f%(ahead-behind:${r.baseRef})`);
-  if (listed.code !== 0) listed = await refs(fields);
-  const branches = listed.stdout.split("\n").map(line => line.split("\x1f")).filter(([name]) => name && name !== r.branch).slice(0, 20)
-    .map(([name, subject, time, author, upstream, track, worktree, ab]) => {
-      const [count, behind] = (ab ?? "").split(" ").map(n => parseInt(n, 10) || 0);
-      return { name, subject, time: Number(time) * 1000, author, upstream, track, worktree, ...(ab === undefined ? {} : { count, behind }) };
-    });
-  return { commits, branches, unpushed };
 }
 
 const branchArgs = (b) => [`${props().baseRef}...${b.name}`];
@@ -356,31 +269,53 @@ function branchCard(view, t, id, b, base, now) {
     ], { wrap: true, from: 4 }).mr(4)));
 }
 
+// What else to review in r's repository, a commit or another branch, in the logo's menu at `at`. `still` says the bar still
+// shows that repository when git is done.
+function openPicks(view, r, at, still = () => true) {
+  // The button toggles: the press that brought this click closed the menu, so the click leaves it closed.
+  if (justClosed(view, MENU_CLOSED) || view.readingPicks) return;
+  view.readingPicks = true;
+  return (async () => { try {
+    const { commits, branches, unpushed } = await readPicks(r);
+    // Focus moved on while git read: this repo's menu would hang over another's.
+    if (!still() || !commits.length && !branches.length) return;
+    // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
+    const tabs = branches.length > 0 && commits.length > 0;
+    const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);
+    openOverlay({ mod: MOD, kind: "popup", at, width: MENU_W, height, props: { menu: "review", root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
+  } finally { view.readingPicks = false; } })();
+}
+
 export function reviewBar(view, t, stopPress) {
-  if (onHome()) return null;
+  // How the space's analysis goes: the panel head's mark, here too (docs/adr/0011).
+  const space = spaces().find(s => s.active)?.id, word = shared("review.status")?.[space], mark = word === "working" ? svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)
+    : word === "blocked" ? div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!")
+    : word === "done" ? div().size(6).flex_none().rounded_full().bg(t.done) : null;
+  // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
+  if (props()?.toggle) return h_flex().id("pulls-review").h(24).flex_none().items_center().on_mouse_down("left", stopPress).child(panelButton(view, t, word, mark));
   // Looked up on each render, so the frame that shows another space already shows its own counts.
-  const r = view.reviews?.get(JSON.stringify(reviewLocation()));
+  const r = onHome() ? null : view.reviews?.get(JSON.stringify(reviewLocation()));
   if (!r) return null;
   const n = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
   // A narrow bar's layout sets it (Herdr T3's bar-measure): each count with an icon for what it counts. Unset, the words.
-  const compact = shared("bar.compact");
-  // What the space's review pane shows, when it's this repository's. Its entry outlives a closed pane, until another review pane drops it.
-  const open = spaceReview(), reviewed = open ? shared("review.shown")?.[open.tab] : null, here = reviewed?.root === r.root ? reviewed : null;
+  const compact = shared(KEY.compact);
+  // What the space's review shows, when it's this repository's.
+  const reviewed = shared("review.shown")?.[space], here = reviewed?.root === r.root ? reviewed : null;
+  const pickLabel = `Change what to review${word ? `, analysis ${{ working: "running", done: "done", blocked: "failed" }[word]}` : ""}`;
   // The diff, whichever of its commits the pane is on.
   const isShown = (args) => here?.base === argPage(args, r.branch);
   // The accessibility label says what each count compares, which the short label can't. No color: here it means an agent's state.
   // The count leads; what it counts stays quiet beside it.
-  // As T3's xs buttons in a Group: 22, the outline's inside (a hover card's wrapper has no height for h_full to fill), the
-  // outline's 1 and 7 in. Its label is the name's first part. Compact, the label gives back the words the count lost, `· merged?` included.
-  const item = ([id, count, noun, icon, name, args, arrow = ""], first) => tip(view, t, id, compact && noun ? `${count} ${noun}` : name.split(": ")[0], stop(view, t, id, h_flex().id(id).h(22).px(7).gap(4).flex_none().items_center()
-    .text_size(12).font_medium().text_color(t.dim).hover(s => s.bg(t.hover)).role("button").accessibility_label(isShown(args) ? `${name}, shown` : name).when(isShown(args), el => el.bg(t.hover).text_color(t.foreground))
-    // Herdr has no group hover. Entering the next segment can report before leaving this one.
+  // As T3's ghost xs buttons: 24, 8 in, no outline. Quiet: dim and regular, lit (foreground) hovered or while its diff is the one
+  // shown; a hover style can't brighten the icon, so the hover is view.hot. Its label is the name's first part. Compact, the label
+  // gives back the words the count lost, `· merged?` included.
+  const item = ([id, count, noun, icon, name, args, arrow = ""]) => tip(view, t, id, compact && noun ? `${count} ${noun}` : name.split(": ")[0], stop(view, t, id, h_flex().id(id).h(24).px(8).gap(4).flex_none().items_center().rounded(8)
+    .text_size(12).text_color(isShown(args) || view.hot === id ? t.foreground : t.dim).hover(s => s.bg(t.hover)).role("button").accessibility_label(isShown(args) ? `${name}, shown` : name).when(isShown(args), el => el.bg(t.hover))
     .on_hover(glow(view, id))
     .on_click((_e, cx) => cx.spawn(() => launch({ root: r.root, args, page: argPage(args, r.branch), analyze: true })))
     .when(compact, el => el.child(svg(`mods/${MOD}/icons/${icon}.svg`).size(14).flex_none()))
-    .child(div().text_color(t.foreground).child(compact ? count : arrow + count))
-    .when(Boolean(noun) && !compact, el => el.child(noun))
-    .when(first, el => el.rounded_l(7)), first ? 7 : 0), { below: true });
+    .child(compact ? count : arrow + count)
+    .when(Boolean(noun) && !compact, el => el.child(noun)), 8), { below: true });
   const segments = [
     r.changed > 0 && ["review-changes", String(r.changed), "uncommitted", "file-diff", `Review ${n(r.changed, "uncommitted file")}: staged, unstaged and new`, ["--worktree"]],
     // A squash merge leaves the count standing, so a deleted upstream is the visible hint it may be done.
@@ -389,33 +324,39 @@ export function reviewBar(view, t, stopPress) {
     r.ahead > 0 && ["review-ahead", String(r.ahead), null, "arrow-up", `Review ${r.branch} → ${r.upstream}: ${n(r.ahead, "commit")} to push, on ${r.branch}, not on ${r.upstream}`, [`${r.upstream}...${r.branch}`], "↑"],
     r.behind > 0 && ["review-behind", String(r.behind), null, "arrow-down", `Review ${r.upstream} → ${r.branch}: ${n(r.behind, "commit")} to pull, on ${r.upstream} as of your last fetch, not on ${r.branch}`, [`${r.branch}...${r.upstream}`], "↓"],
   ].filter(Boolean);
-  const press = (e, cx) => { view.reviewPress = e.position; pressed(view); stopPress(e, cx); };
+  const press = (e, cx) => { view.reviewPress = e.bounds; pressed(view); stopPress(e, cx); };
   const openMenu = (_e, cx) => {
     view.hot = null; cx.notify();
     // Under this click's press, if it came with one; read now, as a press while git reads is another click's.
     const at = view.pressAt == null ? undefined : underBar(view.reviewPress);
-    // The button toggles: the press that brought this click closed the menu, so the click leaves it closed.
-    if (justClosed(view, MENU_CLOSED) || view.readingPicks) return;
-    view.readingPicks = true;
     const from = JSON.stringify(reviewLocation());
-    cx.spawn(async () => { try {
-      const { commits, branches, unpushed } = await readPicks(r);
-      // Focus moved on while git read: this repo's menu would hang over another's.
-      if (JSON.stringify(reviewLocation()) !== from || !commits.length && !branches.length) return;
-      // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
-      const tabs = branches.length > 0 && commits.length > 0;
-      const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);
-      openOverlay({ mod: MOD, kind: "popup", at, width: 368, height, props: { menu: "review", root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
-    } finally { view.readingPicks = false; } });
+    // Started here, so a second click while git reads finds it reading.
+    const reading = openPicks(view, r, at, () => JSON.stringify(reviewLocation()) === from);
+    if (reading) cx.spawn(() => reading);
   };
-  // Outlined, not filled: a fill would read as an active tab. Each part's fill runs to the outline and the rules.
-  // The block ends where the bar does, so the logo, last, stays put as the counts come and go.
-  return h_flex().id("pulls-review").h(24).flex_none().items_center().rounded(8).border(1).border_color(t.border).on_mouse_down("left", stopPress)
-    .children(segments.flatMap((s, i) => [item(/** @type {any} */ (s), i === 0), div().w(1).h(22).flex_none().bg(t.border)]))
+  // No outline: ghost buttons in a row, as the tab bar's own. The last button ends where the bar does, so it stays put as the counts come and go.
+  return h_flex().id("pulls-review").h(24).flex_none().items_center().gap(4).on_mouse_down("left", stopPress)
+    .children(segments.map(s => item(/** @type {any} */ (s))))
     // Stays with no counts: on a clean default branch it's the only way in.
-    .child(tip(view, t, "review-pick", "Change what to review", stop(view, t, "review-pick", h_flex().id("review-pick").h(22).w(segments.length ? 23 : 22).flex_none().items_center().justify_center().rounded_r(7).when(!segments.length, el => el.rounded_l(7))
-      .hover(s => s.bg(t.hover)).on_hover(glow(view, "review-pick")).role("button").accessibility_label("Change what to review")
+    // With the analysis's mark after the logo, it grows to hold both.
+    .child(tip(view, t, "review-pick", "Change what to review", stop(view, t, "review-pick", h_flex().id("review-pick").h(24).flex_none().items_center().justify_center().rounded(8)
+      .when(!mark, el => el.w(24)).when(Boolean(mark), el => el.px(6).gap(5))
+      .hover(s => s.bg(t.hover)).on_hover(glow(view, "review-pick")).role("button").accessibility_label(pickLabel)
       .on_mouse_down("left", press).on_click(openMenu)
-      // As T3's icon-xs, 24 with the outline's sides. image, not svg: svg would draw the logo in one tint.
-      .child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()), 7), { below: true }));
+      // As T3's icon-xs. image, not svg: svg would draw the logo in one tint.
+      .child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()).when(Boolean(mark), el => el.child(mark)), 8), { below: true }));
+}
+
+// The space panel's toggle, Herdr T3's whole bar: a 24 ghost icon button, as t3-tabs' panel-toggle. The panel on the page last
+// shown, or closed; lit while open. While the panel is closed the analysis's `mark` sits left of the icon inside it, the
+// button growing leftward so the icon stays put at the bar's end; open, the panel head's Review tab shows it, not twice.
+function panelButton(view, t, word, shown) {
+  const open = panelState().open, mark = open ? null : shown, state = mark && { working: "running", done: "done", blocked: "failed" }[word];
+  const label = (open ? "Hide panel" : "Show panel") + (state ? `, analysis ${state}` : "");
+  return tip(view, t, "review-panel", label, stop(view, t, "review-panel", h_flex().id("review-panel").h(24).flex_none().items_center().justify_center().rounded(8)
+    .when(!mark, el => el.w(24)).when(Boolean(mark), el => el.px(6).gap(5).child(mark))
+    .text_color(open || view.hot === "review-panel" ? t.foreground : t.dim).hover(s => s.bg(t.hover)).on_hover(glow(view, "review-panel"))
+    .role("button").accessibility_label(label)
+    .on_click((_e, cx) => { view.hot = null; togglePanel(); cx.notify(); })
+    .child(svg(`mods/${MOD}/icons/panel-right.svg`).size(14).flex_none()), 8), { action: "t3-tabs.panel", below: true });
 }

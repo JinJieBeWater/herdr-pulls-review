@@ -1,5 +1,6 @@
 // pulls.review in Herdr. In a bar it is the Review bar (bar.js), sized to fit its block; opened as an overlay it opens a
-// review (open.js), or with props.menu the logo's menu. A review in "herdr" mode draws in the review mod's pane.
+// review (open.js), or with props.menu the logo's menu. A review in "herdr" mode draws in the review page of the window's
+// panel (the review mod).
 // Bound in keys.json, `mod.open:pulls-review` reviews the focused pane's worktree.
 
 import { View, div } from "gpui-kit";
@@ -15,11 +16,12 @@ export default class PullsReview extends View {
     if (p.menu === "review") initReviewMenu(this);
     else if (p.overlay) cx.spawn(() => launch(p));
     else {
-      // A review pane starts only when shown and shared outlives the app, so a run's word from before a restart would stay
-      // until its tab is seen. The bar, always shown, drops it; a pane still running says so again at its next poll (1.5s).
+      // The panel's review page starts only when first shown and shared outlives the app, so a run's word from before a restart
+      // would stay until that page is seen. The bar, always shown, drops it; a review still running says so again at its next poll (1.5s).
       const status = Object.entries(shared("review.status") ?? {}), left = status.filter(([, word]) => word !== "working");
       if (left.length < status.length) setShared("review.status", Object.fromEntries(left));
-      watchReview(this, cx);
+      // Herdr T3's bar is the panel's toggle alone: no counts to read git for.
+      if (!p.toggle) watchReview(this, cx);
       stopsInit(this, cx);
     }
   }
@@ -35,9 +37,10 @@ export default class PullsReview extends View {
     // Opening: nothing to see, and the overlay closes itself when it's done.
     if (p.overlay) return div();
     const bar = reviewBar(this, theme(), (_e, cx) => cx.stop_propagation());
-    // Outside a repository there's no bar, and its block closes to nothing.
+    // Outside a repository there's no bar, and its block closes to nothing. With `toggle` it's the bar's last control in
+    // Herdr T3: 2 in, as the ghost buttons after it; the tab bar's end after it makes up the rest, 12 from the window's edge.
     return focusRoot(this, h_flex().size_full().items_center().justify_end()
-      .child(h_flex().id("review-fit").flex_none().items_center().when(Boolean(bar), el => el.pr(8).child(bar)).on_size_change((size) => this.fit(size))));
+      .child(h_flex().id("review-fit").flex_none().items_center().when(Boolean(bar), el => el.pr(p.toggle ? 2 : 8).child(bar)).on_size_change((size) => this.fit(size))));
   }
 
   // With the block's id in props.block, it sizes that block to the bar: layout.resize, which Herdr keeps with the
