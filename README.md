@@ -19,7 +19,7 @@ Where a review opens is `open` in `mods/pulls-review/config.json`, a file you cr
 
 With `"pwa"` or `"browser"`, a click on a count also starts the diff's AI analysis, or follows the one already running. A pick from the logo's menu doesn't. In `"herdr"` the review's own setting decides, as above.
 
-In `"herdr"` mode the current space's analysis shows after the Review bar's logo, with an agent's marks: a spinner while it runs; if it ended while you weren't looking at that space's Review page, a dot when it finished or `!` when it failed, until you look. Herdr T3's panel head marks its Review tab the same way, and with `toggle` (below) the mark sits inside the panel's toggle, left of its icon. It isn't an agent, so it stays out of the agents list and Inbox.
+In `"herdr"` mode the current space's analysis shows after the Review bar's logo, with an agent's marks: a spinner while it runs; if it ended while you weren't looking at that space's Review page, a dot when it finished or `!` when it failed, until you look. Herdr T3's panel head marks its Review tab the same way, and with `toggle` (below) the mark sits inside the panel's toggle, left of its icon, while the panel is closed. It isn't an agent, so it stays out of the agents list and Inbox.
 
 ## Install
 
@@ -32,7 +32,7 @@ In `"herdr"` mode the current space's analysis shows after the Review bar's logo
   "content": { "mod": "pulls-review", "props": { "block": "review-bar" } } }
    ```
 
-   In [Herdr T3](https://github.com/JinJieBeWater/herdr-t3) it goes in the `tabs-row` row, right before `tabs-end`, with `"toggle": true` in its props: the bar is then the panel's toggle alone, in place of the logo (the logo is the panel's Review tab): no counts and no git reads for them, the analysis's mark inside it left of its icon; pick another diff from the Review page's scope menu, which counts each scope. Herdr T3's `scripts/update.sh` sets it. `"herdr"` needs this block, the only place to pick another diff. `"mod.open:pulls-review"` in `keys.json` also reviews the focused worktree. Don't give the bar the id `review`: that's the Review page's (step 4), and an id may appear only once in a layout.
+   In [Herdr T3](https://github.com/JinJieBeWater/herdr-t3) it goes in the `tabs-row` row, right before `tabs-end`, with `"toggle": true` in its props: the bar is then the panel's toggle alone, in place of the logo (the logo is the panel's Review tab): no counts and no git reads for them, the analysis's mark inside it left of its icon while the panel is closed; pick another diff from the Review page's scope menu, which counts each scope. Herdr T3's `scripts/update.sh` sets it. `"herdr"` needs this block, the only place to pick another diff. `"mod.open:pulls-review"` in `keys.json` also reviews the focused worktree. Don't give the bar the id `review`: that's the Review page's (step 4), and an id may appear only once in a layout.
 4. For `"herdr"`, add the Review page to your layout's side panel, at the end of its `panel-body` stack: `{ "id": "review", "type": "block", "content": { "mod": "review" } }`. Herdr's own main layout has that stack, holding `files` and `changes`; in Herdr T3, `scripts/update.sh` adds the page by itself once the extra is installed. A click on a count shows the panel on this page.
 5. For the review's analysis, pick a local agent once, with the gear in the review's header or in the browser's review settings (`jin.review -d`): the daemon keeps that choice.
 
@@ -51,4 +51,4 @@ Herdr doesn't update mods from others, and adding them again installs renamed co
 
 ## License
 
-Apache-2.0, as Herdr App. The pulls.review logo, the Lucide icons and the Catppuccin file icons keep their own licenses, in each `NOTICE`.
+Apache-2.0, as Herdr App. The pulls.review logo, the Lucide icons, the Catppuccin file icons and the character-width table from get-east-asian-width keep their own licenses, in each `NOTICE`.

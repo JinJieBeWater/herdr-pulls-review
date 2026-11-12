@@ -48,7 +48,9 @@ export default class ReviewPanel extends View {
     this.agents = null; this.shared = null; this.settingsError = null;
     this.height = 600; this.width = 900; this.view = 600; this.diffHeight = 600; this.frames = 0;
     // A character's width in the code's font, measured once (diff.js), for where wrapped lines break; every space's review shares it.
-    this.charWidth = null;
+    this.charWidth = null; this.wideWidth = null;
+    // The width wrapped lines are cut at, a moment behind a width that's moving (diff.js settleWrap); each space its own.
+    this.wrapView = null; this.wrapRun = 0;
     // The model field searches the agent's catalog; Enter picks the model it names exactly, else the text as typed.
     this.modelInput = InputState.new({ placeholder: "Search or type a model" });
     // The row lit on a settings page and in the fold menu, by keys or the pointer; Enter on one picks it.
@@ -261,16 +263,18 @@ export default class ReviewPanel extends View {
   // Rebuilt only when something it shows changed: render runs on every live change in Herdr. Of the files, only those whose
   // items changed are built again (`parts`); the rest of a group of thousands is joined as it was.
   items() {
-    // Wrapped, lines break at the columns the diff's width holds, of the character's measured width (diff.js), once known.
-    const wrap = wrapLines() ? wrapColumns(this.view, this.charWidth ?? CHAR) : null;
-    const split = this.splitShown(), group = this.group(), id = `${this.version}:${this.groupKey}:${split}:${Math.round(this.view / 40)}:${wrap ? `${wrap.row}:${wrap.pair}` : ""}`;
+    // Wrapped, lines break at the columns the diff's width holds, of the characters' measured widths (diff.js), once known.
+    const char = this.charWidth ?? CHAR, wideChar = this.wideWidth ?? 2 * char, wide = wideChar / char;
+    // At the width it last held (diff.js settleWrap), so a drag doesn't cut every row in view at each step.
+    const wrap = wrapLines() ? wrapColumns(this.wrapView ?? this.view, char, wideChar) : null;
+    const split = this.splitShown(), group = this.group(), id = `${this.version}:${this.groupKey}:${split}:${Math.round(this.view / 40)}:${wrap ? `${wrap.row}:${wrap.pair}` : ""}:${char}:${wide}`;
     if (id !== this.itemsId) {
       // Kept only once all of it is built: a throw part way would leave the list and its lookups out of step, never rebuilt.
-      // shortcut: a width's change re-cuts every wrapped line of the group; cut only the files in view if a big group drags slowly.
+      // A width's change counts each row's lines again (rows.js lineCount) and cuts only those drawn (diff.js).
       const list = group ? buildItems(this.review, group, { collapsed: this.collapsed, full: this.full, split, width: this.view, wrap, parts: this.parts }) : [];
       // In one pass: the heights v_virtual_list takes (the trailing blank's last), the height from the last header on, and
       // how wide the code runs, from each open file's widths, measured once per build of its items. Wrapped, nothing runs past.
-      const measure = (items) => wrap ? [0, 0, 0] : split ? ["left", "right", "solo"].map(side => contentWidth(items, side)) : [0, 0, contentWidth(items)];
+      const measure = (items) => wrap ? [0, 0, 0] : split ? ["left", "right", "solo"].map(side => contentWidth(items, side, char, wide)) : [0, 0, contentWidth(items, undefined, char, wide)];
       const sizes = [], widths = measure([]);
       let tail = 0;
       for (const item of list) {
@@ -278,7 +282,8 @@ export default class ReviewPanel extends View {
         if (item.kind === "file" || item.kind === "group") tail = 0;
         tail += item.size;
         const part = item.kind === "file" && !this.collapsed.has(item.path) && this.parts.get(item.path);
-        if (part) (part.widths ??= measure(part.items)).forEach((w, i) => { widths[i] = Math.max(widths[i], w); });
+        if (part && part.widthsAt !== `${char}:${wide}`) { part.widths = measure(part.items); part.widthsAt = `${char}:${wide}`; }
+        if (part) part.widths.forEach((w, i) => { widths[i] = Math.max(widths[i], w); });
       }
       sizes.push(0);
       // The range last drawn was another list's: until this one draws, scrollToTop mustn't go by it.

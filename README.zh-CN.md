@@ -19,7 +19,7 @@ Review 栏只显示有的内容：`4 ahead of main`（当前分支上默认分�
 
 用 `"pwa"` 或 `"browser"` 时，点击计数还会开始这份 diff 的 AI 分析；已有分析在跑就直接接上。从 logo 菜单里选的不会。`"herdr"` 模式下由评审自己的设置决定，见上文。
 
-`"herdr"` 模式下，当前 space 的分析状态用 agent 的标记显示在 Review 栏 logo 后面：运行中转圈；如果结束时你没在看那个 space 的 Review 页，完成显示圆点、失败显示 `!`，看过后消失。Herdr T3 的面板顶栏在 Review 页签上也这样标记；带 `toggle`（见下）时，这个标记放在面板开关里、图标左边。它不是 agent，所以不进 agents 列表和 Inbox。
+`"herdr"` 模式下，当前 space 的分析状态用 agent 的标记显示在 Review 栏 logo 后面：运行中转圈；如果结束时你没在看那个 space 的 Review 页，完成显示圆点、失败显示 `!`，看过后消失。Herdr T3 的面板顶栏在 Review 页签上也这样标记；带 `toggle`（见下）时，面板关着期间这个标记放在面板开关里、图标左边。它不是 agent，所以不进 agents 列表和 Inbox。
 
 ## 安装
 
@@ -32,7 +32,7 @@ Review 栏只显示有的内容：`4 ahead of main`（当前分支上默认分�
   "content": { "mod": "pulls-review", "props": { "block": "review-bar" } } }
    ```
 
-   在 [Herdr T3](https://github.com/JinJieBeWater/herdr-t3) 里，放进 `tabs-row` 这一行、`tabs-end` 前面，props 里带 `"toggle": true`：这时 Review 栏只是面板开关，代替 logo（logo 在面板的 Review 页签上）：没有计数，也不为计数读 git，分析状态放在开关里、图标左边；要换一份 diff，用 Review 页顶栏的范围菜单，那里有各范围的数量。Herdr T3 的 `scripts/update.sh` 会自动加上。`"herdr"` 模式必须放这个块，换一份 diff 只能在这里操作。也可以在 `keys.json` 里绑定 `"mod.open:pulls-review"`，按键评审当前工作树。不要把这个块的 id 设成 `review`：那是 Review 页的（第 4 步），一个布局里的 id 不能重复。
+   在 [Herdr T3](https://github.com/JinJieBeWater/herdr-t3) 里，放进 `tabs-row` 这一行、`tabs-end` 前面，props 里带 `"toggle": true`：这时 Review 栏只是面板开关，代替 logo（logo 在面板的 Review 页签上）：没有计数，也不为计数读 git，面板关着时分析状态放在开关里、图标左边；要换一份 diff，用 Review 页顶栏的范围菜单，那里有各范围的数量。Herdr T3 的 `scripts/update.sh` 会自动加上。`"herdr"` 模式必须放这个块，换一份 diff 只能在这里操作。也可以在 `keys.json` 里绑定 `"mod.open:pulls-review"`，按键评审当前工作树。不要把这个块的 id 设成 `review`：那是 Review 页的（第 4 步），一个布局里的 id 不能重复。
 4. 用 `"herdr"` 模式时，把 Review 页加进布局侧边面板 `panel-body` 这个 stack 的末尾：`{ "id": "review", "type": "block", "content": { "mod": "review" } }`。Herdr 自带的 main 布局有这个 stack，里面是 `files` 和 `changes`；在 Herdr T3 里，装好扩展后 `scripts/update.sh` 会自己加上。点击计数就会把面板切到这一页。
 5. 要分析评审，先选一次本地 agent：用评审顶栏的齿轮，或浏览器里的评审设置（`jin.review -d`），daemon 会记住这个选择。
 
@@ -51,4 +51,4 @@ Herdr 不会更新别人做的 mod，再添加一次只会装出改了名的副�
 
 ## 许可
 
-Apache-2.0，和 Herdr App 一样。pulls.review 的 logo、Lucide 图标和 Catppuccin 文件图标沿用各自的许可，见各个 `NOTICE`。
+Apache-2.0，和 Herdr App 一样。pulls.review 的 logo、Lucide 图标、Catppuccin 文件图标和来自 get-east-asian-width 的字符宽度表沿用各自的许可，见各个 `NOTICE`。
