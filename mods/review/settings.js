@@ -4,7 +4,8 @@ import { exec, window as appWindow } from "herdr";
 import { request } from "./daemon.js";
 import { scrollList } from "./list.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
-import { PANE, MODEL_ROW, WIDE, SPLIT_MIN, pref, setPref, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
+import { wrapLines, setWrapLines } from "./store.js";
+import { PANE, MODEL_ROW, SPLIT_MIN, pref, setPref, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
 
 // Models the settings list before the search must narrow them.
 const LISTED = 200;
@@ -155,13 +156,9 @@ export function settingsPanel(view, t) {
     label("View"),
     // Split needs a diff SPLIT_MIN wide: narrower, the choice is kept and the diff unified, so it shows faded.
     choiceRow(t, "Diff", [["view-unified", "Unified", !split], ["view-split", "Split", split, view.view < SPLIT_MIN]], (id, cx) => { if ((id === "view-split") !== split) view.toggleSplit(cx); }).on_mouse_move(off),
-    // As T3's line wrapping: long lines scroll sideways by default, or wrap at the diff's width.
-    choiceRow(t, "Lines", [["lines-scroll", "Scroll", pref("wrap") !== true], ["lines-wrap", "Wrap", pref("wrap") === true]], (id, cx) => {
-      setPref("wrap", id === "lines-wrap"); cx.notify();
-    }).on_mouse_move(off),
-    // The sidebar needs the pane WIDE: narrower, the choice is kept and the groups are tabs, so it shows faded.
-    choiceRow(t, "Groups", [["groups-tabs", "Tabs", pref("groupNav") !== "sidebar"], ["groups-sidebar", "Sidebar", pref("groupNav") === "sidebar", view.width < WIDE]], (id, cx) => {
-      setPref("groupNav", id === "groups-sidebar" ? "sidebar" : "tabs"); cx.notify();
+    // Long lines wrap at the diff's width by default, or scroll sideways as T3's; one choice with Files' (store.js).
+    choiceRow(t, "Lines", [["lines-scroll", "Scroll", !wrapLines()], ["lines-wrap", "Wrap", wrapLines()]], (id, cx) => {
+      setWrapLines(id === "lines-wrap"); cx.notify();
     }).on_mouse_move(off),
     rule(t),
     label("AI"),

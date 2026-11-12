@@ -44,18 +44,18 @@ const review = {
 };
 const kinds = (items) => plain(items).map(item => item.key.split(":")[0] + (item.kind === "note" ? `(${item.note.text})` : item.lines ? item.lines.length : ""));
 const opts = { collapsed: new Set(), full: new Map(), split: false, width: 900 };
-// Unanchored notes under the header, an anchored one under its line, children after their header.
-assert.deepEqual(kinds(buildItems(review, review.groups[0], opts)), ["f", "n(whole file)", "h", "r3", "n(on the new line 2)", "f", "e", "g", "f", "h", "r3"]);
+// Unanchored notes under the header, an anchored one under its line, children after their header; a binary file its header alone.
+assert.deepEqual(kinds(buildItems(review, review.groups[0], opts)), ["f", "n(whole file)", "h", "r3", "n(on the new line 2)", "f", "g", "f", "h", "r3"]);
 assert.deepEqual(plain(groupFiles(review.groups[0])), ["a.ts", "b.png", "c.ts"]);
 // Collapsed files show only their header; a whole file replaces the hunks; split pairs the rows.
-assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, collapsed: new Set(["a.ts", "c.ts"]) })), ["f", "f", "e", "g", "f"]);
-assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", { rows: [row(" ", 1, 1), row("+", undefined, 2)] }]]), collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "r2", "n(on the new line 2)", "f", "e", "g", "f"]);
+assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, collapsed: new Set(["a.ts", "c.ts"]) })), ["f", "f", "g", "f"]);
+assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", { rows: [row(" ", 1, 1), row("+", undefined, 2)] }]]), collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "r2", "n(on the new line 2)", "f", "g", "f"]);
 // Rows that stop short of the file's end, past the bytes a read carries, say so after them: a whole file or a diff.
 const cut = (items) => plain(items).filter(i => i.key.endsWith(":cut")).map(i => i.key);
 assert.deepEqual(cut(buildItems(review, review.groups[0], { ...opts, full: new Map([["a.ts", { rows: [row("+", undefined, 1)], truncated: true }]]) })), ["e:a.ts:cut"]);
 assert.deepEqual(cut(buildItems({ ...review, files: review.files.map(f => f.path === "c.ts" ? { ...f, clipped: true } : f) }, review.groups[0], opts)), ["e:c.ts:cut"]);
 assert.deepEqual(cut(buildItems(review, review.groups[0], opts)), []);
-assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, split: true, collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "h", "r2", "n(on the new line 2)", "f", "e", "g", "f"]);
+assert.deepEqual(kinds(buildItems(review, review.groups[0], { ...opts, split: true, collapsed: new Set(["c.ts"]) })), ["f", "n(whole file)", "h", "r2", "n(on the new line 2)", "f", "g", "f"]);
 // Code lines go in runs of up to 32, a line's note ending one: a few thousand changed lines stay far under v_virtual_list's 10000 items.
 const lines = (n) => Array.from({ length: n }, (_, i) => row("+", undefined, i + 1));
 const one = (n, notes = {}) => buildItems({ ...review, files: [file("x.ts", { hunks: [{ header: "@@", rows: lines(n) }] })] }, { key: "x", files: ["x.ts"], notes, children: [] }, opts);
@@ -206,7 +206,11 @@ let keyboard = null;
 const field = { text: "", events: {}, value() { return this.text; }, set_value(v) { this.text = v; }, on(event, h) { this.events[event] = h; return true; }, focus() { keyboard = "field"; } };
 const scopeField = { ...field, events: {}, focus() { keyboard = "scope"; } };
 const refField = { ...field, events: {}, focus() { keyboard = "refs"; } };
+// The page's own localStorage: whether its file tree's column is open.
+const local = new Map();
 const env = {
+  agents: () => [],
+  localStorage: { getItem: (k) => local.get(k) ?? null, setItem: (k, v) => local.set(k, String(v)), removeItem: (k) => local.delete(k) },
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element, h_resizable: element, resizable_panel: element, Scrollbar: { vertical: element },
   Switch: { new: element }, settings: () => ({ zoom: 1 }),
   // tip.js's own; its watch on the pointer is checked in t3-spaces/check-sidebar.cjs.
@@ -303,9 +307,9 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     sharedStore.delete("review.shown");
   }
   // What the review wrote as a pane in a tab, and its setting for where the next opened: gone at its start.
-  sharedStore.set("review.titles", { b: "fix" }); sharedStore.set("review.program", { name: "Review" }); setPref("openIn", "tab"); setPref("fileList", "list");
+  sharedStore.set("review.titles", { b: "fix" }); sharedStore.set("review.program", { name: "Review" }); setPref("openIn", "tab"); setPref("fileList", "list"); setPref("groupNav", "sidebar");
   panel.init({}, cx);
-  assert.ok(sharedStore.get("review.titles") === null && sharedStore.get("review.program") === null && !("openIn" in sharedStore.get("review.prefs")) && !("fileList" in sharedStore.get("review.prefs")));
+  assert.ok(sharedStore.get("review.titles") === null && sharedStore.get("review.program") === null && !("openIn" in sharedStore.get("review.prefs")) && !("fileList" in sharedStore.get("review.prefs")) && !("groupNav" in sharedStore.get("review.prefs")));
   // The Review bar's count opened the panel: the request it left is for this space, and new.
   sharedStore.set("review", { space: "s1", root: "/repo", page: "/branch/fix", n: Date.now() });
   panel.render(cx); pane = panel.shown();
@@ -415,39 +419,48 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(sharedStore.get("review.status"), kept);
   sharedStore.delete("review.status");
   pane.review.analysis = { state: "current", agent: true }; pane.report();
-  // Wide, as the app at `lg`: the groups as tabs by default, and beside the diffs an aside with the files of the group at
-  // the list's top; the group with subgroups heads the row. The settings choose the sidebar instead, kept.
+  // The panel's navigation column, as T3's: right of the diff, ruled off on its left, a 40 head with `Files` and how many,
+  // the file tree of the group at the list's top under it; no tabs, sidebar or aside, at any width.
   drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("group-tab-g") && !drawn.has("review-sidebar") && drawn.has("review-aside") && drawn.has("group-header"));
-  // In the panel the content is on the left and what navigates it on the right, at the window's edge (ADR 0011): elements
-  // are made in the order they're placed.
+  // Elements are made in the order they're placed.
   const before = (a, b) => [...drawn].indexOf(a) < [...drawn].indexOf(b);
-  assert.ok(before("review-diff-area", "review-aside"), "the aside right of the diff");
-  assert.ok(drawn.has("tree-f-a.ts") && !drawn.has("tree-f-c.ts") && !drawn.has("aside-parent"));
+  assert.ok(drawn.has("review-nav") && !drawn.has("group-tab-g") && !drawn.has("review-sidebar") && !drawn.has("review-aside") && !drawn.has("group-header"));
+  assert.ok(before("review-diff-area", "review-nav") && styles["review-nav"].border_l === 1 && styles["review-nav-head"].h === 40, "right of the diff, ruled off, a 40 head");
+  assert.equal(texts.get("review-nav-head"), undefined);
+  assert.ok(styles["review-pane"] && styles["review-pane"].bg === undefined && styles["review-header"].bg === undefined, "no background of its own: the panel's shows");
+  // One column: a lone group lists no groups; the tree is the group shown, its files first, its subgroups after them as
+  // rows; its summary heads its diff.
+  assert.ok(!drawn.has("group-tab-row") && !drawn.has("tree-g-g"));
+  assert.ok(["tree-f-a.ts", "tree-f-b.png", "tree-m-gone.ts", "tree-g-k", "tree-f-c.ts"].every(id => drawn.has(id)));
+  assert.ok(before("tree-m-gone.ts", "tree-g-k") && before("tree-g-k", "tree-f-c.ts"));
+  assert.ok(drawn.has("group-summary") && before("group-summary", "review-diff-area"));
+  // A subgroup's row brings its header to the top and opens it.
   const subAt = pane.itemList.findIndex(item => item.key === "g:k");
-  pane.visible = { start: subAt + 1, end: subAt + 3 }; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("tree-f-c.ts") && !drawn.has("tree-f-a.ts") && drawn.has("aside-parent"), "a subgroup scrolled to shows its files");
+  const toTop = []; pane.scrollToTop = (i) => toTop.push(i); press("tree-g-k"); delete pane.scrollToTop;
+  assert.deepEqual(toTop, [subAt]);
   pane.visible = null;
   pane.popupClosedAt = 0; press("settings");
-  press("groups-sidebar");
+  assert.ok(!drawn.has("groups-sidebar") && !drawn.has("groups-tabs"), "no Groups setting");
   // The settings credit pulls.review and its author, and the fork and its author, each a link.
   assert.ok(["credit-upstream", "credit-antfu", "credit-fork", "credit-jinjie"].every(id => drawn.has(id)));
   press("credit-fork");
   assert.deepEqual(plain(browsed), [["open", ["https://github.com/JinJieBeWater/pulls.review"]]]);
-  assert.equal(sharedStore.get("review.prefs").groupNav, "sidebar");
   // Where a review opens isn't a setting: it's the panel's page.
   assert.ok(!drawn.has("open-tab") && !drawn.has("open-pane"));
   pane.closePopup(cx); pane.popupClosedAt = 0; drawn.clear(); pane.render(cx);
-  // The sidebar, as the app's: groups only; a group's row shows it; only a group with subgroups has a caret, which hides
-  // and shows them.
-  assert.ok(drawn.has("review-sidebar") && !drawn.has("group-tab-g") && drawn.has("review-aside") && !drawn.has("side-f-a.ts"));
-  assert.ok(before("review-diff-area", "review-sidebar") && before("review-aside", "review-sidebar") && styles["review-sidebar"].border_l === 1, "the sidebar at the right end, ruled off on its left");
-  assert.ok(drawn.has("side-g-1-k") && drawn.has("side-fold-g"));
-  assert.ok(!drawn.has("side-fold-k"), "a subgroup has no caret");
-  press("side-fold-g");
-  assert.ok(!drawn.has("side-g-1-k") && pane.groupKey === "g");
-  press("side-fold-g");
-  assert.ok(drawn.has("side-g-1-k"));
+  // The switch at the header's end closes the column and opens it again, kept in the page's own localStorage.
+  assert.ok(before("settings", "review-nav-toggle"), "last in the header");
+  press("review-nav-toggle");
+  assert.ok(!drawn.has("review-nav") && local.get("nav.open") === "false" && !pane.treeShown);
+  press("review-nav-toggle");
+  assert.ok(drawn.has("review-nav") && local.get("nav.open") === "true");
+  // With no files to list, the column is away and its switch greyed.
+  {
+    const files = pane.review.files;
+    pane.review.files = []; delete styles["review-nav-toggle"]; drawn.clear(); pane.render(cx);
+    assert.ok(!drawn.has("review-nav") && styles["review-nav-toggle"].opacity === 0.3);
+    pane.review.files = files; drawn.clear(); pane.render(cx);
+  }
   // The scroll spy redraws once what the list shows moved, and not again until it moves.
   let notified = 0; const spyCx = { ...cx, notify: () => notified++ };
   spy(spyCx); notified = 0; spy(spyCx);
@@ -462,14 +475,6 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(measured, 1, "on screen again, it does");
   delete pane.spied;
   pane.visible = null;
-  const children = pane.review.groups[0].children;
-  pane.review.groups[0].children = []; drawn.clear(); pane.render(cx);
-  assert.ok(!drawn.has("side-fold-g"), "a group without subgroups has no caret");
-  // A group without subgroups heads its aside, not the row.
-  assert.ok(!drawn.has("group-header") && drawn.has("aside-header"));
-  pane.review.groups[0].children = children; pane.render(cx);
-  pane.groupKey = null; press("side-gb-1-k");
-  assert.ok(pane.groupKey === "g", "showing a subgroup shows its group");
   // The files are always a tree, as T3's: no Tree/List setting, and the header holds no view toggles.
   assert.ok(!drawn.has("file-list") && !drawn.has("layout"));
   pane.popupClosedAt = 0; press("settings");
@@ -488,9 +493,34 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(pane.focusPath === "a.ts" && pane.current === "b.png", "a key moves the ring, not the file in front");
   pane.key({ keystroke: "enter" }, cx);
   assert.equal(pane.current, "a.ts");
-  pane.key({ keystroke: "end" }, cx); pane.key({ keystroke: "enter" }, cx);
+  pane.focusPath = "gone.ts"; pane.key({ keystroke: "enter" }, cx);
   assert.equal(pane.current, "a.ts", "a removed file has nothing to show");
+  pane.key({ keystroke: "end" }, cx); pane.key({ keystroke: "enter" }, cx);
+  assert.equal(pane.current, "c.ts", "the last row: the subgroup's file");
+  // On a subgroup's row, ← folds it, → opens it again.
+  pane.focusPath = "group:k"; pane.key({ keystroke: "left" }, cx); drawn.clear(); pane.render(cx);
+  assert.ok(!drawn.has("tree-f-c.ts"));
+  pane.key({ keystroke: "right" }, cx); drawn.clear(); pane.render(cx);
+  assert.ok(drawn.has("tree-f-c.ts"));
   pane.focusPath = null;
+  // The reviewed box leads the row, after the chevron's slot and before the icon (asserted on the row in shared/check-file-tree.cjs).
+  // A file row's right-click opens the panel's file menu where it was pressed (file-menu.js): Review's items, Open in Files
+  // while the panel has Files, Mark reviewed last; a group's row has none.
+  handlers.get("tree-g-k.on_mouse_down")?.();
+  assert.equal(pane.menuFor ?? null, null, "a group's row has no menu");
+  handlers.get("tree-f-a.ts.on_mouse_down")();
+  handlers.get("review-pane.on_mouse_down")({ local_position: { x: 300, y: 100 } }, cx); drawn.clear(); pane.render(cx);
+  assert.ok(drawn.has("file-menu") && ["copy-path", "copy-relative", "reveal", "open", "open-files", "review"].every(id => drawn.has(`file-menu-${id}`)) && !drawn.has("file-menu-open-review"));
+  press("file-menu-review");
+  assert.ok(pane.fileAt("a.ts").reviewed && !pane.menu && !drawn.has("file-menu"));
+  pane.setReviewed(pane.fileAt("a.ts"), false, cx);
+  // Open in Files, from the toolbar or the menu: the file, from the repository's top, for the Files page, which shows.
+  calls.length = 0; press("review-open-files");
+  assert.equal(sharedStore.get("t3-files.reveal").file, pane.current);
+  assert.deepEqual(plain(calls.filter(([name]) => name === "layout.select")), [["layout.select", { stack: "panel-body", child: "files" }]]);
+  // A file in a folded folder or group, shown from elsewhere, opens what holds it.
+  pane.flipped.add("group:k"); pane.select("c.ts", cx, { scroll: false });
+  assert.ok(!pane.flipped.has("group:k"));
   // Scrolled, the file at the list's top is the one in front; not while the list is still on its way to a file picked.
   pane.pickedAt = 0; pane.visible = { start: pane.itemList.findIndex(item => item.key === "g:k") + 1, end: pane.itemList.length };
   spy(cx);
@@ -800,7 +830,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   secondPanel.init({}, cx); secondPanel.render(cx); await new Promise(setImmediate);
   const second = secondPanel.shown();
   second.view = 1000; second.width = 1200;
-  assert.ok(!second.splitShown() && second.sidebarShown());
+  assert.ok(!second.splitShown());
   setPref("split", true);
   assert.ok(second.splitShown());
   setPref("split", false);
@@ -833,8 +863,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     panel.render(cx); await new Promise(setImmediate); await new Promise(setImmediate);
     assert.equal(panel.shown().page, "/worktree");
     // A space on another machine has no review: jin.review listens on this one only.
-    activeSpace = "r1"; drawn.clear(); panel.render(cx);
-    assert.ok(drawn.has("review-note") && !panel.bySpace.has("r1"));
+    activeSpace = "r1"; delete styles["review-nav-toggle"]; drawn.clear(); panel.render(cx);
+    assert.ok(drawn.has("review-note") && texts.get("review-empty-title") === "Not on this computer" && !panel.bySpace.has("r1"), "the empty state: icon, title, hint");
+    // With no review, the toolbar stays: the page's name, and the tree's switch greyed.
+    assert.ok(drawn.has("review-header") && texts.get("review-title") === "Review" && styles["review-nav-toggle"].opacity === 0.3);
     activeSpace = "s1"; panel.bySpace.set("s1", pane); sharedStore.set("review.shown", was); mainScope.exec = env.exec;
     sharedStore.set("review", { space: "s1", root: "/repo", page: firstPage, n: pane.handled });
     drawn.clear(); panel.render(cx);
@@ -846,15 +878,20 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.view = 1000; drawn.clear(); pane.render(cx);
   assert.ok(pane.itemList.some(item => item.kind === "pair"));
   {
-    // Lines: Wrap, under Diff in the settings (review.prefs.wrap, Scroll by default): a long line takes as many rows as it runs
+    // Lines, under Diff in the settings (t3.wrap, shared with Files; Wrap unless set to Scroll): a long line takes as many rows as it runs
     // to at the diff's width, again when the width changes, and nothing scrolls sideways. The character's width is measured
     // once, from a known run of text.
     const hunk = pane.review.files[0].hunks[0], kept = hunk.rows[2], long = hunk.rows[2] = { ...kept, tokens: [["x".repeat(300)]] };
-    assert.ok(!pref("wrap"));
+    assert.ok(sharedStore.get("t3.wrap") === undefined && pane.wrapCols, "wrapped by default");
     pane.popupClosedAt = 0; press("settings");
     assert.ok(drawn.has("lines-scroll") && drawn.has("lines-wrap") && styles["lines-scroll"].accessibility_label === "Lines: Scroll");
+    press("lines-scroll");
+    assert.equal(sharedStore.get("t3.wrap"), false);
+    drawn.clear(); pane.render(cx);
+    assert.equal(pane.wrapCols, null, "scrolled");
     press("lines-wrap"); pane.closePopup(cx);
-    assert.equal(pref("wrap"), true);
+    assert.equal(sharedStore.get("t3.wrap"), true);
+    assert.equal(pref("wrap"), undefined, "not Review's own any more");
     drawn.clear(); pane.render(cx);
     assert.ok(drawn.has("review-char"));
     handlers.get("review-char.on_size_change")({ width: 800, height: 16 }, cx);
@@ -870,55 +907,20 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.equal(sizeAt(1000), 20 + Math.ceil(300 / wrapColumns(1000, 8).pair) * 20, "split, each half wraps on its own, a pair as its longer side");
     assert.ok(pane.sideMax(0) === 0 && pane.sideMax(1) === 0);
     pane.popupClosedAt = 0; press("settings"); press("lines-scroll"); pane.closePopup(cx);
-    assert.equal(pref("wrap"), false);
+    assert.equal(sharedStore.get("t3.wrap"), false);
     assert.equal(sizeAt(1000), 40);
     hunk.rows[2] = kept; pane.version++; drawn.clear(); pane.render(cx);
   }
-  // Narrower than WIDE, as the app below `lg`: no sidebar, the groups are tabs over the diff and a group's subgroups
-  // sit under its summary; a tab shows its group, a subgroup jumps to it.
+  // No breakpoint: narrow, the header and the column stay as they are wide, and a long run down hides nothing.
   pane.width = 900; drawn.clear(); pane.render(cx);
-  assert.ok(!drawn.has("review-sidebar") && drawn.has("group-tab-g") && drawn.has("group-sub-k"));
-  // As the app below `lg`: a long run down slides the header and the tabs away, and any scroll up brings them back.
+  assert.ok(drawn.has("review-nav") && !drawn.has("group-tab-g"));
   const scroll = (dy) => { handlers.get("review-diff-area.on_scroll_wheel")({ delta: { x: 0, y: dy }, local_position: { x: 100, y: 0 } }, cx); drawn.clear(); pane.render(cx); };
-  scroll(-200);
-  assert.ok(drawn.has("review-header") && drawn.has("group-tabs"));
-  scroll(-200);
-  assert.ok(!drawn.has("review-header") && !drawn.has("group-tabs"));
-  scroll(-50); scroll(10);
-  assert.ok(drawn.has("review-header") && drawn.has("group-tabs"));
-  // Wide, the header stays.
-  scroll(-400); pane.width = 1200; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("review-header"));
+  scroll(-400);
+  assert.ok(drawn.has("review-header") && drawn.has("review-nav"));
   // What else to review is the header's scope menu now, not the Review bar's: no branch button, with or without a bar.
   barIn = true; drawn.clear(); pane.render(cx);
   assert.ok(!drawn.has("review-pick") && drawn.has("review-scope"));
   barIn = false;
-  pane.width = 900; scroll(10);
-  // The group's header shows only at the list's top, as the app's scrolls away with the diffs.
-  pane.visible = { start: 2, end: 5 }; drawn.clear(); pane.render(cx);
-  assert.ok(!drawn.has("group-header") && drawn.has("group-tabs"));
-  pane.visible = { start: 0, end: 5 }; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("group-header"));
-  // As the app's DiffGroupNav: picking a group shows it, its subgroups under its summary; once the header has scrolled
-  // away they stick under the tabs ("subgroups of …"), where its caret folds them. One place at a time.
-  pane.groupKey = null; pane.expandedTab = null; press("group-tab-g-button");
-  assert.ok(pane.groupKey === "g" && drawn.has("group-sub-k") && !drawn.has("group-subtab-k"));
-  // At the top, the caret folds them there; a group newly shown opens them, however it came to be.
-  press("group-tab-g-caret");
-  assert.ok(!drawn.has("group-sub-k") && !drawn.has("group-subtab-k"));
-  press("group-tab-g-caret");
-  assert.ok(drawn.has("group-sub-k"));
-  const scrolled = () => { pane.visible = { start: 3, end: 6 }; drawn.clear(); pane.render(cx); };
-  scrolled();
-  assert.ok(drawn.has("group-subtab-k") && !drawn.has("group-sub-k"));
-  handlers.get("group-tab-g-caret.on_click")({}, cx); scrolled();
-  assert.ok(!drawn.has("group-subtab-k") && pane.groupKey === "g");
-  handlers.get("group-tab-g-caret.on_click")({}, cx); scrolled();
-  assert.ok(drawn.has("group-subtab-k"));
-  const sub = pane.itemList.findIndex(item => item.key === "g:k");
-  pane.visible = { start: sub + 3, end: sub + 9 }; calls.length = 0; timers.length = 0;
-  press("group-subtab-k-button");
-  assert.deepEqual(plain(calls.filter(([name]) => name === "scroll")), [["scroll", sub]]);
   // Under COMPACT the header's text buttons are icons.
   pane.width = 500; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("analyze"));
@@ -958,6 +960,8 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.width = 1200; draw();
   assert.equal(texts.get("review-scope-label"), "Changes");
   assert.ok(styles["review-scope"].h === 24 && styles["review-scope"].min_w === 0 && styles["review-scope-label"].truncate);
+  // A ghost button, as the toolbar's others (docs/adr/0013): no fill of its own over the toolbar's, only hovered or open.
+  assert.equal(styles["review-scope"].bg, undefined);
   assert.deepEqual([texts.get("review-ref-head"), texts.get("review-ref-base")], ["fix", "origin/main"]);
   assert.ok(!drawn.has("commit-older") && !drawn.has("review-sha"), "the whole diff: no sha, nothing to step");
   pane.width = 500; draw();
@@ -1158,13 +1162,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(pane.popup, "fold");
   handlers.get("review-fold-menu.on_mouse_down_out")({}, cx); press("fold-menu");
   assert.equal(pane.popup, null);
-  // The review's own header counts reviewed files beside a donut.
+  // The review's own header counts reviewed files, in words: no donut.
   pane.render(cx);
-  assert.equal(pane.head().parts.find(p => p.donut !== undefined).text, `${pane.review.files.filter(f => f.reviewed).length}/${pane.review.files.length}`);
+  assert.equal(pane.head().parts.at(-1).text, `${pane.review.files.filter(f => f.reviewed).length}/${pane.review.files.length}`);
   assert.ok(pane.head().buttons.find(b => b.id === "analyze").icon);
-  // Wide again, the sidebar instead of the tabs.
   pane.width = 1200; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("review-sidebar") && !drawn.has("group-tab-g") && !drawn.has("group-sub-k"));
   // One press on a file's header acts at once, by where it lands: the reviewed box at its start, the whole file and the
   // fold at its end, a fold anywhere else; and the file becomes the current one.
   pane.view = 1000; pane.render(cx);
@@ -1242,12 +1244,22 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.review = { ...pane.review, files: [...pane.review.files, file("x/y/z.ts")],
     groups: [{ ...pane.review.groups[0], files: [...pane.review.groups[0].files, "x/y/z.ts"] }, ...pane.review.groups.slice(1)] };
   pane.select("a.ts", cx); pane.version++; pane.visible = null; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("tree-d-x/y") && texts.get("tree-d-x/y") === undefined && drawn.has("tree-f-x/y/z.ts"));
+  // Folders start folded; subgroups open.
+  assert.ok(drawn.has("tree-d-x") && !drawn.has("tree-d-x/y") && !drawn.has("tree-f-x/y/z.ts") && drawn.has("tree-f-c.ts"), "folded at first");
+  press("tree-d-x"); press("tree-d-x/y");
+  assert.ok(texts.get("tree-d-x/y") === undefined && drawn.has("tree-f-x/y/z.ts"), "opened, the lone chain one row");
   press("tree-d-x/y");
   assert.ok(drawn.has("tree-d-x/y") && !drawn.has("tree-f-x/y/z.ts"), "folded");
-  press("tree-d-x/y");
-  assert.ok(drawn.has("tree-f-x/y/z.ts"));
   press("tree-dcheck-x/y");
+  // The column head's Expand all opens every folder, then Collapse all closes them, subgroups too.
+  press("review-fold-all");
+  assert.ok(drawn.has("tree-f-x/y/z.ts") && drawn.has("tree-f-c.ts"));
+  press("review-fold-all");
+  assert.ok(drawn.has("tree-g-k") && !drawn.has("tree-f-c.ts") && !drawn.has("tree-f-x/y/z.ts"), "subgroups fold too");
+  // A file shown from elsewhere opens what holds it.
+  pane.select("x/y/z.ts", cx, { scroll: false }); drawn.clear(); pane.render(cx);
+  assert.ok(drawn.has("tree-f-x/y/z.ts"));
+  press("review-fold-all");
   assert.ok(pane.review.files.find(f => f.path === "x/y/z.ts").reviewed);
   // The fold menu, as the app's DiffCollapseMenu: every file of the diff at once, and the file at the view's top back there.
   pane.width = 900; pane.review.files[0].test = true; drawn.clear(); pane.render(cx);
@@ -1293,8 +1305,6 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.deepEqual(shut(), pane.review.files.filter(f => f.reviewed).map(f => f.path).sort());
   fold("expand-all"); fold("collapse-tests");
   assert.deepEqual(shut(), ["a.ts"]);
-  // Narrow, the tabs keep to one row that scrolls sideways.
-  assert.ok(drawn.has("group-tab-row"));
   pane.width = 500; pane.render(cx);
   // Data flow. A read asks rows only for the group's files without them.
   const daemon = mainScope.review, settle = () => new Promise(setImmediate);
@@ -1408,7 +1418,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.load(cx); pane.load(cx);
   assert.equal(asked.length, 1);
   tick(); drawn.clear(); pane.render(cx);
-  assert.ok(pane.error && drawn.has("retry") && !pane.loading);
+  assert.ok(pane.error && drawn.has("review-error-retry") && texts.get("review-error-text") === pane.error && !pane.loading, "the error bar, under the toolbar, with Retry");
   const late = await daemon("/repo", "/api/review", { page: there, rows: [] });
   answer({ ...late, title: "late" }); await wait();
   assert.ok(pane.review.title === "late" && !pane.error);
@@ -1438,7 +1448,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.error = "down";
   let rendering = true;
   pane.render(new Proxy(cx, { get: (c, key) => { assert.ok(rendering, `a render's cx used after it: ${String(key)}`); return c[key]; } }));
-  rendering = false; handlers.get("retry.on_click")({}, cx); await wait();
+  rendering = false; handlers.get("review-error-retry.on_click")({}, cx); await wait();
   assert.ok(!pane.loading && !pane.error);
   // A panel of its own, its review started on what review.shown says for s1, the request pending taken as already shown.
   const panelOf = (extra = {}, shown = { root: "/repo", page: "/branch/fix", base: "/branch/fix" }) => {
@@ -1471,7 +1481,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   delete fresh.rowsWanted;
   // Stepping to another commit of the same diff keeps its commits: the base isn't read again. A refresh still reads it.
   const request = sharedStore.get("review");
-  freshScope.showPage(fresh, "/commit/c1", cx); fresh.render(cx); await wait();
+  freshScope.openReviewPage(fresh, "/commit/c1", cx); fresh.render(cx); await wait();
   sharedStore.set("review", request);
   assert.equal(fresh.page, "/commit/c1");
   assert.deepEqual(plain(baseReads), [], "no base read on switching commit");
@@ -1486,7 +1496,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     return route === "/api/review/rows" ? { files: files.filter(f => f.hunks) } : { ...review, files };
   } });
   await wait(); older.render(cx); await wait(); older.render(cx); await wait();
-  assert.deepEqual(plain(oldReads), [[], ["a.ts", "b.png", "c.ts"]]);
+  assert.deepEqual(plain(oldReads), [[], ["a.ts", "c.ts"]], "a binary file has no rows to ask for");
   // A watched change reads the diff only if it touches it: Git's HEAD or refs, or a file Git doesn't ignore (macOS reports
   // those too). The next batch waits a second, so at most one change read a second.
   let batch, watches = 0; const checked = [], watchReads = [];
@@ -1548,6 +1558,17 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // A pane of its own on /repo's /branch/fix, its daemon `api` until a test swaps the scope's.
   const paneOf = async (extra = {}) => { const made = panelOf(extra); await wait(); return made; };
   {
+    // A Lines choice made before it was the layout's goes along to t3.wrap, unless one's there already; Review keeps none.
+    const was = sharedStore.get("t3.wrap");
+    sharedStore.delete("t3.wrap"); setPref("wrap", false);
+    await paneOf();
+    assert.ok(sharedStore.get("t3.wrap") === false && pref("wrap") === undefined);
+    sharedStore.set("t3.wrap", true); setPref("wrap", false);
+    await paneOf();
+    assert.ok(sharedStore.get("t3.wrap") === true && pref("wrap") === undefined, "the layout's choice wins");
+    sharedStore.set("t3.wrap", was);
+  }
+  {
     // After a rows read that fails, Retry asks for its files again, and they leave "Loading…".
     const { p, scope } = await paneOf();
     delete p.fileAt("a.ts").hunks; p.version++;
@@ -1592,7 +1613,55 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(!p.full.has("a.ts"));
   }
   {
-    // A group of a thousand files draws only the aside's rows in view, and the rest as the tree scrolls.
+    // As pulls.review's DiffGroupNav: the groups, the daemon's folder rules' too, as one row of tabs across the page under its
+    // toolbar; the one picked is the tree and the diff, alone. A file of another group, shown from elsewhere, shows that group.
+    const two = { ...review, source: "rule-based", files: [file("src/a.ts"), file("src/b.ts"), file("img/c.png", { isBinary: true, additions: 0, deletions: 0, hunks: [] })], groups: [
+      { key: "x", label: "X", category: "core", summary: "Code changes.", files: ["src/a.ts"], missing: [], notes: {}, children: [] },
+      { key: "y", label: "Y", category: "docs", summary: "Docs changes.", files: ["src/b.ts"], missing: [], notes: {}, children: [] },
+      { key: "z", label: "Z", category: "other", summary: "Other changes.", files: ["img/c.png"], missing: [], notes: {}, children: [] }] };
+    const { p } = await paneOf({ review: async () => structuredClone(two) });
+    p.width = 1200; drawn.clear(); p.render(cx);
+    const order = (a, b) => [...drawn].indexOf(a) < [...drawn].indexOf(b);
+    assert.ok(p.review.groups.length === 3 && drawn.has("group-tab-row") && order("group-tab-x", "group-tab-y"));
+    assert.ok(order("review-header", "group-tab-row") && order("group-tab-row", "review-diff-area") && order("group-tab-row", "review-nav"), "under the toolbar, across the page");
+    assert.ok(styles["group-tab-x"].bg === "#eeeeee1f" && styles["group-tab-y"].bg === undefined, "the group shown, lit");
+    // Upstream's proportions in T3's tokens: two lines, 8 by 2 in, 6 apart, a 1px outline at radius 8; the row 8 in, on the
+    // toolbar's line. Only the group shown has a fill.
+    assert.deepEqual([styles["group-tab-row"].px, styles["group-tab-row"].py, styles["group-tab-row"].gap], [8, 8, 6]);
+    assert.deepEqual([styles["group-tab-x"].px, styles["group-tab-x"].py, styles["group-tab-x"].rounded, styles["group-tab-x"].border], [8, 2, 8, 1]);
+    assert.equal(styles["review-header"].px, 8);
+    assert.equal(styles["group-tab-x"].text_size, 12);
+    assert.equal(texts.get("group-tab-y-count"), "・1 file");
+    assert.equal(texts.get("group-tab-z-count"), "1 file", "no lines to count, no separator before the files");
+    // The column head counts the group shown's files, as the tree lists them.
+    assert.equal(texts.get("review-nav-count"), "1");
+    // A rule-based group's summary is the rule's boilerplate: none over the diff.
+    assert.ok(!drawn.has("group-summary"));
+    // Folders start folded, but the file in front, picked for you, shows: its folders open.
+    assert.ok(p.current === "src/a.ts" && drawn.has("tree-f-src/a.ts") && !drawn.has("tree-g-x"), "the tree, the group shown's");
+    assert.deepEqual(plain(p.items().filter(i => i.kind === "file").map(i => i.path)), ["src/a.ts"]);
+    // The tabs' counts are made once per read or mark, not on every draw: a draw runs on any live change in Herdr.
+    const stats = p.tabStats.stats; drawn.clear(); p.render(cx);
+    assert.equal(p.tabStats.stats, stats);
+    p.setReviewed(p.fileAt("src/b.ts"), true, cx); drawn.clear(); p.render(cx);
+    assert.ok(p.tabStats.stats !== stats && p.tabStats.stats.get("y").progress === 1);
+    p.setReviewed(p.fileAt("src/b.ts"), false, cx);
+    const toTop = []; p.scrollToTop = (i) => toTop.push(i);
+    handlers.get("group-tab-y.on_click")({}, cx); drawn.clear(); p.render(cx);
+    assert.deepEqual([p.groupKey, p.current, toTop], ["y", "src/b.ts", [0]], "another group's row shows it from its top");
+    assert.ok(drawn.has("tree-f-src/b.ts") && !drawn.has("tree-f-src/a.ts"));
+    // A binary file is its header alone: its header says so.
+    handlers.get("group-tab-z.on_click")({}, cx); drawn.clear(); p.render(cx);
+    assert.deepEqual(plain(p.items().map(i => i.key)), ["f:img/c.png"]);
+    p.select("src/a.ts", cx); drawn.clear(); p.render(cx);
+    assert.deepEqual([p.groupKey, p.current], ["x", "src/a.ts"]);
+    delete p.scrollToTop;
+    // Analyzed, the same, and the group's summary heads its diff.
+    p.apply({ ...structuredClone(two), source: "llm" }); drawn.clear(); p.render(cx);
+    assert.ok(drawn.has("group-tab-y") && drawn.has("tree-d-src") && p.groupKey === "x" && drawn.has("group-summary"));
+  }
+  {
+    // A group of a thousand files draws only the tree's rows in view, and the rest as the tree scrolls.
     const files = Array.from({ length: 1000 }, (_, i) => file(`f${i}.ts`));
     const big = { ...review, files, groups: [{ key: "g", label: "G", files: files.map(f => f.path), missing: [], notes: {}, children: [] }] };
     const { p } = await paneOf({ review: async () => structuredClone(big) });
@@ -1648,10 +1717,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.deepEqual([saved.locale, p.shared.locale], ["ja", "ja"]);
   }
   {
-    // A new list starts at its top, the diff and the aside's files: another worktree, a read after a failed one, an analysis's groups.
+    // A new list starts at its top, the diff and the tree: another worktree, a read after a failed one, an analysis's groups.
     const { p, scope } = await paneOf();
     const tops = () => calls.filter(([name, at]) => name === "scroll" && at === 0).length;
-    // The aside one row tall, so its few rows scroll.
+    // The tree one row tall, so its few rows scroll.
     const scrolledDown = () => { calls.length = 0; p.scrollTop = { "review-files": 40 }; };
     const files = () => { p.width = 1200; p.listHeight = { "review-files": 28 }; p.render(cx); return p.scrollTop["review-files"]; };
     files(); scrolledDown();
@@ -1867,7 +1936,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const { p } = await paneOf();
     p.apply({ ...p.review, files: [], groups: [] });
     drawn.clear(); p.render(cx);
-    assert.equal(texts.get("review-empty"), "No changes in this range");
+    assert.deepEqual([texts.get("review-empty-title"), texts.get("review-empty-hint")], ["No changes", "Nothing to review in this range."]);
+    // Loading, as Files' does: a spinner and a line, announced as a status.
+    p.review = null; drawn.clear(); p.render(cx);
+    assert.ok(texts.get("review-loading-text") === "Loading the review…" && styles["review-loading"].role === "status");
   }
-  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files as a tree following the list, the file in front its one selected row, moved by keys; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the scope button and its menu, a commit's sha and steps, wrapped lines.");
+  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; the row menu and Open in Files; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
 })();

@@ -17,6 +17,7 @@ export const STATUS = { A: "#22c55e", D: "#ef4444", M: "#f59e0b", R: "#3b82f6", 
  * The tree as rows, top to bottom. `childrenOf(folder)` gives a folder's entries in order ({ name, dir, path? } and anything
  * else, kept on the row; "" is the top); `isOpen(path)` whether a folder shows them. An open folder holding just one
  * folder is one row with it, `a / b / c`, as Pierre flattens them: the row is the last's (its path, its open), `top` the first's.
+ * An entry with `flat: false` (a Review group) is never joined to another.
  */
 export function treeRows(childrenOf, isOpen) {
   const out = [];
@@ -24,7 +25,7 @@ export function treeRows(childrenOf, isOpen) {
     for (const e of childrenOf(rel)) {
       const top = e.path ?? (rel ? `${rel}/${e.name}` : e.name);
       let path = top, name = e.name, last = e;
-      for (let kids; e.dir && isOpen(path) && (kids = childrenOf(path)).length === 1 && kids[0].dir;) {
+      for (let kids; last.dir && last.flat !== false && isOpen(path) && (kids = childrenOf(path)).length === 1 && kids[0].dir && kids[0].flat !== false;) {
         last = kids[0]; name += ` / ${last.name}`; path = last.path ?? `${path}/${last.name}`;
       }
       const open = Boolean(e.dir) && isOpen(path);
@@ -90,18 +91,19 @@ export function treeList(view, id, rows, draw) {
 }
 
 /**
- * One row, as Pierre's: a level's indent, a folder's chevron, the icon, the name, then a change's letter and the page's own
- * `trailing`. Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed. `mod` is the mod's folder,
- * whose icons/ hold the chevrons and file-icons.js's.
+ * One row, as Pierre's: a level's indent, a folder's chevron, the page's own `leading` (Review's reviewed box), the icon, the
+ * name, then a change's letter and the page's own `trailing`. Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed. `mod` is the mod's folder,
+ * whose icons/ hold the chevrons and file-icons.js's; `icon`, a 16 element, stands in for the file or folder icon.
  */
-/** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, status?: string, dim?: boolean, struck?: boolean, trailing?: any }} options */
-export function treeRow(t, mod, row, id, { selected = false, focused = false, status, dim = false, struck = false, trailing } = {}) {
+/** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any }} options */
+export function treeRow(t, mod, row, id, { selected = false, focused = false, status, dim = false, struck = false, leading, trailing, icon } = {}) {
   return h_flex().id(id).h(TREE_ROW).mx(2).pl(PAD + row.depth * LEVEL).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12)
     .border_1().border_color(focused ? t.ring : CLEAR)
     .when(selected, (el) => el.bg(t.foreground + "1f")).when(!selected, (el) => el.hover((s) => s.bg(t.foreground + "12")))
     .child(div().size(16).flex_none().flex().items_center().justify_center()
       .when(Boolean(row.dir), (el) => el.child(svg(`${mod}/icons/chevron-${row.open ? "down" : "right"}.svg`).size(12).text_color(t.dim))))
-    .child(image(`${mod}/${row.dir ? folderIcon(row.path, row.open) : fileIcon(row.path)}`).size(16).flex_none().when(dim, (el) => el.opacity(0.5)))
+    .when(Boolean(leading), (el) => el.child(leading))
+    .child((icon ?? image(`${mod}/${row.dir ? folderIcon(row.path, row.open) : fileIcon(row.path)}`).size(16).flex_none()).when(dim, (el) => el.opacity(0.5)))
     .child(div().flex_1().min_w(0).truncate().when(dim, (el) => el.opacity(0.5)).when(struck, (el) => el.line_through()).child(row.name))
     .when(Boolean(status), (el) => el.child(statusBadge(status)))
     .when(Boolean(trailing), (el) => el.child(trailing));

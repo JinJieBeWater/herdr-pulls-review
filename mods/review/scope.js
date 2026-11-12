@@ -106,7 +106,7 @@ function ask(view, page, cx, { analyze = false, base = undefined, stays = false 
 }
 
 // Another page of this diff (‹ ›): its base keeps the commits, and it has no `analyze`.
-export function showPage(view, page, cx) {
+export function openReviewPage(view, page, cx) {
   view.closePopup(cx);
   view.handle.focus();
   setShared(PANE, { space: view.space, root: view.root, page, base: view.base, n: Math.max(Date.now(), view.handled + 1) });
@@ -162,10 +162,11 @@ export function openScope(view, cx) {
   readScope(view, cx);
 }
 
-// As T3's scope trigger: an xs secondary button, its words truncating, a chevron at 70%.
+// As the toolbar's xs ghost buttons (docs/adr/0013), its words truncating, a chevron at 70%: no fill of its own over the
+// toolbar's, only hovered or while its menu is open.
 function scopeButton(view, t, s) {
   return h_flex().id("review-scope").h(24).min_w(0).px(7).gap(4).items_center().rounded(8).text_size(12).font_medium().text_color(t.foreground)
-    .bg(view.popup === "scope" ? t.selected : t.foreground + "08").hover(el => el.bg(hover(t)))
+    .when(view.popup === "scope", el => el.bg(t.selected)).hover(el => el.bg(hover(t)))
     .role("button").accessibility_label(`Diff scope: ${s.label}`)
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.togglePopup("scope", cx); })
     .child(div().id("review-scope-label").min_w(0).truncate().child(s.label))
@@ -177,7 +178,7 @@ export function scopeHeader(view, t) {
   const s = scopeOf(view), list = diffCommits(view), at = s.sha ? list.findIndex(c => c.sha === s.sha) : -1;
   // A commit opened as its own diff, or no longer listed (as after an amend), has nowhere to step.
   const steps = s.sha && view.page !== view.base && at >= 0;
-  const go = (id, icon, label, c) => iconButton(t, id, icon, label, (cx) => showPage(view, `/commit/${c.sha}`, cx), { disabled: !c, size: 24 });
+  const go = (id, icon, label, c) => iconButton(t, id, icon, label, (cx) => openReviewPage(view, `/commit/${c.sha}`, cx), { disabled: !c });
   return h_flex().id("review-scope-row").min_w(0).gap(12).items_center()
     .child(scopeButton(view, t, s))
     .when(Boolean(s.sha), el => el.child(h_flex().flex_none().gap(2).items_center()

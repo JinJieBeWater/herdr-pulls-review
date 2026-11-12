@@ -6,6 +6,7 @@ import { clipRows, codeInset, FILE, noteWidth, ROW, wrapRow } from "./rows.js";
 import { colors } from "./review-load.js";
 import { LU, mono, zoom, isLight, checkMark, diffStats, popover } from "./controls.js";
 import { fileStatus } from "./files.js";
+import { emptyState } from "./panel-states.js";
 
 // The run measured for a character's width: long enough that rounding the whole to a pixel doesn't matter.
 const MEASURED = "0".repeat(100);
@@ -133,12 +134,6 @@ export function diffView(view, t) {
       // Headers and notes stay put, and the list keeps the vertical.
       .on_scroll_wheel((event, cx) => {
         let moved = false, sideways = false;
-        // How far this run down has gone (a negative delta scrolls down, as sideways); any scroll up restarts it.
-        const dy = event.delta.y / zoom();
-        if (dy > 0) view.scrolledDownBy = 0;
-        else if (dy < 0) view.scrolledDownBy -= dy;
-        const hide = view.scrolledDownBy > 300;
-        if (hide !== view.headerHidden) { view.headerHidden = hide; moved = true; }
         for (const side of view.splitShown() ? [(event.local_position?.x ?? 0) / zoom() < view.view / 2 ? 0 : 1, 2] : [2]) {
           const x = Math.min(view.sideMax(side), Math.max(0, view.shift[side] - event.delta.x / zoom()));
           if (x !== view.shift[side]) { view.shift[side] = x; moved = sideways = true; }
@@ -188,8 +183,9 @@ export function diffView(view, t) {
       .child(Scrollbar.vertical("review-diff").absolute().inset_0())
       .children(view.hbars(t))
       // As T3's DiffPanel with nothing to show: a diff with no files has no group either.
-      .when(!items.length, el => el.child(div().id("review-empty").absolute().inset_0().px(20).flex().items_center().justify_center().text_center().text_color(t.dim)
-        .child(view.review?.files.length ? "No files in this group" : "No changes in this range"))));
+      .when(!items.length, el => el.child(div().absolute().inset_0().child(view.review?.files.length
+        ? emptyState(t, "review-empty", `${LU}/file-diff.svg`, "No files in this group", null)
+        : emptyState(t, "review-empty", `${LU}/file-diff.svg`, "No changes", "Nothing to review in this range.")))));
 }
 
 // Code scrolls sideways by the wheel alone: while it does, as T3's ScrollArea, a 6px bar says where it is, for each
