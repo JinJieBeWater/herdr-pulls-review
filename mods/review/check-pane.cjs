@@ -26,7 +26,7 @@ const load = (file, env) => {
 // Values made in another realm compare unequal to this one's: compare them as JSON.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const rows = load("rows.js", {});
-const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD })", rows);
+const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns })", rows);
 
 const row = (kind, old, next) => ({ kind, old, new: next, tokens: [[`${kind}${old ?? ""}:${next ?? ""}`]] });
 // A run of deletions faces the additions after it; context faces itself.
@@ -140,6 +140,24 @@ assert.equal(contentWidth([{ kind: "row", lines: measured }]), contentWidth([lon
 // The columns a daemon's row says are the ones the pane would count: tabs as 4, CJK as 2, an astral character as 2.
 for (const [tokens, want] of [[[["abc"]], 3], [[["\tx"]], 5], [[["中文"]], 4], [[["😀"]], 2], [[["a"], ["\t"], ["中"]], 7], [[["a".repeat(1000)]], 1000]])
   assert.equal(contentWidth([{ kind: "row", lines: [{ kind: "+", tokens }] }]), contentWidth([{ kind: "row", lines: [{ kind: "+", tokens: [], columns: want }] }]));
+// Wrapped, a row's tokens break into lines of at most `cols` columns, counted as columns() counts them (CJK 2, a tab 4),
+// each piece keeping its color; an empty row is one line.
+const lineText = (lines) => plain(lines).map(l => l.map(([t]) => t).join(""));
+assert.deepEqual(lineText(wrapRow({ tokens: [["a".repeat(12), "#f00"], ["bb", "#0f0"]] }, 5)), ["aaaaa", "aaaaa", "aabb"]);
+assert.deepEqual(plain(wrapRow({ tokens: [["ab", "#f00"], ["cd", "#0f0"]] }, 3)), [[["ab", "#f00"], ["c", "#0f0"]], [["d", "#0f0"]]]);
+assert.deepEqual(lineText(wrapRow({ tokens: [["测试一下"]] }, 5)), ["测试", "一下"]);
+assert.deepEqual(lineText(wrapRow({ tokens: [["\tx"]] }, 3)), ["   ", " x"]);
+assert.deepEqual(lineText(wrapRow({ tokens: [] }, 5)), [""]);
+// The columns a line wraps at: unified past both numbers, split past one on each half (less the rule), an added file's whole width.
+assert.deepEqual(plain(wrapColumns(1000, 10)), { row: Math.floor((1000 - 92 - 16) / 10), pair: Math.floor(((1000 - 1) / 2 - 52 - 16) / 10), solo: Math.floor((1000 - 52 - 16) / 10) });
+{
+  // A wrapped row is as many ROWs tall as its lines; a split pair as its longer side.
+  const long = { kind: "+", new: 2, tokens: [["x".repeat(25)]] }, g = { key: "w", files: ["w.ts"], notes: {}, children: [] };
+  const r = { ...review, files: [file("w.ts", { hunks: [{ header: "@@", rows: [row("-", 1), row("+", undefined, 1), long] }] })] };
+  assert.deepEqual(plain(buildItems(r, g, { ...opts, wrap: { row: 10, pair: 5, solo: 10 } }).filter(i => i.lines).map(i => i.size)), [20 + 20 + 3 * 20]);
+  assert.deepEqual(plain(buildItems(r, g, { ...opts, split: true, wrap: { row: 10, pair: 5, solo: 10 } }).filter(i => i.lines).map(i => i.size)), [20 + 5 * 20]);
+  assert.deepEqual(plain(buildItems(r, g, opts).filter(i => i.lines).map(i => i.size)), [60], "unwrapped, a line a row");
+}
 // A big group's rows run past the 8 MB a read carries: a read asks for the files in view and the 10 after them that have
 // none and aren't folded, while they fit in 3000 changed lines, the first one always.
 const many = Array.from({ length: 40 }, (_, i) => ({ path: `f${i}`, sha: `s${i}`, additions: 500, deletions: 0 }));
@@ -182,6 +200,8 @@ const pref = (key) => sharedStore.get("review.prefs")?.[key], setPref = (key, va
 // The page the panel shows, and the space that is active: s1 and s2 here, r1 on another machine.
 let pageShown = "review", windowActive = true, activeSpace = "s1", barIn = false, workHidden = false;
 const calls = [], bodies = [], routes = [], puts = [], browsed = [], notes = [];
+// `review.<command>`, handed to every copy waiting.
+const waiting = [], send = (c) => waiting.splice(0).forEach(done => done(c));
 let daemonSettings = { locale: "zh-CN", llm: { provider: "local-agent", agent: "pi", agentModel: "my/model" } };
 // A save reads the daemon's settings, then writes them back.
 const put = async () => { await new Promise(setImmediate); return puts.at(-1); };
@@ -189,7 +209,8 @@ const put = async () => { await new Promise(setImmediate); return puts.at(-1); }
 // Where the keyboard was last sent: the model field or the pane.
 let keyboard = null;
 const field = { text: "", events: {}, value() { return this.text; }, set_value(v) { this.text = v; }, on(event, h) { this.events[event] = h; return true; }, focus() { keyboard = "field"; } };
-const commitField = { ...field, events: {}, focus() { keyboard = "commits"; } };
+const scopeField = { ...field, events: {}, focus() { keyboard = "scope"; } };
+const refField = { ...field, events: {}, focus() { keyboard = "refs"; } };
 const env = {
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element, h_resizable: element, resizable_panel: element, Scrollbar: { vertical: element },
   Switch: { new: element }, settings: () => ({ zoom: 1 }),
@@ -197,7 +218,7 @@ const env = {
   hoverKept: (view, key, id, el) => el.on_hover((on) => { if (on) view[key] = id; else if (view[key] === id) view[key] = null; }),
   // Paths build into nothing here; painting one is an element like any other.
   PathBuilder: (() => { const chain = new Proxy({}, { get: () => () => chain }); return { stroke: () => chain, fill: () => chain }; })(),
-  window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }), exec: (...args) => { browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search commits" ? commitField : field },
+  window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }), exec: (...args) => { browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search" ? scopeField : options.placeholder === "Search refs" ? refField : field },
   v_virtual_list: (_id, count, sizes, _key, render) => { assert.equal(sizes.length, count); lists.push(() => render({ start: 0, end: count }).forEach(Boolean)); return element(); },
   VirtualListScrollHandle: { new: () => ({ scroll_to_item: (i) => calls.push(["scroll", i]) }) },
   TextView: { markdown: element },
@@ -206,8 +227,8 @@ const env = {
   layout: () => ({ id: "root", children: [{ id: "work", hidden: workHidden, children: barIn ? [{ id: "review-bar", content: { mod: "pulls-review" } }] : [] }, { id: "panel", children: [{ id: "panel-body", active: pageShown, children: [{ id: "files" }, { id: "review" }] }] }] }),
   // Shared values every mod sees.
   shared: (key) => sharedStore.get(key) ?? null, setShared: (key, value) => sharedStore.set(key, value),
-  run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), theme: () => ({ foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888" }),
-  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD,
+  run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), nextCommand: () => new Promise(done => waiting.push(done)), theme: () => ({ foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888" }),
+  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, CHAR: 7.25, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns,
   // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going. A later batch's
   // rows come on their own.
   review: async (_root, route, body) => {
@@ -264,8 +285,11 @@ assert.equal(vm.runInContext('progressText({ kind: "thinking", step: 2 })', main
 }
 // The 150ms timer is the scroll spy; the others, by period, each pane's in the order they started. A test runs them by hand.
 let spy; const every = {};
-const cx = { spawn: (f) => f(cx), notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() { keyboard = "pane"; } }), timer: { every: (ms, f) => { if (ms === 150) spy = f; (every[ms] ??= []).push(f); }, after: (ms, f) => ms === 0 ? queueMicrotask(() => f(cx)) : timers.push(f) } };
-// Timers wait until a test runs them.
+const cx = { spawn: (f) => f(cx), notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() { keyboard = "pane"; } }), timer: { every: (ms, f) => { if (ms === 150) spy = f; (every[ms] ??= []).push(f); }, after: (ms, f) => {
+  if (ms === 0) return queueMicrotask(() => f(cx));
+  const t = (c) => { if (!t.off) f(c); }; t.cancel = () => { t.off = true; }; timers.push(t); return t;
+} } };
+// Timers wait until a test runs them; a cancelled one does nothing.
 const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
 (async () => {
   {
@@ -291,7 +315,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   sharedStore.set("review", { space: "s1", root: "/repo", page: "/branch/fix", n: Date.now() });
   panel.render(cx); pane = panel.shown();
   // Later panes bind the same stand-in.
-  const commitEvents = { ...commitField.events };
+  const scopeEvents = { ...scopeField.events }, refEvents = { ...refField.events };
   // As the app, which never starts an AI run by itself: analyzing on a count's click is off until turned on.
   assert.ok(!pref("autoAnalyze"));
   // A pane wide enough for the sidebar, and a diff for split, as the pane measures them.
@@ -517,10 +541,36 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   drawn.clear(); pane.render(cx);
   // The main page names each setting's value; a setting's list is a page its row opens, so none shows before.
   assert.ok(drawn.has("settings-language") && drawn.has("settings-agent") && drawn.has("settings-model") && !drawn.has("agent-claude") && !drawn.has("model-default"));
+  // A setting's list is its submenu, as T3's MenuSub: beside the panel, which stays; the panel on the pane's right, it opens
+  // to the left, its row lit while it's open. No back row: ← (its search empty) or Escape closes it.
+  delete styles["settings-model"];
   press("settings-model");
-  assert.ok(drawn.has("model-custom") && drawn.has("model-list") && drawn.has("settings-back") && !drawn.has("settings-agent"));
-  press("settings-back");
-  assert.ok(drawn.has("settings-agent") && !drawn.has("model-custom"));
+  assert.ok(drawn.has("model-custom") && drawn.has("model-list") && drawn.has("review-settings-sub") && drawn.has("settings-agent") && !drawn.has("settings-back"));
+  assert.ok(styles["settings-model"].bg, "its row stays lit");
+  const subBox = () => styles["review-sub-at"];
+  assert.ok(subBox().left + 320 <= pane.width - 336 + 5 && subBox().left >= 0, "left of the panel");
+  field.set_value("ab"); pane.key({ key: "left", keystroke: "left" }, cx);
+  assert.equal(pane.settingsPage, "model", "← in a search with words moves its caret");
+  field.set_value(""); pane.key({ key: "left", keystroke: "left" }, cx); drawn.clear(); pane.render(cx);
+  assert.ok(pane.settingsPage === null && drawn.has("settings-agent") && !drawn.has("model-custom") && !drawn.has("review-settings-sub"));
+  {
+    // Resting on a setting's row opens its submenu after a moment; on a row without one, the open one closes.
+    const at = (y) => ({ position: { x: pane.width - 200, y: y + 10 }, bounds: { x: pane.width - 331, y, width: 310, height: 28 } });
+    handlers.get("settings-language.on_mouse_move")(at(280), cx);
+    assert.equal(pane.settingsPage, null, "not at once");
+    tick(); drawn.clear(); pane.render(cx);
+    assert.ok(pane.settingsPage === "language" && drawn.has("locale-ja") && drawn.has("settings-agent"));
+    handlers.get("settings-credit.on_mouse_move")({ ...at(400), position: { x: pane.width - 100, y: 410 } }, cx);
+    tick();
+    assert.equal(pane.settingsPage, null);
+    // Narrow, neither side has room: the submenu stays inside the pane.
+    pane.width = 400; press("settings-model");
+    assert.ok(subBox().left >= 0 && subBox().left + styles["review-settings-sub"].w <= 400);
+    // Short of 320 left of the panel, narrower rather than over its rows.
+    pane.width = 620; press("settings-model");
+    assert.ok(styles["review-settings-sub"].w < 320 && subBox().left + styles["review-settings-sub"].w <= 620 - 336 + 5);
+    pane.key({ keystroke: "escape" }, cx); pane.width = 1200;
+  }
   press("settings-agent");
   press("agent-claude");
   assert.deepEqual(plain((await put()).llm), { provider: "local-agent", agent: "claude", agentModel: "" });
@@ -604,7 +654,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // The language the analysis writes in, as the app's LanguageMenu: a page of its own, whose pick writes it back with the
   // rest of the settings. Unset, the daemon's default shows as picked.
   press("settings-language");
-  assert.ok(drawn.has("language-list") && drawn.has("locale-ja") && !drawn.has("settings-agent"));
+  assert.ok(drawn.has("language-list") && drawn.has("locale-ja") && drawn.has("settings-agent"));
   press("locale-ja");
   assert.equal((await put()).locale, "ja");
   assert.equal((await put()).llm.agentModel, "sonnet");
@@ -628,7 +678,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.deepEqual([(await put()).llm.agent, (await put()).llm.agentModel, pane.settingsPage], [pane.agents[0].name, "", null]);
     press("settings-language"); hit("enter");
     assert.equal(pane.settingsPage, "language", "nothing lit, Enter picks nothing");
-    pane.key({ keystroke: "escape" }, cx);
+    hit("left");
+    assert.deepEqual([pane.popup, pane.settingsPage], ["settings", null], "← closes the submenu, not the panel");
+    press("settings-language"); pane.key({ keystroke: "escape" }, cx);
+    assert.deepEqual([pane.popup, pane.settingsPage], ["settings", null]);
   }
   {
     // A save writes only its own field over the daemon's settings as they are now: a language another pane saved since
@@ -743,23 +796,25 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(!routes.includes("/api/review/analyze"));
   setPref("autoAnalyze", true); review.analysis = { state: "outdated", agent: true }; review.head = { sha: "h2" };
   // Each space its own review: another space shown starts its own, from its folder, and the first keeps all it had.
-  // A clean worktree there waits for a pick in the Review bar; a request for the first space doesn't reach it.
+  // As T3's diff panel, it starts on its branch's Changes, uncommitted files or not; a request for the first space doesn't reach it.
   {
     const git = [], firstReview = pane.review, firstPage = pane.page;
-    mainScope.exec = async (cmd, args, options) => { git.push([args.at(-1), options.cwd]); return args.includes("--show-toplevel") ? { code: 0, stdout: "/other\n" } : { code: 0, stdout: "" }; };
+    mainScope.exec = async (cmd, args, options) => { git.push([args.at(-1), options.cwd]); return args.includes("--show-toplevel") ? { code: 0, stdout: "/other\n" } : args.includes("symbolic-ref") ? { code: 0, stdout: "feat\n" } : { code: 0, stdout: " M a.ts\n" }; };
     activeSpace = "s2"; drawn.clear(); panel.render(cx); await new Promise(setImmediate); await new Promise(setImmediate);
     const s2 = panel.shown();
-    assert.ok(s2 !== pane && s2.root === "/other" && !s2.page && !s2.review);
-    assert.deepEqual(plain(git), [["--show-toplevel", "/other"], ["--porcelain", "/other"]]);
-    drawn.clear(); panel.render(cx);
-    assert.ok(drawn.has("review-note") && !drawn.has("review-pane"));
+    assert.ok(s2 !== pane && s2.root === "/other" && s2.page === "/branch/feat");
+    assert.deepEqual(plain(git).slice(0, 2), [["--show-toplevel", "/other"], ["HEAD", "/other"]]);
     sharedStore.set("review", { space: "s1", root: "/repo", page: "/worktree", n: Date.now() + 1 }); panel.render(cx);
-    assert.equal(s2.page, null, "the first space's request");
+    assert.equal(s2.page, "/branch/feat", "the first space's request");
     sharedStore.set("review", { space: "s2", root: "/other", page: "/worktree", n: Date.now() + 2 }); panel.render(cx); await new Promise(setImmediate);
     assert.ok(s2.page === "/worktree" && s2.review && sharedStore.get("review.shown").s2.root === "/other");
-    // With uncommitted files, a space's review starts on them.
-    activeSpace = "s1"; mainScope.exec = async (_cmd, args) => args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" } : { code: 0, stdout: " M a.ts\n" };
-    panel.bySpace.delete("s1"); const was = sharedStore.get("review.shown"); sharedStore.set("review.shown", {});
+    // With a base picked for the space, Changes against it; a detached HEAD has no branch, and starts on its uncommitted files.
+    let detached = false;
+    activeSpace = "s1"; mainScope.exec = async (_cmd, args) => args.includes("--show-toplevel") ? { code: 0, stdout: "/repo\n" } : args.includes("symbolic-ref") ? { code: detached ? 1 : 0, stdout: detached ? "" : "fix\n" } : { code: 0, stdout: "" };
+    panel.bySpace.delete("s1"); const was = sharedStore.get("review.shown"); sharedStore.set("review.shown", {}); sharedStore.set("review.bases", { s1: "origin/dev" });
+    panel.render(cx); await new Promise(setImmediate); await new Promise(setImmediate);
+    assert.equal(panel.shown().page, "/compare/origin/dev...fix");
+    detached = true; panel.bySpace.delete("s1"); sharedStore.set("review.shown", {}); sharedStore.set("review.bases", null);
     panel.render(cx); await new Promise(setImmediate); await new Promise(setImmediate);
     assert.equal(panel.shown().page, "/worktree");
     // A space on another machine has no review: jin.review listens on this one only.
@@ -775,6 +830,35 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(!pane.itemList.some(item => item.kind === "pair") && pref("split"));
   pane.view = 1000; drawn.clear(); pane.render(cx);
   assert.ok(pane.itemList.some(item => item.kind === "pair"));
+  {
+    // Lines: Wrap, under Diff in the settings (review.prefs.wrap, Scroll by default): a long line takes as many rows as it runs
+    // to at the diff's width, again when the width changes, and nothing scrolls sideways. The character's width is measured
+    // once, from a known run of text.
+    const hunk = pane.review.files[0].hunks[0], kept = hunk.rows[2], long = hunk.rows[2] = { ...kept, tokens: [["x".repeat(300)]] };
+    assert.ok(!pref("wrap"));
+    pane.popupClosedAt = 0; press("settings");
+    assert.ok(drawn.has("lines-scroll") && drawn.has("lines-wrap") && styles["lines-scroll"].accessibility_label === "Lines: Scroll");
+    press("lines-wrap"); pane.closePopup(cx);
+    assert.equal(pref("wrap"), true);
+    drawn.clear(); pane.render(cx);
+    assert.ok(drawn.has("review-char"));
+    handlers.get("review-char.on_size_change")({ width: 800, height: 16 }, cx);
+    assert.equal(pane.charWidth, 8);
+    drawn.clear(); pane.render(cx);
+    assert.ok(!drawn.has("review-char"), "measured once");
+    const sizeAt = (view) => { pane.view = view; drawn.clear(); pane.render(cx); return pane.itemList.find(i => i.lines?.some(l => l === long || l.right === long)).size; };
+    setPref("split", false);
+    assert.equal(sizeAt(1000), 2 * 20 + Math.ceil(300 / wrapColumns(1000, 8).row) * 20);
+    assert.equal(sizeAt(500), 2 * 20 + Math.ceil(300 / wrapColumns(500, 8).row) * 20, "narrower, more rows");
+    assert.equal(pane.sideMax(2), 0);
+    setPref("split", true);
+    assert.equal(sizeAt(1000), 20 + Math.ceil(300 / wrapColumns(1000, 8).pair) * 20, "split, each half wraps on its own, a pair as its longer side");
+    assert.ok(pane.sideMax(0) === 0 && pane.sideMax(1) === 0);
+    pane.popupClosedAt = 0; press("settings"); press("lines-scroll"); pane.closePopup(cx);
+    assert.equal(pref("wrap"), false);
+    assert.equal(sizeAt(1000), 40);
+    hunk.rows[2] = kept; pane.version++; drawn.clear(); pane.render(cx);
+  }
   // Narrower than WIDE, as the app below `lg`: no sidebar, the groups are tabs over the diff and a group's subgroups
   // sit under its summary; a tab shows its group, a subgroup jumps to it.
   pane.width = 900; drawn.clear(); pane.render(cx);
@@ -790,15 +874,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // Wide, the header stays.
   scroll(-400); pane.width = 1200; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("review-header"));
-  // What else to review is the Review bar's menu, asked for under the header's button; with no bar in view to hear, no button.
-  assert.ok(!drawn.has("review-pick"));
+  // What else to review is the header's scope menu now, not the Review bar's: no branch button, with or without a bar.
   barIn = true; drawn.clear(); pane.render(cx);
-  handlers.get("review-pick.on_mouse_down")({ position: { x: 1210, y: 60 }, bounds: { x: 1200, y: 46, width: 28, height: 28 } }, cx);
-  calls.length = 0; press("review-pick");
-  assert.deepEqual(calls, [["pulls-review.pick:1200,78,/repo", undefined]]);
-  workHidden = true; drawn.clear(); pane.render(cx);
-  assert.ok(!drawn.has("review-pick"), "the panel widened over the tab bar hides the bar");
-  barIn = workHidden = false;
+  assert.ok(!drawn.has("review-pick") && drawn.has("review-scope"));
+  barIn = false;
   pane.width = 900; scroll(10);
   // The group's header shows only at the list's top, as the app's scrolls away with the diffs.
   pane.visible = { start: 2, end: 5 }; drawn.clear(); pane.render(cx);
@@ -839,90 +918,199 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const r = await listing(root, route, body);
     return route === "/api/review" && body.page.startsWith("/commit/") ? { ...r, commits: r.commits.filter(c => body.page.endsWith(c.sha)) } : r;
   };
-  // Stepping starts no run, the setting on and no analysis yet.
+  // Picking starts no run from a commit or a branch, the setting on and no analysis yet.
   const beforeSwitch = review.analysis;
   setPref("autoAnalyze", true); review.analysis = { state: "none", agent: true };
   routes.length = 0;
-  // The whole diff, its commits: narrow, it says so and the arrows lead to its oldest.
-  draw();
-  assert.ok(drawn.has("review-commit-switch") && texts.get("commit-place") === "All changes");
-  press("commit-older");
-  assert.equal(pane.page, base, "nothing older than the whole diff");
-  press("commit-newer"); await settled(); draw();
-  assert.deepEqual([pane.page, pane.base, baseEntry().page, baseEntry().base], ["/commit/c1", base, "/commit/c1", base], "the request keeps the base, and review.shown says where it is");
-  assert.ok(sharedStore.get("review").base === base && !sharedStore.get("review").analyze);
-  assert.equal(texts.get("commit-place"), "1/2", "narrow, the short form");
-  press("commit-older"); await settled();
-  assert.equal(pane.page, "/commit/c1", "no older commit");
-  press("commit-newer"); await settled();
+  // The repository as review-git.js reads it, read-only: on fix, 2 ahead of main, 2 to push, nothing to pull, a file changed.
+  const now = Math.floor(Date.now() / 1000), gitCalls = [];
+  mainScope.exec = async (cmd, args) => {
+    gitCalls.push(args);
+    if (cmd === "git") assert.ok(args[0] === "--no-optional-locks" && args.includes("core.fsmonitor=false"), "reads write nothing under .git");
+    if (cmd === "sh") return { code: 1, stdout: "" };
+    if (args.includes("--show-toplevel")) return { code: 0, stdout: "/repo\n" };
+    if (args.includes("status")) return { code: 0, stdout: ["# branch.head fix", "# branch.upstream origin/fix", "# branch.ab +2 -0", "1 .M N... 100644 100644 100644 1a 1a a.ts", ""].join("\n") };
+    if (args.includes("symbolic-ref")) return { code: 0, stdout: "origin/main\n" };
+    if (args.includes("--left-right")) return { "origin/main...HEAD": { code: 0, stdout: "0\t2\n" }, "origin/dev...HEAD": { code: 0, stdout: "1\t5\n" } }[args.at(-1)] ?? { code: 128, stdout: "" };
+    if (args.includes("refs/remotes")) return { code: 0, stdout: ["refs/heads/fix", "refs/heads/other", "refs/heads/main", "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+      "refs/remotes/origin/fix", "refs/remotes/origin/dev", ""].join("\n") };
+    if (args.includes("log")) return { code: 0, stdout: `c2\x1ftwo\x1f${now - 60}\x1fA\nc1\x1fone\x1f${now - 7200}\x1fA\n` };
+    if (args.includes("rev-list")) return { code: 0, stdout: "c2\n" };
+    if (args.includes("for-each-ref")) return { code: 0, stdout: `other\x1fadd other\x1f${now - 3600}\x1fB\x1f\x1f\x1f\x1f3 0\n` };
+    return { code: 128, stdout: "" };
+  };
+  // As T3's DiffPanel header: the scope as an xs button, then what it compares, head → base; narrow, only the base.
   pane.width = 1200; draw();
-  assert.equal(pane.diffCommits().length, 2, "on one commit's page, still the diff's list");
-  assert.equal(texts.get("commit-place"), "Commit 2 of 2");
-  press("commit-newer"); await settled();
-  assert.equal(pane.page, "/commit/c2", "no newer commit");
-  // Narrow it can shrink, its arrows staying: the words truncate, and the header clips rather than push its buttons out.
-  assert.equal(styles["review-commit-switch"].min_w, 0);
-  assert.ok(styles["commit-pick"].min_w === 0 && !styles["commit-pick"].flex_none);
-  assert.ok(styles["commit-place"].min_w === 0 && styles["commit-place"].truncate);
-  assert.ok(styles["review-header"].overflow_hidden && styles.settings.flex_none);
-  // The list: All changes and the commits, newest first, the one shown marked and lit, with the keyboard in its search.
-  press("commit-pick");
-  assert.ok(pane.popup === "commits" && drawn.has("review-commit-menu") && keyboard === "commits");
-  assert.deepEqual(plain(pane.commitRows().map(r => r.id)), ["commit-all", "commit-c2", "commit-c1"]);
-  assert.equal(pane.commitRows()[pane.commitAt].page, "/commit/c2");
-  assert.ok(styles["commit-c2"].accessibility_label.endsWith(", shown") && !styles["commit-c1"].accessibility_label.endsWith(", shown") && !styles["commit-all"].accessibility_label.endsWith(", shown"));
-  // ↑/↓ round the ends, with list.js's step; other keys are the search's, not the pane's.
-  const down = { key: "down" }, up = { key: "up" };
-  pane.key(down, cx); assert.equal(pane.commitRows()[pane.commitAt].id, "commit-c1");
-  pane.key(down, cx); assert.equal(pane.commitRows()[pane.commitAt].id, "commit-all");
-  pane.key(up, cx); assert.equal(pane.commitRows()[pane.commitAt].id, "commit-c1");
-  const splitBefore = pref("split");
-  pane.key({ keystroke: "s", key: "s" }, cx);
-  assert.equal(pref("split"), splitBefore, "typing isn't a shortcut");
-  // Enter picks the lit row; the list closes and the keyboard is back on the pane.
-  commitEvents.submit({}, cx); draw(); await settled();
-  assert.deepEqual([pane.page, pane.popup, keyboard], ["/commit/c1", null, "pane"]);
-  // Escape closes, and the search doesn't outlive it.
-  pane.popupClosedAt = 0; press("commit-pick");
-  commitField.text = "two"; commitEvents.change({}, cx);
-  assert.deepEqual(plain(pane.commitRows().map(r => r.id)), ["commit-c2"], "a search hides All changes, and matches subjects");
-  assert.equal(pane.commitAt, 0);
-  commitField.text = "c1"; commitEvents.change({}, cx);
-  assert.deepEqual(plain(pane.commitRows().map(r => r.id)), ["commit-c1"], "or a sha's start");
-  commitField.text = "nope"; commitEvents.change({}, cx); draw();
-  assert.ok(drawn.has("review-commit-menu"));
-  commitEvents.submit({}, cx);
-  assert.equal(pane.popup, "commits", "no match: Enter picks nothing");
-  pane.key({ keystroke: "escape" }, cx);
-  assert.deepEqual([pane.popup, commitField.text, keyboard], [null, "", "pane"]);
-  // The pointer lights rows; a press outside closes, and the words' own press doesn't reopen it.
-  pane.popupClosedAt = 0; press("commit-pick");
-  handlers.get("commit-c2.on_hover")(true, cx);
-  assert.equal(pane.commitRows()[pane.commitAt].id, "commit-c2");
-  handlers.get("review-commit-menu.on_mouse_down_out")({}, cx); press("commit-pick");
+  assert.equal(texts.get("review-scope-label"), "Changes");
+  assert.ok(styles["review-scope"].h === 24 && styles["review-scope"].min_w === 0 && styles["review-scope-label"].truncate);
+  assert.deepEqual([texts.get("review-ref-head"), texts.get("review-ref-base")], ["fix", "origin/main"]);
+  assert.ok(!drawn.has("commit-older") && !drawn.has("review-sha"), "the whole diff: no sha, nothing to step");
+  pane.width = 500; draw();
+  assert.ok(!drawn.has("review-ref-head") && texts.get("review-ref-vs") === "vs" && texts.get("review-ref-base") === "origin/main");
+  pane.width = 1200; draw();
+  // The menu: Changes, Uncommitted, Outgoing and Incoming with their counts, read on opening; then Commits.
+  press("review-scope");
+  assert.ok(pane.popup === "scope" && drawn.has("review-scope-menu"));
+  await settled(); await settled(); draw();
+  assert.ok(!gitCalls.some(args => args.some(a => /^(fetch|add|commit|checkout|reset|push)$/.test(a)) && !args.includes("-N")), "only reads");
+  assert.deepEqual(["scope-changes", "scope-uncommitted", "scope-push", "scope-pull"].map(id => texts.get(`${id}-detail`)), ["2 ahead of main", "1 file", "↑2", "↓0"]);
+  assert.equal(styles["review-scope-menu"].w, 320);
+  assert.ok(styles["scope-changes"].h === 28 && styles["scope-changes"].rounded === 4 && styles["review-scope-menu"].rounded === 8);
+  assert.ok(styles["scope-changes"].accessibility_label.endsWith(", shown") && !styles["scope-uncommitted"].accessibility_label.endsWith(", shown"));
+  // Nothing to pull: greyed, kept, and a press does nothing.
+  assert.ok(styles["scope-pull"].opacity < 1 && !(styles["scope-push"].opacity < 1));
+  sharedStore.delete("review"); press("scope-pull");
+  assert.ok(pane.popup === "scope" && !sharedStore.get("review"));
+  // Commits, a submenu right of the menu, which stays, as T3's: the branch's commits, newest first, with their age, short sha
+  // and ↑ for unpushed; its first row level with Commits (5 above it), its search on top, no back row.
+  delete styles["scope-commits"];
+  press("scope-commits");
+  assert.ok(pane.scopePage === "commits" && keyboard === "scope" && !drawn.has("scope-back") && drawn.has("review-scope-sub") && drawn.has("scope-changes"));
+  assert.ok(styles["review-scope-menu"].w === 320 && styles["review-scope-sub"].w === 384 && styles["scope-commits"].bg);
+  assert.deepEqual([styles["review-sub-at"].left, styles["review-sub-at"].top], [16 + 320 - 5, 36 + 5 + 4 * 28 + 9 - 5]);
+  // A press in the submenu isn't outside the menu; one past both closes them.
+  handlers.get("review-scope-menu.on_mouse_down_out")({ position: { x: 500, y: 200 } }, cx);
+  assert.equal(pane.popup, "scope");
+  handlers.get("review-scope-menu.on_mouse_down_out")({ position: { x: 1000, y: 500 } }, cx);
   assert.equal(pane.popup, null);
-  // Back to the whole diff from its row; the frame fits a narrow pane.
-  pane.popupClosedAt = 0; pane.width = 300; press("commit-pick");
-  assert.equal(styles["review-commit-menu"].w, 268);
-  pane.width = 1200;
-  press("commit-all"); await settled(); draw();
-  assert.deepEqual([pane.page, texts.get("commit-place"), pane.popup], [base, "All changes", null]);
-  assert.ok(!routes.includes("/api/review/analyze"), "stepping and the list start no run");
-  review.analysis = beforeSwitch;
+  pane.popupClosedAt = 0; press("review-scope"); press("scope-commits");
+  assert.ok(drawn.has("scope-commit-c2") && drawn.has("scope-commit-c1"));
+  assert.ok(styles["scope-commit-c2"].accessibility_label.endsWith(", not pushed") && !styles["scope-commit-c1"].accessibility_label.includes("not pushed"));
+  // A commit row is its subject and age; the sha only matters once picked, in the header.
+  assert.ok(texts.get("scope-commit-c1-time") === "2h" && !drawn.has("scope-commit-c1-sha"));
+  // ↑/↓ light rows, the search narrows by subject or sha, Escape goes back a page and then closes.
+  pane.key({ key: "down" }, cx); assert.equal(pane.scopeListAt, 0);
+  pane.key({ key: "down" }, cx); assert.equal(pane.scopeListAt, 1);
+  scopeField.text = "two"; scopeEvents.change({}, cx); draw();
+  assert.ok(drawn.has("scope-commit-c2") && !drawn.has("scope-commit-c1") && pane.scopeListAt === 0);
+  pane.key({ key: "left", keystroke: "left" }, cx);
+  assert.equal(pane.scopePage, "commits", "← in a search with words moves its caret");
+  scopeField.text = "nope"; scopeEvents.change({}, cx); draw();
+  assert.ok(drawn.has("scope-none"));
+  scopeEvents.submit({}, cx);
+  assert.equal(pane.popup, "scope", "no match: Enter picks nothing");
+  pane.key({ keystroke: "escape" }, cx); draw();
+  assert.ok(pane.popup === "scope" && pane.scopePage === null && scopeField.text === "" && keyboard === "pane" && pane.scopeAt === 4 && !drawn.has("review-scope-sub"));
+  // On Commits, → opens it with its first commit lit; ← closes it back to Commits; Enter opens it too.
+  pane.key({ key: "right", keystroke: "right" }, cx);
+  assert.ok(pane.scopePage === "commits" && keyboard === "scope" && pane.scopeListAt === 0);
+  pane.key({ key: "left", keystroke: "left" }, cx);
+  assert.ok(pane.popup === "scope" && pane.scopePage === null && pane.scopeAt === 4 && keyboard === "pane");
+  pane.key({ key: "enter", keystroke: "enter" }, cx);
+  assert.ok(pane.scopePage === "commits" && pane.scopeListAt === 0);
+  pane.key({ keystroke: "escape" }, cx);
+  {
+    // Resting on Commits opens it after a moment; on a radio, it closes.
+    const at = (y) => ({ position: { x: 100, y: y + 10 }, bounds: { x: 21, y, width: 310, height: 28 } });
+    handlers.get("scope-commits.on_mouse_move")(at(162), cx);
+    assert.equal(pane.scopePage, null, "not at once");
+    tick(); draw();
+    assert.ok(pane.scopePage === "commits" && drawn.has("review-scope-sub") && drawn.has("scope-changes"));
+    handlers.get("scope-changes.on_mouse_move")({ ...at(41), position: { x: 60, y: 50 } }, cx);
+    tick(); draw();
+    assert.ok(pane.popup === "scope" && pane.scopePage === null && !drawn.has("review-scope-sub"));
+  }
+  // Enter on a commit: one commit of this branch's diff, stepped within it; a pick from the menu starts no run.
+  press("scope-commits"); scopeField.text = "c1"; scopeEvents.change({}, cx);
+  // The request, handled when drawn; the commit page's read, then its base's commits.
+  scopeEvents.submit({}, cx); draw(); for (let i = 0; i < 3; i++) await settled(); draw();
+  assert.deepEqual(plain(sharedStore.get("review")).page, "/commit/c1");
+  assert.ok(sharedStore.get("review").base === base && !sharedStore.get("review").analyze && pane.popup === null && keyboard === "pane");
+  assert.deepEqual([pane.page, pane.base, baseEntry().page, baseEntry().base], ["/commit/c1", base, "/commit/c1", base], "review.shown says where it is");
+  // On one commit: its subject on the button, its short sha, and ‹ › through the diff's commits.
+  assert.deepEqual([texts.get("review-scope-label"), texts.get("review-sha")], ["one", "c1"]);
+  assert.ok(styles["review-counts"].flex_none && styles["review-scope"].min_w === 0, "a long subject truncates, the counts hold");
+  assert.ok(!drawn.has("review-ref-head"), "a commit compares nothing");
+  press("commit-older");
+  assert.equal(pane.page, "/commit/c1", "nothing older");
+  press("commit-newer"); await settled(); draw();
+  assert.deepEqual([pane.page, pane.base, texts.get("review-scope-label")], ["/commit/c2", base, "two"]);
+  assert.equal(pane.diffCommits().length, 2, "on one commit's page, still the diff's list");
+  press("commit-newer"); await settled();
+  assert.equal(pane.page, "/commit/c2", "nothing newer");
   // A commit gone from the list, as after an amend: its sha, nowhere to step.
   pane.baseCommits = review.commits; pane.page = "/commit/abcdef123456"; draw();
-  assert.equal(texts.get("commit-place"), "abcdef1");
-  press("commit-newer");
-  assert.equal(pane.page, "/commit/abcdef123456");
-  pane.page = base; pane.baseCommits = null;
-  // Nowhere else in this diff: no switch.
-  const realCommits = pane.review.commits;
-  pane.review.commits = realCommits.slice(0, 1); draw();
-  assert.ok(!drawn.has("review-commit-switch"), "one commit, the whole diff");
-  const realBase = pane.base;
-  pane.page = pane.base = "/commit/c1"; draw();
-  assert.ok(!drawn.has("review-commit-switch"), "a commit opened as its own diff");
-  pane.base = realBase; pane.page = base; pane.review.commits = realCommits;
+  assert.ok(texts.get("review-sha") === "abcdef1" && !drawn.has("commit-newer"));
+  pane.page = "/commit/c2";
+  assert.ok(!routes.includes("/api/review/analyze"), "a commit's pick and stepping start no run");
+  // A radio row asks as the Review bar's count does: the page, analyzed if the setting says so.
+  pane.popupClosedAt = 0; press("review-scope"); await settled(); draw();
+  assert.ok(!styles["scope-changes"].accessibility_label.endsWith(", shown"), "a commit is none of the radios");
+  press("scope-changes"); await settled(); draw();
+  assert.deepEqual(plain(sharedStore.get("review")), { space: "s1", root: "/repo", page: base, n: sharedStore.get("review").n, analyze: true });
+  assert.deepEqual([pane.page, pane.base, texts.get("review-scope-label")], [base, base, "Changes"]);
+  // No Branches: as T3's, the head is the branch's own and only the base changes, from the header.
+  assert.ok(!drawn.has("scope-branches"));
+  // On Changes the base is T3's comparison-target picker: Automatic, then each local branch with its origin remote, a switch
+  // between the two; a remote-only one checked; the head itself left out.
+  routes.length = 0; pane.popupClosedAt = 0; press("review-base"); await settled(); await settled(); draw();
+  assert.ok(pane.popup === "base" && keyboard === "refs" && styles["review-base-menu"].w === 288);
+  assert.deepEqual(["base-auto", "base-main", "base-other", "base-origin/fix", "base-origin/dev"].map(id => drawn.has(id)), [true, true, true, true, true]);
+  assert.deepEqual([...drawn].filter(id => ["base-auto", "base-main", "base-other"].includes(id)), ["base-auto", "base-main", "base-other"], "the default branch first, as T3's, though other was committed to later");
+  assert.ok(!drawn.has("base-fix") && !drawn.has("base-origin/main") && !drawn.has("base-origin"), "paired, the head and a remote's HEAD left out");
+  assert.ok(drawn.has("base-main-remote") && !drawn.has("base-other-remote") && !drawn.has("base-origin/dev-remote"));
+  assert.ok(styles["base-auto"].accessibility_label.endsWith(", picked"));
+  // The switch takes the remote ref and shows Changes against it, the picker kept open; no run.
+  press("base-main-remote"); await settled(); draw();
+  assert.ok(pane.popup === "base" && sharedStore.get("review.bases").s1 === "origin/main");
+  assert.ok(sharedStore.get("review").page === "/compare/origin/main...fix" && !sharedStore.get("review").analyze);
+  assert.ok(styles["base-main"].accessibility_label.endsWith(", picked") && styles["base-main-remote"].accessibility_label.endsWith(", on"));
+  assert.deepEqual([texts.get("review-scope-label"), texts.get("review-ref-head"), texts.get("review-ref-base")], ["Changes", "fix", "origin/main"]);
+  // Searching drops Automatic; Enter picks the lit row and closes it.
+  refField.text = "dev"; refEvents.change({}, cx); draw();
+  assert.ok(!drawn.has("base-auto") && drawn.has("base-origin/dev") && !drawn.has("base-main"));
+  refEvents.submit({}, cx); await settled(); draw();
+  assert.ok(pane.popup === null && keyboard === "pane" && sharedStore.get("review").page === "/compare/origin/dev...fix" && sharedStore.get("review.bases").s1 === "origin/dev");
+  assert.ok(!routes.includes("/api/review/analyze"), "nor a base's");
+  // The space keeps it: Changes counts against it and opens there, and Commits lists what's past it.
+  pane.popupClosedAt = 0; gitCalls.length = 0; press("review-scope"); await settled(); await settled(); draw();
+  assert.ok(texts.get("scope-changes-detail") === "5 ahead of origin/dev" && styles["scope-changes"].accessibility_label.endsWith(", shown"));
+  assert.ok(gitCalls.some(args => args.includes("log") && args.includes("origin/dev..HEAD")));
+  pane.key({ keystroke: "escape" }, cx);
+  // `review.base`, for a key or `herdr-app do`, opens it on the base picked; Automatic goes back to the default branch.
+  pane.popupClosedAt = 0; send("base"); await settled(); await settled(); draw();
+  assert.ok(pane.popup === "base" && keyboard === "refs" && pane.baseAt === 4);
+  pane.key({ key: "down" }, cx); assert.equal(pane.baseAt, 0, "round the end");
+  press("base-auto"); await settled(); draw();
+  assert.ok(pane.popup === null && sharedStore.get("review").page === base && sharedStore.get("review.bases").s1 === null);
+  // Outgoing and Incoming name their refs but pick none.
+  pane.page = "/compare/origin/fix...fix"; draw();
+  assert.ok(!drawn.has("review-base") && drawn.has("review-ref-base"));
+  pane.page = base; draw();
+  // What there is to push or to pull reads as such, before the menu's read too.
+  for (const [page, label, head, baseRef] of [["/compare/origin/fix...fix", "Outgoing", "fix", "origin/fix"], ["/compare/fix...origin/fix", "Incoming", "origin/fix", "fix"], ["/worktree", "Uncommitted"]]) {
+    pane.page = page; pane.scopeGit = null; draw();
+    assert.deepEqual([texts.get("review-scope-label"), drawn.has("review-ref-head") ? texts.get("review-ref-head") : undefined, drawn.has("review-ref-base") ? texts.get("review-ref-base") : undefined], [label, head, baseRef], page);
+  }
+  pane.page = base;
+  // The keyboard on the menu's first page: ↑/↓ and Enter, as T3's menu; a narrow pane narrows the popover.
+  pane.popupClosedAt = 0; press("review-scope"); await settled();
+  pane.key({ key: "down" }, cx); pane.key({ key: "enter" }, cx); await settled();
+  assert.equal(sharedStore.get("review").page, "/worktree");
+  pane.popupClosedAt = 0; pane.width = 300; press("review-scope");
+  assert.equal(styles["review-scope-menu"].w, 268);
+  press("scope-commits");
+  assert.ok(styles["review-sub-at"].left >= 0 && styles["review-sub-at"].left + styles["review-scope-sub"].w <= 300, "narrow, kept inside the pane");
+  pane.key({ keystroke: "escape" }, cx); pane.key({ keystroke: "escape" }, cx);
+  // Short of 384 right of the menu, narrower down to 260 rather than over the menu.
+  pane.popupClosedAt = 0; pane.width = 620; press("review-scope"); press("scope-commits");
+  assert.deepEqual([styles["review-sub-at"].left, styles["review-scope-sub"].w], [16 + 320 - 5, 620 - 8 - (16 + 320 - 5)]);
+  pane.key({ keystroke: "escape" }, cx);
+  pane.key({ keystroke: "escape" }, cx); pane.width = 1200;
+  // `review.scope`, for a key or `herdr-app do`: the menu, as its button toggles it; `scope:commits` on that page.
+  pane.popupClosedAt = 0; send("scope"); await settled(); draw();
+  assert.ok(pane.popup === "scope" && pane.scopePage === null && drawn.has("review-scope-menu"));
+  send("scope"); await settled();
+  assert.equal(pane.popup, null);
+  send("scope:commits"); await settled(); await settled(); draw();
+  assert.ok(pane.popup === "scope" && pane.scopePage === "commits" && keyboard === "scope" && drawn.has("scope-commit-c2") && drawn.has("scope-changes"));
+  // `review.settings:model`, for `herdr-app do`: the settings with that submenu open.
+  pane.closePopup(cx); send("settings:model"); await settled(); draw();
+  assert.ok(pane.popup === "settings" && pane.settingsPage === "model" && drawn.has("review-settings-sub"));
+  pane.closePopup(cx);
+  review.analysis = beforeSwitch; mainScope.exec = env.exec;
+  pane.page = pane.base = base; pane.baseCommits = null;
+  sharedStore.set("review", { space: "s1", root: "/repo", page: base, n: pane.handled }); draw();
   mainScope.review = listing;
   // A later open replaces the diff, and its base.
   const opened = [];
@@ -1663,5 +1851,5 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     drawn.clear(); p.render(cx);
     assert.equal(texts.get("review-empty"), "No changes in this range");
   }
-  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files following the list, as a tree or a list; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the Review bar's menu from the header.");
+  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files following the list, as a tree or a list; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the scope button and its menu, a commit's sha and steps, wrapped lines.");
 })();
