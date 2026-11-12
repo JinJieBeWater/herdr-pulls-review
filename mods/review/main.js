@@ -26,11 +26,16 @@ const ASIDE_MIN = 280, ASIDE_MAX_RATIO = 0.5;
 const FRESH = 10000;
 // Its own writes, until mods/review was a pane in a tab: nothing reads them now.
 const RETIRED = [`${PANE}.titles`, `${PANE}.program`];
+const GONE = ["openIn", "fileList"];
+// After a click or a key picks a file, the list is still scrolling to it this long: the file at its top isn't the one in front yet.
+const PICKED = 600;
 
 export default class ReviewPanel extends View {
   init(_props, cx) {
     for (const key of RETIRED) if (shared(key) != null) setShared(key, null);
-    if (pref("openIn") !== undefined) { const { openIn: _, ...prefs } = shared(`${PANE}.prefs`); setShared(`${PANE}.prefs`, prefs); }
+    // Settings gone since (where a review opened; the files as a list): dropped from what's kept.
+    const prefs = shared(`${PANE}.prefs`);
+    if (prefs && GONE.some(k => k in prefs)) setShared(`${PANE}.prefs`, Object.fromEntries(Object.entries(prefs).filter(([k]) => !GONE.includes(k))));
     // Each space's review, by space id, for this run; what each shows is kept in review.shown.
     this.panel = this; this.bySpace = new Map();
     // The one popup open over the diff, if any: "settings", "status", "fold" or "scope".
@@ -83,7 +88,15 @@ export default class ReviewPanel extends View {
     // Scrolling redraws only the list. What the rest shows of where it is - the aside's group, the files and groups in view,
     // as the app's scroll spy marks them - is checked here and redrawn when it moved.
     // Off screen, what the list shows can't move: nothing to measure.
-    cx.timer.every(150, (cx) => { const s = this.shown(); if (!s?.onScreen()) return; const spied = s.spied(); if (spied !== s.lastSpied) { s.lastSpied = spied; cx.notify(); } });
+    // The file at the list's top is the one in front, as the diff scrolls.
+    cx.timer.every(150, (cx) => {
+      const s = this.shown();
+      if (!s?.onScreen()) return;
+      const top = Date.now() - s.pickedAt > PICKED && s.topFile();
+      if (top) s.current = top;
+      const spied = s.spied();
+      if (spied !== s.lastSpied) { s.lastSpied = spied; cx.notify(); }
+    });
   }
 
   // The active space's review, if it has one yet.
@@ -120,6 +133,7 @@ export default class ReviewPanel extends View {
     this.analyzeFor = null; this.headerHidden = false; this.scrolledDownBy = 0; this.baseCommits = null;
     this.review = null; this.error = null; this.version = 0; this.sideWidth = [0, 0, 0]; this.shift = [0, 0, 0];
     this.startingUntil = 0; this.loading = null; this.loadId = 0; this.marks = 0; this.marking = 0;
+    this.closedDirs = new Set(); this.focusPath = null; this.pickedAt = 0;
     this.collapsed = new Set(); this.full = new Map(); this.parts = new Map(); this.seen = new Set(); this.folded = new Set();
     this.scroll = null; this.barsOn = false; this.barsRun = 0;
   }
@@ -274,7 +288,7 @@ export default class ReviewPanel extends View {
   select(path, cx, { scroll = true } = {}) {
     const owner = this.review.groups.find(g => groupFiles(g).includes(path));
     if (owner && owner.key !== this.groupKey) { this.groupKey = owner.key; this.version++; }
-    this.current = path;
+    this.current = path; this.pickedAt = Date.now();
     if (scroll) {
       const index = this.items().findIndex(item => item.key === `f:${path}`);
       if (index >= 0) this.scrollToTop(index, cx);
@@ -403,6 +417,10 @@ export default class ReviewPanel extends View {
     // while a mark lands (its own read follows): a read then would fail or be dropped, and ask again at once.
     if ((this.rowsWanted().length || this.pageWanted()) && !this.loading && !this.error && !this.marking) this.loadRows(cx);
     const wide = this.width >= WIDE, sidebar = this.sidebarShown(), group = this.group();
+    // The keys move in the file tree only while it's drawn.
+    this.treeShown = wide && Boolean(this.review);
+    // There's always a file in front while the group has one: its first, until a click, a key or the list's top says another.
+    if (group && !this.switching && !groupFiles(group).includes(this.current)) this.current = groupFiles(group)[0] ?? null;
     // A group newly shown, however it came to be, opens its subgroups; its tab's caret folds them.
     if (this.groupKey !== this.expandedFor) { this.expandedFor = this.groupKey; this.expandedTab = this.groupKey; }
     // As the app below `lg`, where the header eats a big share of the screen: it slides away after a long scroll down and
@@ -492,7 +510,15 @@ export default class ReviewPanel extends View {
     return new Set((this.itemList ?? []).slice(start, end).filter(item => item.kind !== "group").map(item => item.path));
   }
 
-  spied() { return this.review ? JSON.stringify([this.asideGroup()?.key, [...this.visibleFiles()], [...this.visibleGroups()], this.atTop(), this.stickyFile()?.path, this.pageWanted()]) : ""; }
+  spied() { return this.review ? JSON.stringify([this.asideGroup()?.key, [...this.visibleFiles()], [...this.visibleGroups()], this.atTop(), this.stickyFile()?.path, this.pageWanted(), this.current]) : ""; }
+
+  // The file whose header or rows open the view; before the list draws, none.
+  topFile() {
+    if (!this.visible || this.switching) return null;
+    const items = this.itemList ?? [];
+    for (let i = this.visible.start; i < items.length; i++) if (items[i].path) return items[i].path;
+    return null;
+  }
 
   // Whether the list is at its first item: the group's header shows only then.
   atTop() { return (this.visible?.start ?? 0) === 0; }

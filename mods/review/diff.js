@@ -4,7 +4,7 @@ import { notify, theme } from "herdr";
 import { review } from "./daemon.js";
 import { clipRows, codeInset, FILE, noteWidth, ROW, wrapRow } from "./rows.js";
 import { colors } from "./review-load.js";
-import { LU, MONO, zoom, isLight, checkMark, diffStats, popover } from "./controls.js";
+import { LU, mono, zoom, isLight, checkMark, diffStats, popover } from "./controls.js";
 import { fileStatus } from "./files.js";
 
 // The run measured for a character's width: long enough that rounding the whole to a pixel doesn't matter.
@@ -154,8 +154,9 @@ export function diffView(view, t) {
       .on_mouse_down("left", (event) => { view.pressX = (event.local_position?.x ?? 0) / zoom(); view.pressY = (event.local_position?.y ?? 0) / zoom(); })
       // A character's width, measured once from a known run of the code's font, for where wrapped lines break (rows.js wrapColumns).
       // Under the list, drawn only until it's known.
-      .when(!view.charWidth, el => el.child(div().id("review-char").absolute().top(0).left(0).opacity(0).font_family(MONO).text_size(12).whitespace_nowrap()
-        .on_size_change((size, cx) => { if (size.width > 0) { view.panel.charWidth = size.width / zoom() / MEASURED.length; cx.notify(); } })
+      // Measured again when the font is changed in the settings.
+      .when(!view.charWidth || view.charFont !== mono(), el => el.child(div().id("review-char").absolute().top(0).left(0).opacity(0).font_family(mono()).text_size(12).whitespace_nowrap()
+        .on_size_change((size, cx) => { if (size.width > 0) { view.panel.charWidth = size.width / zoom() / MEASURED.length; view.panel.charFont = mono(); cx.notify(); } })
         .child(MEASURED)))
       // A blank after the items (trailing) lets the last header reach the top.
       .child(v_virtual_list("review-diff", items.length + 1, view.listSizes(), (i) => items[i]?.key ?? "end",
@@ -213,7 +214,7 @@ function drawCode(t, row, numbers, shift = 0, wrapped = null) {
   const tint = row.kind === "+" ? t.ansi2 + "1c" : row.kind === "-" ? t.ansi1 + "1c" : null;
   const code = (tokens) => spans(tokens).map(([text, color]) => div().flex_none().text_color(color ?? t.foreground).child(text));
   // Herdr ships JetBrains Mono; Geist Mono, a common terminal font here, draws `=>` over the space before it.
-  return h_flex().flex_1().min_w(0).h_full().overflow_hidden().font_family(MONO).when(Boolean(tint), el => el.bg(tint))
+  return h_flex().flex_1().min_w(0).h_full().overflow_hidden().font_family(mono()).when(Boolean(tint), el => el.bg(tint))
     .when(!wrapped, el => el.items_center()).when(Boolean(wrapped), el => el.items_start())
     .children(numbers.map(number => div().w(40).flex_none().pr(6).text_right().text_color(t.dim)
       .when(Boolean(wrapped), el => el.h(ROW).flex().items_center().justify_end()).child(number === undefined ? "" : String(number))))
@@ -253,7 +254,7 @@ function diffItem(view, t, item) {
         .child(div().min_w(0).truncate().child(item.group.label));
     case "hunk":
       // Hunk headers on the raised tone, as Herdr's own changes diff draws them, 11px as T3's hunk separators; `@@` is code, so mono.
-      return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(MONO).text_size(11).text_color(t.dim).truncate().child(item.text);
+      return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(mono()).text_size(11).text_color(t.dim).truncate().child(item.text);
     case "note": {
       // As the app's AnalysisNoteCard: a sparkle, or a critical note's mark, then its Markdown in the UI font.
       // A file's own notes run across the file under its header; a line's sits under the line as a card.

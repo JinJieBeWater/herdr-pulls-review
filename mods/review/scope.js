@@ -8,7 +8,7 @@ import { shared, setShared } from "herdr";
 import { scrollList } from "./list.js";
 import { git, readReview, readPicks, readRefs, argPage } from "./review-git.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
-import { PANE, LU, MONO, COMPACT, MODEL_ROW, hover, iconButton, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
+import { PANE, LU, COMPACT, MODEL_ROW, hover, iconButton, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
 
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
 const PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
@@ -181,7 +181,7 @@ export function scopeHeader(view, t) {
   return h_flex().id("review-scope-row").min_w(0).gap(12).items_center()
     .child(scopeButton(view, t, s))
     .when(Boolean(s.sha), el => el.child(h_flex().flex_none().gap(2).items_center()
-      .child(div().id("review-sha").mr(4).font_family(MONO).text_size(12).text_color(t.dim).child(s.sha.slice(0, 7)))
+      .child(div().id("review-sha").mr(4).text_size(12).text_color(t.dim).child(s.sha.slice(0, 7)))
       .when(steps, el => el
         .child(go("commit-older", `${LU}/chevron-left.svg`, "Older commit", list[at - 1]))
         .child(go("commit-newer", `${LU}/chevron-right.svg`, "Newer commit", list[at + 1])))))

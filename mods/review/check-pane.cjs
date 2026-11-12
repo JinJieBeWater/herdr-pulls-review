@@ -26,7 +26,7 @@ const load = (file, env) => {
 // Values made in another realm compare unequal to this one's: compare them as JSON.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const rows = load("rows.js", {});
-const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns })", rows);
+const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns })", rows);
 
 const row = (kind, old, next) => ({ kind, old, new: next, tokens: [[`${kind}${old ?? ""}:${next ?? ""}`]] });
 // A run of deletions faces the additions after it; context faces itself.
@@ -105,11 +105,6 @@ assert.equal(big.reduce((n, item) => n + (item.lines?.length ?? 0), 0), 20000);
 assert.ok(noteHeight("测".repeat(200), 900, true) > noteHeight("a".repeat(200), 900, true));
 // A line's note is a card at most 800 wide, so it wraps sooner than a file's own note across a wide view.
 assert.ok(noteHeight("a".repeat(400), 2000, true) > noteHeight("a".repeat(400), 2000, false));
-// The file tree's two layouts, as the app's fileRows: a list of paths, or a tree whose single-child folder chains are one row.
-const tree = plain(fileRows(["packages/cli/src/a.ts", "packages/cli/src/daemon/b.ts", "README.md"], ["gone/c.ts"], "tree"));
-assert.deepEqual(tree.map(r => `${"  ".repeat(r.depth)}${r.type}:${r.name}`), ["folder:packages/cli/src", "  file:a.ts", "  folder:daemon", "    file:b.ts", "file:README.md", "folder:gone", "  missing:c.ts"]);
-assert.deepEqual(tree[0].paths, ["packages/cli/src/a.ts", "packages/cli/src/daemon/b.ts"]);
-assert.deepEqual(plain(fileRows(["x/a.ts"], [], "list")), [{ key: "file:x/a.ts", depth: 0, type: "file", name: "x/a.ts", path: "x/a.ts" }]);
 // The code widens to its longest line (CJK counts double), unified rows or one split side.
 const long = (text) => ({ kind: "row", lines: [{ kind: "+", tokens: [[text]] }] });
 assert.equal(contentWidth([long("a".repeat(100))]), Math.ceil(92 + 100 * 7.25 + 16));
@@ -228,7 +223,7 @@ const env = {
   // Shared values every mod sees.
   shared: (key) => sharedStore.get(key) ?? null, setShared: (key, value) => sharedStore.set(key, value),
   run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), nextCommand: () => new Promise(done => waiting.push(done)), theme: () => ({ foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888" }),
-  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, CHAR: 7.25, groupFiles, buildItems, pageLabel, contentWidth, fileRows, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns,
+  watchFolder: () => new Promise(() => {}), FILE: 32, ROW: 20, CHAR: 7.25, groupFiles, buildItems, pageLabel, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns,
   // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going. A later batch's
   // rows come on their own.
   review: async (_root, route, body) => {
@@ -285,7 +280,7 @@ assert.equal(vm.runInContext('progressText({ kind: "thinking", step: 2 })', main
 }
 // The 150ms timer is the scroll spy; the others, by period, each pane's in the order they started. A test runs them by hand.
 let spy; const every = {};
-const cx = { spawn: (f) => f(cx), notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() { keyboard = "pane"; } }), timer: { every: (ms, f) => { if (ms === 150) spy = f; (every[ms] ??= []).push(f); }, after: (ms, f) => {
+const cx = { spawn: (f) => f(cx), notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() { keyboard = "pane"; }, is_focused: () => keyboard === "pane" }), timer: { every: (ms, f) => { if (ms === 150) spy = f; (every[ms] ??= []).push(f); }, after: (ms, f) => {
   if (ms === 0) return queueMicrotask(() => f(cx));
   const t = (c) => { if (!t.off) f(c); }; t.cancel = () => { t.off = true; }; timers.push(t); return t;
 } } };
@@ -308,9 +303,9 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     sharedStore.delete("review.shown");
   }
   // What the review wrote as a pane in a tab, and its setting for where the next opened: gone at its start.
-  sharedStore.set("review.titles", { b: "fix" }); sharedStore.set("review.program", { name: "Review" }); setPref("openIn", "tab");
+  sharedStore.set("review.titles", { b: "fix" }); sharedStore.set("review.program", { name: "Review" }); setPref("openIn", "tab"); setPref("fileList", "list");
   panel.init({}, cx);
-  assert.ok(sharedStore.get("review.titles") === null && sharedStore.get("review.program") === null && !("openIn" in sharedStore.get("review.prefs")));
+  assert.ok(sharedStore.get("review.titles") === null && sharedStore.get("review.program") === null && !("openIn" in sharedStore.get("review.prefs")) && !("fileList" in sharedStore.get("review.prefs")));
   // The Review bar's count opened the panel: the request it left is for this space, and new.
   sharedStore.set("review", { space: "s1", root: "/repo", page: "/branch/fix", n: Date.now() });
   panel.render(cx); pane = panel.shown();
@@ -475,14 +470,34 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.review.groups[0].children = children; pane.render(cx);
   pane.groupKey = null; press("side-gb-1-k");
   assert.ok(pane.groupKey === "g", "showing a subgroup shows its group");
-  // The settings set the files as a list or a tree, kept; the header holds no view toggles.
+  // The files are always a tree, as T3's: no Tree/List setting, and the header holds no view toggles.
   assert.ok(!drawn.has("file-list") && !drawn.has("layout"));
   pane.popupClosedAt = 0; press("settings");
-  press("files-list");
-  assert.equal(pref("fileList"), "list");
-  press("files-tree");
-  assert.equal(pref("fileList"), "tree");
+  assert.ok(drawn.has("view-unified") && !drawn.has("files-list") && !drawn.has("files-tree"));
   pane.closePopup(cx); pane.popupClosedAt = 0;
+  // The tree's one selected row is the file in front, set by a click; the keys move a ring from it, ↵ shows the file it's on.
+  pane.visible = null; drawn.clear(); pane.render(cx);
+  pane.current = null; pane.render(cx);
+  assert.equal(pane.current, "a.ts", "with none picked, the group's first file is in front");
+  delete styles["tree-f-a.ts"]; delete styles["tree-f-b.png"];
+  press("tree-f-b.png");
+  assert.equal(pane.current, "b.png");
+  assert.equal(styles["tree-f-b.png"].bg, "#eeeeee1f", "selected: the text color at 12%");
+  assert.ok(!styles["tree-f-a.ts"].bg, "one row only");
+  pane.key({ keystroke: "up" }, cx);
+  assert.ok(pane.focusPath === "a.ts" && pane.current === "b.png", "a key moves the ring, not the file in front");
+  pane.key({ keystroke: "enter" }, cx);
+  assert.equal(pane.current, "a.ts");
+  pane.key({ keystroke: "end" }, cx); pane.key({ keystroke: "enter" }, cx);
+  assert.equal(pane.current, "a.ts", "a removed file has nothing to show");
+  pane.focusPath = null;
+  // Scrolled, the file at the list's top is the one in front; not while the list is still on its way to a file picked.
+  pane.pickedAt = 0; pane.visible = { start: pane.itemList.findIndex(item => item.key === "g:k") + 1, end: pane.itemList.length };
+  spy(cx);
+  assert.equal(pane.current, "c.ts");
+  pane.select("a.ts", cx, { scroll: false }); spy(cx);
+  assert.equal(pane.current, "a.ts");
+  pane.visible = null; pane.pickedAt = 0;
   pane.select("c.ts", cx);
   assert.equal(pane.current, "c.ts");
   setPref("split", true); pane.render(cx);
@@ -1221,14 +1236,18 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(pane.trailing(), 100);
   pane.diffHeight = after - 1;
   assert.equal(pane.trailing(), 0);
-  // A folder in the aside's tree doesn't fold, as the app's: its box marks its files.
-  pane.width = 1200; setPref("fileList", "tree");
+  // A folder in the tree folds, as T3's, and its box marks its files; a lone folder chain is one row.
+  pane.width = 1200;
   // As a read brings it: a new review, not the old one changed.
   pane.review = { ...pane.review, files: [...pane.review.files, file("x/y/z.ts")],
     groups: [{ ...pane.review.groups[0], files: [...pane.review.groups[0].files, "x/y/z.ts"] }, ...pane.review.groups.slice(1)] };
   pane.select("a.ts", cx); pane.version++; pane.visible = null; drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("tree-d-folder:x/y/") && drawn.has("tree-f-x/y/z.ts") && !handlers.has("tree-d-folder:x/y/.on_click"));
-  press("tree-dcheck-folder:x/y/");
+  assert.ok(drawn.has("tree-d-x/y") && texts.get("tree-d-x/y") === undefined && drawn.has("tree-f-x/y/z.ts"));
+  press("tree-d-x/y");
+  assert.ok(drawn.has("tree-d-x/y") && !drawn.has("tree-f-x/y/z.ts"), "folded");
+  press("tree-d-x/y");
+  assert.ok(drawn.has("tree-f-x/y/z.ts"));
+  press("tree-dcheck-x/y");
   assert.ok(pane.review.files.find(f => f.path === "x/y/z.ts").reviewed);
   // The fold menu, as the app's DiffCollapseMenu: every file of the diff at once, and the file at the view's top back there.
   pane.width = 900; pane.review.files[0].test = true; drawn.clear(); pane.render(cx);
@@ -1577,12 +1596,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const files = Array.from({ length: 1000 }, (_, i) => file(`f${i}.ts`));
     const big = { ...review, files, groups: [{ key: "g", label: "G", files: files.map(f => f.path), missing: [], notes: {}, children: [] }] };
     const { p } = await paneOf({ review: async () => structuredClone(big) });
-    setPref("fileList", "list"); p.width = 1200; p.listHeight = { "review-files": 280 };
+    p.width = 1200; p.listHeight = { "review-files": 280 };
     const tree = () => { drawn.clear(); p.render(cx); return [...drawn].filter(id => id.startsWith("tree-f-")); };
-    assert.deepEqual(tree(), Array.from({ length: 10 }, (_, i) => `tree-f-f${i}.ts`));
-    handlers.get("review-files.on_scroll_wheel")({ delta: { y: -28 * 500 } }, cx);
+    assert.deepEqual(tree(), Array.from({ length: 12 }, (_, i) => `tree-f-f${i}.ts`), "24 a row");
+    handlers.get("review-files.on_scroll_wheel")({ delta: { y: -24 * 500 } }, cx);
     assert.equal(tree()[0], "tree-f-f500.ts");
-    setPref("fileList", "tree");
   }
   {
     // A file picked while rows arrive for the files before it: its header still lands at the top, not another's.
@@ -1634,7 +1652,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const { p, scope } = await paneOf();
     const tops = () => calls.filter(([name, at]) => name === "scroll" && at === 0).length;
     // The aside one row tall, so its few rows scroll.
-    const scrolledDown = () => { calls.length = 0; p.scrollTop = { "review-files": 50 }; };
+    const scrolledDown = () => { calls.length = 0; p.scrollTop = { "review-files": 40 }; };
     const files = () => { p.width = 1200; p.listHeight = { "review-files": 28 }; p.render(cx); return p.scrollTop["review-files"]; };
     files(); scrolledDown();
     p.root = "/other"; p.watching = null; p.forget(); p.load(cx); await wait();
@@ -1650,7 +1668,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.deepEqual([tops(), files()], [1, 0], "an analysis's groups");
     scrolledDown();
     p.load(cx); await wait();
-    assert.deepEqual([tops(), files()], [0, 50], "the same list read again stays where it is");
+    assert.deepEqual([tops(), files()], [0, 40], "the same list read again stays where it is");
   }
   {
     // A path with ":" in it: its code lines in view still name it, for the stuck header and the files in view.
@@ -1851,5 +1869,5 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     drawn.clear(); p.render(cx);
     assert.equal(texts.get("review-empty"), "No changes in this range");
   }
-  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files following the list, as a tree or a list; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the scope button and its menu, a commit's sha and steps, wrapped lines.");
+  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; groups as tabs or a sidebar, the aside's files as a tree following the list, the file in front its one selected row, moved by keys; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, a file revealed from Files, the scope button and its menu, a commit's sha and steps, wrapped lines.");
 })();

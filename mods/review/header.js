@@ -1,6 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { LU, MONO, COMPACT, button, iconButton, popover } from "./controls.js";
+import { LU, COMPACT, button, iconButton, popover } from "./controls.js";
 import { donut } from "./groups.js";
 import { scopeHeader } from "./scope.js";
 
@@ -65,7 +65,7 @@ export function header(view, t, head) {
   return h_flex().id("review-header").h(40).flex_none().px(16).gap(8).items_center().overflow_hidden().border_b(1).border_color(t.border).bg(t.chrome)
     .child(scopeHeader(view, t))
     // The counts hold, as T3's stats beside its tools: a long commit subject truncates instead.
-    .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11).font_family(MONO)
+    .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11)
       .children(head.parts.map(p => h_flex().gap(4).items_center().text_color(t[p.color] ?? t.dim)
         .when(p.donut !== undefined, el => el.ml(4).child(donut(t, p.donut)))
         .child(div().child(p.text))))))

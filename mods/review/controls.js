@@ -9,7 +9,8 @@ export const PANE = "review";
 const PREFS = `${PANE}.prefs`;
 export const pref = (key) => shared(PREFS)?.[key];
 export const setPref = (key, value) => setShared(PREFS, { ...shared(PREFS), [key]: value });
-export const MONO = "JetBrains Mono";
+// The code's font, the window's terminal font: only the diff's code and hunk headers are in it.
+export const mono = () => /** @type {string} */ (settings().font_family);
 
 // Herdr scales what a script sets by its zoom, but reports sizes and positions scaled already: they come back divided by it,
 // and a path, painted unscaled, goes out multiplied by it.
@@ -124,7 +125,7 @@ export function caretButton(t, id) {
 
 // As the app's DiffStats, each only when there are any, measured as T3's DiffStatLabel.
 export function diffStats(t, added, deleted) {
-  return h_flex().flex_none().gap(4).font_family(MONO)
+  return h_flex().flex_none().gap(4)
     .when(added > 0, el => el.child(div().text_color(t.ansi2).child(`+${added.toLocaleString()}`)))
     .when(deleted > 0, el => el.child(div().text_color(t.ansi1).child(`-${deleted.toLocaleString()}`)));
 }
