@@ -30,7 +30,7 @@ A Review bar for Herdr App's top bar and a Review page in the window's side pane
 
 ## Watch out
 
-- Review keeps `lines.wrap` and `nav.width` in its own localStorage, independently of Files. `migratePagePrefs()` seeds the former shared values once before drawing. `holdWidth` from `nav-column.js` waits 300ms after widths settle; each space keeps its own hold object and the diff uses its held wrap columns.
+- Review keeps `lines.wrap` and `nav.width` in its own localStorage, independently of Files. `migratePagePrefs()` seeds the former shared values once before drawing. `holdWidth` from `nav-column.js` waits 300ms after widths settle; each space keeps its own hold object and the diff uses its held wrap columns. Only the three most recently shown spaces keep full review data; older spaces retain lightweight reading choices and reload. Visible reviews refresh every 15s and catch up on return; recursive folder watchers are not used because the host cannot cancel their pending subscriptions. Late reads cannot refill evicted caches.
 
 - `layout.resize` doesn't reach a block in a floating window's layout: there the bar keeps the block's size.
 - The block's row needs `"resizable": false`: rows default to resizable, and a drag would fight the block sizing itself.
