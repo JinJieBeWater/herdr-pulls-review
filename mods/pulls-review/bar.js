@@ -2,7 +2,7 @@
 // its upstream, each opening that diff.
 // Its logo lists what else there is to pick: a commit, or another branch. The git reads are review-git.js's, shared with the
 // Review page's scope menu.
-// In Herdr T3 (`toggle` in its props) the bar is the panel's toggle alone, no counts: the logo is the panel's Review tab.
+// Herdr T3 owns its panel controls; an older toggle-only bar collapses to nothing.
 // The counts read the remote-tracking refs as they are; fetching is left to you.
 
 import { div, svg, image } from "gpui-kit";
@@ -15,7 +15,6 @@ import { step, scrollList } from "./list.js";
 import { stop, pressed, justClosed } from "./focus.js";
 import { KEY } from "./store.js";
 import { git, argPage, readReview, readPicks } from "./review-git.js";
-import { panelState, togglePanel } from "./panel.js";
 import { button, radiusOf } from "./button.js";
 
 const MOD = "pulls-review";
@@ -41,7 +40,6 @@ export function reviewLocation() {
   const beside = pane && !pane.cwd ? ps.find(p => p.tab === pane.tab && p.cwd)?.cwd : null;
   return { cwd: pane?.cwd || beside || f?.cwd || space?.folder, on };
 }
-
 // A commit's age as the Inbox's settled rows read (t3-inbox's ago), but "now" for "just now": the column is narrow.
 function ago(ms, now) {
   const m = Math.floor((now - ms) / 60000);
@@ -293,7 +291,7 @@ export function reviewBar(view, t, stopPress) {
     : word === "blocked" ? div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!")
     : word === "done" ? div().size(6).flex_none().rounded_full().bg(t.done) : null;
   // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
-  if (props()?.toggle) return h_flex().id("pulls-review").h(24).flex_none().items_center().on_mouse_down("left", stopPress).child(panelButton(view, t, word, mark));
+  if (props()?.toggle) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017).
   // Looked up on each render, so the frame that shows another space already shows its own counts.
   const r = onHome() ? null : view.reviews?.get(JSON.stringify(reviewLocation()));
   if (!r) return null;
@@ -345,17 +343,4 @@ export function reviewBar(view, t, stopPress) {
       .on_mouse_down("left", press).on_click(openMenu)
       // As T3's icon-xs. image, not svg: svg would draw the logo in one tint.
       .child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()).when(Boolean(mark), el => el.child(mark)), radiusOf("xs")), { below: true }));
-}
-
-// The space panel's toggle, Herdr T3's whole bar: a 24 ghost icon button, as t3-tabs' panel-toggle. The panel on the page last
-// shown, or closed; lit while open. While the panel is closed the analysis's `mark` sits left of the icon inside it, the
-// button growing leftward so the icon stays put at the bar's end; open, the panel head's Review tab shows it, not twice.
-function panelButton(view, t, word, shown) {
-  const open = panelState().open, mark = open ? null : shown, state = mark && { working: "running", done: "done", blocked: "failed" }[word];
-  const label = (open ? "Hide panel" : "Show panel") + (state ? `, analysis ${state}` : "");
-  return tip(view, t, "review-panel", label, stop(view, t, "review-panel", button(t, "review-panel", { label, hot: view.hot === "review-panel", on: open, wide: Boolean(mark) })
-    .when(Boolean(mark), el => el.child(mark))
-    .on_hover(glow(view, "review-panel"))
-    .on_click((_e, cx) => { view.hot = null; togglePanel(); cx.notify(); })
-    .child(svg(`mods/${MOD}/icons/panel-right.svg`).size(14).flex_none()), radiusOf("xs")), { action: "t3-tabs.panel", below: true });
 }

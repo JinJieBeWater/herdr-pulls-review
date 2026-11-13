@@ -7,7 +7,7 @@ import { shared, setShared } from "herdr";
 export const KEY = {
   settings: "t3.settings", pins: "t3.pins", notice: "t3.notice", focus: "t3.focus", spaceIcons: "t3.spaceIcons", agentOrder: "t3.agentOrder", panels: "t3.panels",
   home: "t3-tabs.home", undo: "t3-tabs.undo", unsettled: "t3-tabs.unsettled", compact: "t3-tabs.compact", recent: "t3-tabs.recent",
-  inboxRows: "t3-inbox.rows", agentsRows: "t3-agents.rows", actions: "t3-actions.actions", menuChain: "t3-menu.chain",
+  inboxRows: "t3-inbox.rows", agentsRows: "t3-agents.rows", actions: "t3-actions.actions", openTarget: "t3-actions.openTarget", menuChain: "t3-menu.chain",
 };
 
 // Each page keeps its own line mode; copies of this module run in each mod's localStorage.

@@ -5,8 +5,6 @@ import { foldAllButton } from "./nav-column.js";
 import { PANE, checkMark } from "./controls.js";
 import { groupFiles } from "./rows.js";
 import { categoryIcon, criticalMark } from "./groups.js";
-import { fileMenuItems, agentFor, runCommon } from "./file-menu.js";
-import { spaces, window as appWindow } from "herdr";
 
 export const TREE = "review-files";
 
@@ -57,8 +55,7 @@ export function fileTree(view, t) {
     if (row.dir) {
       const files = row.owner.files.filter(path => path.startsWith(`${row.real}/`)).map(path => view.fileAt(path)).filter(Boolean);
       return treeRow(t, mod, row, `tree-d-${row.path}`, { focused, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
-        .on_click((_e, cx) => { view.focusPath = null; toggleDir(view, row.path, cx); })
-        .on_mouse_down("right", () => { view.menuFor = { path: row.real, files: files.map(f => f.path), dir: true }; });
+        .on_click((_e, cx) => { view.focusPath = null; toggleDir(view, row.path, cx); });
     }
     // A removed file has no box: its slot stays, so the icons line up.
     if (row.missing) return treeRow(t, mod, row, `tree-m-${row.path}`, { focused, dim: true, struck: true, leading: div().size(16).flex_none() });
@@ -68,8 +65,7 @@ export function fileTree(view, t) {
       leading: checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none").id(`tree-check-${row.path}`).role("check_box")
         .accessibility_label(f.reviewed ? `${row.path}: reviewed` : `${row.path}: not reviewed`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(f, !f.reviewed, cx); }) })
-      .on_click((_e, cx) => { view.focusPath = null; view.select(row.path, cx); })
-      .on_mouse_down("right", () => { view.menuFor = { path: row.path, files: [row.path], dir: false }; });
+      .on_click((_e, cx) => { view.focusPath = null; view.select(row.path, cx); });
   };
   return treeList(view, TREE, rows, draw);
 }
@@ -133,21 +129,6 @@ export function pickGroup(view, row, cx) {
 export function showGroup(view, key, cx) {
   if (key !== view.groupKey) { view.groupKey = key; view.version++; view.scrollTop = { ...view.scrollTop, [TREE]: 0 }; view.scrollToTop(0, cx); }
   cx.notify();
-}
-
-// The file's or folder's menu (file-menu.js), `target` as its row's right-click noted it: `path` from the repository's top,
-// `files` the reviewed box's. Its relative path is from the space's folder where the repository holds it.
-export function menuItems(view, target) {
-  const abs = `${view.root}/${target.path}`, folder = spaces().find(s => s.id === view.space)?.folder?.replace(/\/$/, "");
-  const rel = folder && abs.startsWith(`${folder}/`) ? abs.slice(folder.length + 1) : target.path;
-  const files = target.files.map(path => view.fileAt(path)).filter(Boolean), reviewed = files.length > 0 && files.every(f => f.reviewed);
-  const agent = agentFor(view.space), platform = appWindow()?.platform;
-  return fileMenuItems({ page: "review", dir: target.dir, platform, agent, reviewed }).map(it => ({ ...it,
-    hint: it.id === "mention" ? agent.program?.name ?? "" : "",
-    run: (cx) => {
-      if (it.id === "review" || it.id === "unreview") view.setReviewed(files, it.id === "review", cx);
-      else runCommon(it.id, { abs, rel, agent, platform }, cx);
-    } }));
 }
 
 // The tree's folders and groups down to a file, opened: a jump to it shows it wherever it is.

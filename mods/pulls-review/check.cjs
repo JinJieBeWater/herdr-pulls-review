@@ -592,36 +592,13 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual([plain(calls), state.review], [[], undefined], "started in one space, nothing done in another");
   opener.readTextFile = env.readTextFile; opener.spaces = env.spaces;
 
-  // In Herdr T3 (`toggle` in its props) the bar is the panel's toggle alone: no counts, so no git reads; the panel's scope menu
-  // has them. The logo is the panel's Review tab.
+  // Herdr T3 owns its layout controls; an older installed Review bar collapses to nothing, without Git reads.
   const { mod: merged, scope: mergedScope } = load({ block: "review-bar", toggle: true });
   const joined = merged.render();
-  assert.deepEqual(keys(find(joined, "pulls-review")), ["tip-review-panel"]);
+  assert.equal(find(joined, "pulls-review"), null);
   assert.equal(merged.reviews, undefined, "nothing reads git for counts it doesn't show");
   assert.ok(!walk(joined).some(n => n.kind === "image"), "no logo in the bar");
-  // A 24 ghost icon button, as t3-tabs' panel-toggle: no outline, the fill only on hover.
-  const toggleOf = () => find(merged.render(), "review-panel");
-  assert.deepEqual([toggleOf().style.w, toggleOf().style.h, toggleOf().style.rounded, "border" in toggleOf().style, "bg" in toggleOf().style, toggleOf().hoverStyle.bg], [24, 24, 8, false, false, theme.hover]);
-  assert.equal(walk(toggleOf()).find(n => n.kind === "svg").source, "mods/pulls-review/icons/panel-right.svg");
-  assert.equal(toggleOf().items.length, 1, "no analysis, the icon alone");
-  // Last on the bar, 2 in as the ghost buttons after it; the tab bar's end makes up the rest, so its box ends 12 from the window's edge.
-  assert.equal(find(joined, "review-fit").style.pr, 2, "2 in, as the bar's other ghost buttons");
-  // While the panel is closed the analysis's mark sits inside the button, left of the icon: the button grows leftward, its
-  // icon staying put at the bar's end. Never a badge over the icon. Open, the panel head's Review tab shows it: not twice.
-  for (const [word, label] of [["working", "running"], ["done", "done"], ["blocked", "failed"]]) {
-    state["review.status"] = { s: word };
-    const [first, second] = toggleOf().items;
-    assert.ok(toggleOf().items.length === 2 && second.source === "mods/pulls-review/icons/panel-right.svg" && first.source !== second.source && toggleOf().style.px === 8 && toggleOf().style.gap === 4 && toggleOf().style.w === undefined, word);
-    assert.ok(!walk(toggleOf()).some(n => n.style?.absolute !== undefined), `${word}: in the flow, not a badge`);
-    assert.equal(toggleOf().style.accessibility_label, `Show panel, analysis ${label}`);
-  }
-  mergedScope.layout = () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: [{ id: "files" }, { id: "review" }] }] }] });
-  assert.deepEqual([toggleOf().items.length, toggleOf().style.w, toggleOf().style.accessibility_label, toggleOf().style.text_color], [1, 24, "Hide panel", theme.foreground], "open: the Review tab has the mark, the button its icon, lit");
-  mergedScope.layout = env.layout;
-  delete state["review.status"];
-  calls.length = 0;
-  fire(find(joined, "review-panel"), "on_click", {}, cx);
-  assert.deepEqual(plain(calls), [["layout.select", { stack: "panel-body", child: "files" }], ["layout.show", { id: "panel" }]], "it opens the panel on its page");
+  assert.equal(find(joined, "review-panel"), null);
 
   // The panel's review page starts only when first shown and shared outlives the app, so a run's word from before a restart
   // would spin on in the bar and the panel head. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
@@ -637,5 +614,5 @@ const load = (props = {}, setup = record) => {
   const code = ["bar.js", "details.js", "tip.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");
   for (const file of fs.readdirSync(path.join(__dirname, "icons"))) assert.ok(code.includes(path.basename(file, ".svg")), `${file} is used`);
 
-  console.log("ok: the Review bar's counts quiet ghost buttons, lit hovered or shown, its block sized to fit, the branch menu and its search, opening a review on the panel's review page, the space's analysis marked by the logo, in Herdr T3 the panel's toggle alone, no counts and no git reads, the analysis's mark left of its icon while the panel's closed, the git reads shared with the Review page");
+  console.log("ok: standalone Review counts/menu/analysis, native panel opening and shared Git reads; Herdr T3's retired toggle bar collapses without duplicate controls");
 })().catch(e => { console.error(e); process.exit(1); });

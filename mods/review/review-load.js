@@ -30,6 +30,7 @@ function startRead(view, cx) {
 
 function endRead(view, cx, id) {
   if (id !== view.loadId) return;
+  if (view.surfaceAlive?.() === false) { view.evict(); return; }
   view.loading = null;
   view.report();
   cx.notify();
@@ -42,6 +43,7 @@ function endRead(view, cx, id) {
 // Only the latest read counts: a read of the page being read waits for it (a burst of changes can't restart it forever),
 // a read of another starts at once and the old one's answer is dropped.
 export function loadReview(view, cx, poll = false) {
+  if (view.surfaceAlive?.() === false) { view.evict(); return; }
   // Evicted (main.js evict): read when shown again.
   if (view.evicted) { view.dirty = true; return; }
   if (!view.root || !view.page) return;
@@ -55,7 +57,7 @@ export function loadReview(view, cx, poll = false) {
   cx.spawn(async (cx) => {
     try {
       const r = await review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group });
-      if (id !== view.loadId) return;
+      if (id !== view.loadId || view.surfaceAlive?.() === false) return;
       // The theme changed meanwhile: these rows have the old colors, and later reads ask only for files without rows.
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       // Read before a reviewed mark landed, it would undo the mark on screen: the mark's own read follows.
@@ -96,6 +98,7 @@ const rowCount = (hunks) => hunks.reduce((n, hunk) => n + hunk.rows.length, 0);
 // of the whole page for them weighed half a megabyte a batch, nearly all of it the files and groups already shown. The daemon
 // serves them from the diff shown; one it no longer holds is `stale`, and the whole page is read again, rows and all.
 export function loadRows(view, cx) {
+  if (view.surfaceAlive?.() === false) return;
   const rows = view.rowsWanted(), more = rows.length ? null : view.pageWanted();
   if (!rows.length && !more) return;
   if (view.stale || view.loading) return view.load(cx);
@@ -106,7 +109,7 @@ export function loadRows(view, cx) {
       const r = whole
         ? await review(root, "/api/review/file", { page, file: more, colors: colors(t), from: whole.rows.length })
         : await review(root, "/api/review/rows", { page, colors: colors(t), files: more ? [more] : rows, base: shown.base?.sha ?? "", head: shown.head?.sha ?? "", ...more ? { from: rowCount(view.fileAt(more).hunks) } : {} });
-      if (id !== view.loadId) return;
+      if (id !== view.loadId || view.surfaceAlive?.() === false) return;
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       if (r.stale) { view.stale = view.again = true; return; }
       // shortcut: a whole file changed between its pages goes on from the new text until the read that drops it, a second at most; the answer could name its sha.
@@ -140,6 +143,7 @@ export function loadRows(view, cx) {
 // A run's state, without reading the diff: running, it updates in place; ended, or failed anew, the diff is read; not
 // started yet, nothing. A daemon without the route, or any failure, reads the diff as before. One call at a time.
 export function pollReview(view, cx) {
+  if (view.surfaceAlive?.() === false) return;
   if (view.polling) return;
   const { root, page } = view;
   view.polling = true;
@@ -148,6 +152,7 @@ export function pollReview(view, cx) {
   cx.spawn(async (cx) => {
     try {
       const s = await review(root, "/api/review/status", { page });
+      if (view.surfaceAlive?.() === false) return;
       const a = view.runState();
       if (root !== view.root || page !== view.page || !a) return;
       if (s.running) {
@@ -211,6 +216,7 @@ function loadBaseCommits(view, cx) {
 }
 
 export function analyzeReview(view, cx, force) {
+  if (view.surfaceAlive?.() === false) return;
   const { root, page } = view;
   // shortcut: 10 s is a guess at the slowest start, and a start that fails says nothing; replace it once the worktree server answers when it has started.
   view.startingUntil = Date.now() + 10000; view.analyzeError = null;

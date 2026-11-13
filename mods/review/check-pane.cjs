@@ -551,15 +551,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(drawn.has("tree-f-c.ts"));
   pane.focusPath = null;
   // The reviewed box leads the row, after the chevron's slot and before the icon (asserted on the row in shared/check-file-tree.cjs).
-  // A file row's right-click opens the panel's file menu where it was pressed (file-menu.js): Review's items, Mark reviewed
-  // last, nothing that opens it in Files (ADR 0015); a group's row has none.
+  // Review's diff tree has no context menu (ADR 0017); reviewed boxes remain the direct action.
   handlers.get("tree-g-k.on_mouse_down")?.();
   assert.equal(pane.menuFor ?? null, null, "a group's row has no menu");
-  handlers.get("tree-f-a.ts.on_mouse_down")();
-  handlers.get("review-pane.on_mouse_down")({ local_position: { x: 300, y: 100 } }, cx); drawn.clear(); pane.render(cx);
-  assert.ok(drawn.has("file-menu") && ["copy-path", "copy-relative", "reveal", "open", "review"].every(id => drawn.has(`file-menu-${id}`)) && !drawn.has("file-menu-open-review") && !drawn.has("file-menu-open-files"));
-  press("file-menu-review");
-  assert.ok(pane.fileAt("a.ts").reviewed && !pane.menu && !drawn.has("file-menu"));
+  assert.equal(handlers.get("tree-f-a.ts.on_mouse_down"), undefined);
+  assert.ok(!drawn.has("file-menu"));
   // Nor does the toolbar, though the panel has Files and a file is in front.
   assert.ok(pane.current && drawn.has("review-nav-toggle") && !drawn.has("review-open-files"));
   pane.setReviewed(pane.fileAt("a.ts"), false, cx);
@@ -2058,6 +2054,35 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     sharedStore.set("review.shown", wasShown); sharedStore.set("review.status", wasStatus);
   }
   {
+    // Close while a read is out, before the hidden-view timer runs: no stale diff or range may return.
+    const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown");
+    const sp = { id: "release-test", active: true, folder: "/repo", machine: null, tabs: [] };
+    let hold = false, release;
+    const gate = new Promise(r => { release = r; });
+    const scope = load("main.js", { ...env, spaces: () => [sp],
+      layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "review", "panel-empty"].map(id => ({ id })) }] }] }),
+      review: async (_root, route) => { if (hold && route === "/api/review") await gate; return structuredClone(review); },
+      exec: async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "main\n" }),
+    });
+    sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: "first" }], active: "review" } });
+    sharedStore.set("review.shown", { [sp.id]: { root: "/repo", page: "/commit/closed-range" } });
+    const view = new scope.Mod(); view.init({}, cx);
+    const draw = async () => { view.render(cx); await wait(); view.render(cx); await wait(); };
+    await draw(); const old = view.bySpace.get(sp.id);
+    assert.ok(old.review); hold = true; old.load(cx); await wait();
+    vm.runInContext("closeSurface()", scope); view.render(cx); await wait();
+    assert.equal(sharedStore.get("review.shown")[sp.id], undefined);
+    release(); await wait();
+    assert.equal(old.review, null, "late data is released before the lifecycle timer");
+    assert.equal(old.scroll, null);
+    old.publish(); assert.equal(sharedStore.get("review.shown")[sp.id], undefined, "a closed range cannot be republished");
+    hold = false; vm.runInContext("showPage('review')", scope); await draw();
+    assert.notEqual(view.bySpace.get(sp.id), old);
+    assert.notEqual(view.bySpace.get(sp.id).page, "/commit/closed-range", "re-add uses the default range");
+    if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
+    sharedStore.set("review.shown", wasShown);
+  }
+  {
     // Analyze pressed, the daemon not saying it runs yet, and the space evicted at once: the status poll still follows the run
     // to its end. A "not running" from before the run starts doesn't end it.
     const ids = ["p", "q", "r", "s"], wasShown = sharedStore.get("review.shown"), wasStatus = sharedStore.get("review.status");
@@ -2082,5 +2107,5 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(!p.analyzing() && word() === "done" && !p.review);
     sharedStore.set("review.shown", wasShown); sharedStore.set("review.status", wasStatus);
   }
-  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; the row menu, none of it opening Files; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, nothing asked of it by Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
+  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; Review tree has no context menu; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, nothing asked of it by Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
 })();

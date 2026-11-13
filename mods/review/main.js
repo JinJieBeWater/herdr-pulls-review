@@ -1,4 +1,4 @@
-// A pulls.review review, the `review` page of the window's space panel (docs/adr/0011): groups (the AI analysis, else
+// A pulls.review review, the unique `review` surface of the space panel (docs/adr/0017): groups (the AI analysis, else
 // rule-based), each group's files and their diffs, reviewed marks, one commit at a time. One copy serves every space and
 // shows the active one's review. The pulls-review mod's "herdr" mode and the header's scope menu ask for a page through shared(PANE)
 // `{ space, root, page, base?, n, analyze }`. The Files page asks nothing of it (docs/adr/0015).
@@ -7,16 +7,15 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
 import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
-import { panelState, hidePanel } from "./panel.js";
+import { panelState, surfacesFor, closeSurface, surfaceKey } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, pageLabel, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./controls.js";
 import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
 import { diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage } from "./scope.js";
-import { fileTree, navHead, menuItems, openTo, showGroup } from "./files.js";
+import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
-import { fileMenuView } from "./file-menu.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
 import { navToggle } from "./nav-column.js";
 import { withNav, navOpen } from "./nav-column.js";
@@ -71,17 +70,15 @@ export default class ReviewPanel extends View {
     // The colors the rows on screen are in.
     this.colorsKey = JSON.stringify(colors(theme()));
     this.handle = cx.focus_handle();
-    // A row's right-click menu takes the keyboard while it's open (file-menu.js).
-    this.menuHandle = cx.focus_handle();
     // Whether the file tree's column is open: the page's, for every space.
     this.navOpen = navOpen();
     // `review.scope` (a key, or `herdr-app do`) toggles the shown review's scope menu, as its button does; `scope:commits`
     // opens it with that submenu; `review.base` the base picker the same way. `review.settings` the same for the settings, `settings:language`, `:agent`
-    // or `:model` with that submenu. `review.close`, cmd-w while it has the keyboard, closes the panel as T3's does.
+    // or `:model` with that submenu. `review.close`, cmd-w while it has the keyboard, closes this surface.
     cx.spawn(async (cx) => {
       for (;;) {
         const [name, page] = (await nextCommand()).split(":"), s = this.shown();
-        if (name === "close") hidePanel();
+        if (name === "close") { if (s?.popup) s.closePopup(cx); else closeSurface(); }
         if ((name !== "scope" && name !== "settings" && name !== "base") || !s?.page) continue;
         if (!page || s.popup !== name) s.togglePopup(name, cx);
         if (name === "scope" && page === "commits") openScopePage(s, page, cx, 0);
@@ -99,7 +96,7 @@ export default class ReviewPanel extends View {
     cx.timer.every(1000, (cx) => {
       const ids = new Set(spaces().map(s => s.id));
       for (const [id, s] of this.bySpace) {
-        if (!ids.has(id)) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
+        if (!ids.has(id) || !s.surfaceAlive()) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
         else if (!s.onScreen()) s.dirty = true;
         else if (s.dirty) s.load(cx);
       }
@@ -129,6 +126,8 @@ export default class ReviewPanel extends View {
   spaceReview(space, cx) {
     const panel = this.panel;
     let s = panel.bySpace.get(space.id);
+    const born = surfacesFor(space.id).tabs.find(t => t.id === "review")?.born;
+    if (s && s.surfaceBorn !== born) { s.evict(); panel.bySpace.delete(space.id); if (panel.front === s) panel.front = null; s = null; }
     if (!s) { s = Object.create(panel); s.begin(space.id); panel.bySpace.set(space.id, s); }
     // Shown after another: the latest again, on its own timer, as is its list's scroll and its first read: none can start
     // while drawing (gpui-kit.d.ts). A request in that draw has asked for a read already.
@@ -164,6 +163,7 @@ export default class ReviewPanel extends View {
 
   // A space's review's own state, at its start: what review.shown says it showed, and requests from before it ignored.
   begin(space) {
+    this.surfaceBorn = surfacesFor(space).tabs.find(t => t.id === "review")?.born;
     const was = shared(`${PANE}.shown`)?.[space];
     this.space = space; this.root = was?.root ?? null; this.page = was?.page ?? null; this.base = was?.base ?? this.page;
     this.handled = Date.now() - FRESH; this.noRepo = false; this.evicted = false; this.awayAnalysis = null;
@@ -209,8 +209,12 @@ export default class ReviewPanel extends View {
   forget() { this.restoreTo = null; this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); this.parts.clear(); this.shift = [0, 0, 0]; }
 
   // The window active, this review's space the active one, and the panel open on its review page.
+  surfaceAlive() {
+    return !panelState().pages.includes("panel-empty") || surfacesFor(this.space).tabs.some(t => t.id === "review" && t.born === this.surfaceBorn);
+  }
+
   onScreen() {
-    if (appWindow()?.active === false || !spaces().some(s => s.active && s.id === this.space)) return false;
+    if (!this.surfaceAlive() || appWindow()?.active === false || !spaces().some(s => s.active && s.id === this.space)) return false;
     const p = panelState();
     return p.open && p.page === PANE;
   }
@@ -247,6 +251,7 @@ export default class ReviewPanel extends View {
   // This space's entry in a value shared by space, none with no value. Every write redraws every mod: only a change, and
   // spaces gone (or the tabs these were keyed by before) drop out.
   keep(name, value) {
+    if (!this.surfaceAlive()) return;
     const key = `${PANE}.${name}`, all = shared(key) ?? {}, ids = new Set(spaces().map(s => s.id));
     const live = Object.entries(all).filter(([id]) => id !== this.space && ids.has(id));
     if (JSON.stringify(all[this.space] ?? null) === JSON.stringify(value) && live.length === Object.keys(all).length - (this.space in all ? 1 : 0)) return;
@@ -415,6 +420,7 @@ export default class ReviewPanel extends View {
       .child(div().id("review-note").flex_1().min_h(0).child(body));
     const starting = () => note(loadingState(t, "review-loading", "Loading the review…"));
     if (!space) return starting();
+    if (panelState().pages.includes("panel-empty") && !surfacesFor(space.id).tabs.some(t => t.id === "review")) return div().size_full();
     if (space.machine) return note(emptyState(t, "review-empty", `${LU}/file-diff.svg`, "Not on this computer", `Review reads repositories on this machine only, and this space is on ${space.machine}.`));
     const s = this.spaceReview(space, cx);
     s.follow(cx);
@@ -480,16 +486,11 @@ export default class ReviewPanel extends View {
     // switch (header.js), 24 and 4 apart.
     const right = 8 + 28;
     return v_flex().id("review-pane").relative().size_full().min_h(0).text_color(t.foreground).text_size(12)
-      .track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
-      .on_mouse_down("left", () => this.handle.focus())
-      // A tree row's right-click noted what it's for: its menu opens where it was pressed.
-      .on_mouse_down("right", (e, cx) => {
-        if (!this.menuFor) return;
-        this.menu = { ...this.menuFor, x: (e.local_position?.x ?? 0) / zoom(), y: (e.local_position?.y ?? 0) / zoom(), at: -1 };
-        this.menuFor = null;
-        this.menuHandle.focus();
-        cx.notify();
+      .track_focus(this.handle).on_key_down((e, cx) => {
+        if (e.keystroke === "cmd-w" && this.popup) { this.closePopup(cx); cx.stop_propagation(); }
+        else if (!surfaceKey(e, cx)) this.key(e, cx);
       })
+      .on_mouse_down("left", () => this.handle.focus())
       // Where the pane is in the window: a submenu goes by its rows' bounds, which come in the window's.
       .on_mouse_move((e) => { this.paneAt = { x: e.bounds.x, y: e.bounds.y }; })
       .on_size_change((size, cx) => {
@@ -525,7 +526,7 @@ export default class ReviewPanel extends View {
       .when(this.popup === "base", el => el.child(baseMenu(this, t)))
       // At the pane's end rather than under its button: 320 wide, it would run off a narrow pane from there.
       .when(this.popup === "status", el => el.child(div().absolute().top(36).right(8).child(statusPanel(this, t))))
-      .when(Boolean(this.menu), el => el.child(fileMenuView(this, t, "mods/review", menuItems(this, this.menu), this.menuHandle, { width: this.width, height: this.height })));
+      ;
   }
 
   // Split as chosen, where the diff is wide enough for two sides; narrower it's unified, the choice kept.
