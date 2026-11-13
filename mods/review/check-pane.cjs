@@ -16,7 +16,7 @@ function source(file, seen = new Set(file === "main.js" ? ["rows.js", "daemon.js
 
 const load = (file, env) => {
   const src = source(file)
-    .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
+    .replace(/^import [^;]*;\r?\n/gm, "").replace(/^export \{[^}]+\};\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
   const context = vm.createContext(env);
   vm.runInContext(src, context, { filename: file });
   // A virtual list draws its rows once the frame is laid out, after the whole render: what reads where it is scrolled

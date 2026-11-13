@@ -13,7 +13,7 @@ import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./
 import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
-import { diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage } from "./scope.js";
+import { diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage, releaseScope } from "./review-scope.js";
 import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
@@ -150,6 +150,7 @@ export default class ReviewPanel extends View {
   // going, for the status poll: its diff, rows, lists and scroll go, and a read out for it is dropped when it lands.
   evict() {
     if (this.evicted) return;
+    releaseScope(this);
     // A run just asked for (startingUntil) keeps its state as it was, so the poll still sees it start, or a "not running" before then end nothing.
     const a = this.runState();
     this.awayAnalysis = this.analyzing() ? { state: a?.state ?? "none", error: a?.error ?? null } : null;
@@ -198,6 +199,7 @@ export default class ReviewPanel extends View {
 
   open(page, cx) {
     if (page === this.page) return;
+    releaseScope(this);
     // The old page stays on screen, dimmed and inert, until the new one's read replaces it: apply() then resets what belonged to it.
     this.page = page; this.switching = Boolean(this.review); this.error = null; this.analyzeError = null; this.startingUntil = 0;
     this.wasRunning = false; this.news = null;
@@ -276,6 +278,7 @@ export default class ReviewPanel extends View {
     this.handle.focus();
     if (this.popup === name) return this.closePopup(cx);
     if (this.closedPopup === name && Date.now() - this.popupClosedAt <= 300) return;
+    releaseScope(this);
     this.popup = name; this.foldAt = -1;
     if (name === "settings") loadSettings(this, cx);
     // On the row shown, so ↑/↓ start from it.
@@ -287,6 +290,7 @@ export default class ReviewPanel extends View {
   // `outside`: closed by a press outside it, which may be on its own button.
   closePopup(cx, outside = false) {
     if (!this.popup) return;
+    releaseScope(this);
     this.closedPopup = outside ? this.popup : null; this.popup = null; this.popupClosedAt = Date.now();
     this.modelInput.set_value(""); this.scopeSearch.set_value(""); this.refSearch.set_value(""); this.pageAt = -1; this.settingsPage = null; this.scopePage = null;
     subOpened(subState(this), null);
@@ -412,6 +416,7 @@ export default class ReviewPanel extends View {
   // The active space's review; a sentence where there is none to show.
   render(cx) {
     const t = theme(), space = spaces().find(s => s.active);
+    if (this.panel.front && this.panel.front.space !== space?.id) releaseScope(this.panel.front);
     // With no review to show, the toolbar names the page alone and keeps the column's switch, greyed.
     const note = (body) => v_flex().id("review-pane").size_full().text_color(t.foreground).text_size(12)
       .child(h_flex().id("review-header").h(40).flex_none().px(8).gap(8).items_center().border_b(1).border_color(t.border)
@@ -436,7 +441,7 @@ export default class ReviewPanel extends View {
     const request = shared(PANE);
     if (request && request.space === this.space && request.n > this.handled) {
       this.handled = request.n;
-      if (request.root !== this.root) { this.root = request.root; this.seen.clear(); this.collapsed.clear(); this.flipped.clear(); this.page = null; this.forget(); }
+      if (request.root !== this.root) { releaseScope(this); this.root = request.root; this.seen.clear(); this.collapsed.clear(); this.flipped.clear(); this.page = null; this.forget(); }
       // With the same base, ‹ › stepping to another page of the same diff: its commits stay.
       if (!request.base || request.base !== this.base) this.baseCommits = null;
       this.base = request.base ?? request.page;

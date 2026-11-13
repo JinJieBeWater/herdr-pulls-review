@@ -38,8 +38,8 @@ let drag = null;
  * The page's `content`, and right of it, while `open`, the column: `head` in its 40 head, `list` under it. `id` names it;
  * `body` is the page's width. Its left edge drags, and the width it lands at stays on this page.
  */
-/** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean }} parts */
-export function withNav(t, id, body, { content, head, list, open }) {
+/** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, inline?: boolean, handle?: any }} parts */
+export function withNav(t, id, body, { content, head, list, open, inline = false, handle }) {
   if (!open) return div().id(`${id}-solo`).size_full().min_w(0).child(content);
   const [least, most] = navRange(body), z = Number(settings()?.zoom) || 1, mine = drag?.id === id;
   const width = mine ? Math.min(most, Math.max(least, drag.width)) : navWidth(body);
@@ -65,17 +65,25 @@ export function withNav(t, id, body, { content, head, list, open }) {
     .on_hover((on, cx) => { if (!on) end(cx); })
     .child(div().flex_1().min_w(0).h_full().child(content))
     .child(v_flex().id(`${id}-nav`).relative().w(width).flex_none().h_full().border_l(1).border_color(t.border)
-      .child(h_flex().id(`${id}-nav-head`).h(40).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).child(head))
-      .child(div().flex_1().min_h(0).pt(4).child(list))
+      .child(h_flex().id(`${id}-nav-head`).h(inline ? 36 : 40).when(inline, el => el.mb(4)).flex_none().px(8).gap(4).items_center().when(!inline, el => el.border_b(1).border_color(t.border)).child(head))
+      .child(div().flex_1().min_h(0).when(!inline, el => el.pt(4)).child(list))
       // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
+        .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize file explorer")
+          .when(handle?.is_focused(), el => el.bg(t.accent + "40"))
+          .on_key_down((e, cx) => {
+            const next = e.key === "home" ? least : e.key === "end" ? most : e.key === "left" ? width + 16 : e.key === "right" ? width - 16 : null;
+            if (next === null) return;
+            localStorage.setItem("nav.width", String(Math.min(most, Math.max(least, next))));
+            cx.stop_propagation(); cx.notify();
+          }))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); drag = { id, x: e.position.x, from: width, width }; cx.notify(); })));
 }
 
 /** T3's xs ghost icon button, as the toolbars and the column's head have them: 24, a 14 icon, `on` lit, greyed when `disabled`. */
-/** @param {any} t @param {string} mod @param {string} id @param {string} icon @param {string} label @param {any} press @param {{ on?: boolean, disabled?: boolean, view?: any }} [state] */
-export function ghostButton(t, mod, id, icon, label, press, { on = false, disabled = false, view } = {}) {
-  return drawButton(t, id, { icon: `${mod}/icons/${icon}.svg`, label, surface: "card", on, disabled, hot: view?.hot === id })
+/** @param {any} t @param {string} mod @param {string} id @param {string} icon @param {string} label @param {any} press @param {{ on?: boolean, disabled?: boolean, view?: any, size?: "xs" | "sm" }} [state] */
+export function ghostButton(t, mod, id, icon, label, press, { on = false, disabled = false, view, size = "xs" } = {}) {
+  return drawButton(t, id, { icon: `${mod}/icons/${icon}.svg`, label, surface: "card", size, on, disabled, hot: view?.hot === id })
     .when(!disabled, (el) => el
       .when(Boolean(view), el => el.on_hover((on, cx) => { view.hot = on ? id : null; cx.notify(); }))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

@@ -1,7 +1,7 @@
 import { step, menuJump } from "./list.js";
 import { settingsBack, submitModel } from "./settings.js";
 import { FOLDS, foldAll } from "./diff.js";
-import { scopeRows, scopeList, scopeBack, pickScopeRow, baseList } from "./scope.js";
+import { scopeKey } from "./review-scope.js";
 import { treeKey, revealRow } from "./file-tree.js";
 import { TREE, toggleDir, pickGroup } from "./files.js";
 
@@ -36,34 +36,7 @@ export function reviewKey(view, e, cx) {
     cx.stop_propagation(); cx.notify();
     return;
   }
-  // The scope menu moves as T3's menus: ↑/↓, Home, End, typing, Enter or Space to pick, → or Enter on Commits
-  // to open its submenu, its first row lit. There, typing is the search's and Enter its submit; ← (the search empty) or
-  // Escape closes it, then Escape the menu.
-  if (view.popup === "scope") {
-    if (!view.scopePage) {
-      const rows = scopeRows(view), row = rows[view.scopeAt];
-      if (e.keystroke === "escape") view.closePopup(cx);
-      else if (e.key === "enter" || e.key === "space" || (e.key === "right" && row?.sub)) { if (row) pickScopeRow(view, row, cx, 0); }
-      else {
-        const to = menuJump(view, e, rows.map(r => r.label), view.scopeAt);
-        if (to < 0) return;
-        view.scopeAt = to;
-      }
-      cx.stop_propagation(); cx.notify();
-      return;
-    }
-    if (e.keystroke === "escape" || (e.key === "left" && !view.scopeSearch.value())) { scopeBack(view, cx); cx.stop_propagation(); return; }
-    const to = step(e, view.scopeListAt, scopeList(view).length);
-    if (to >= 0) { view.scopeListAt = to; cx.stop_propagation(); cx.notify(); }
-    return;
-  }
-  // The base picker, as T3's combobox: typing is its search's and Enter its submit; ↑/↓ light rows, Escape closes it.
-  if (view.popup === "base") {
-    if (e.keystroke === "escape") { view.closePopup(cx); cx.stop_propagation(); return; }
-    const to = step(e, view.baseAt, baseList(view).length);
-    if (to >= 0) { view.baseAt = to; cx.stop_propagation(); cx.notify(); }
-    return;
-  }
+  if (scopeKey(view, e, cx)) return;
   // The status has no keys of its own, and what's under it is out of reach while it's up.
   if (view.popup && e.keystroke !== "escape") return;
   // The file tree's keys, as T3's: the ring moves, ↵ shows its file or group, or opens its folder; ←/→ fold.

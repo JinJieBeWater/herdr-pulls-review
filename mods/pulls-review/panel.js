@@ -34,17 +34,17 @@ function save(want) {
   setShared(KEY.panels, { ...all, [id]: { ...all[id], ...want } });
 }
 
-export function activateSurface(id) {
+export function activateSurface(id, keepDetails = false) {
   const s = panelState();
   if (!s.tabs.some(t => t.id === id)) return false;
   save({ tabs: s.tabs, active: id, selected: `${Date.now()}-${Math.random()}`, open: true, wide: s.wide });
   run("layout.select", { stack: "panel-body", child: slot(id, s.pages) });
   run("layout.show", { id: "panel" });
-  run("t3-actions.dismiss-details", {});
+  if (!keepDetails) run("t3-actions.dismiss-details", {});
   return true;
 }
 
-export function showPage(page) {
+export function showPage(page, keepDetails = false) {
   if (!panelState().pages.includes(page)) return false;
   const s = panelState();
   // The standalone Review also docks in Herdr's own stack, whose header is owned by the host, not this layout.
@@ -52,16 +52,25 @@ export function showPage(page) {
     run("layout.select", { stack: "panel-body", child: page }); run("layout.show", { id: "panel" }); return true;
   }
   if (!s.tabs.some(t => t.id === page)) save({ tabs: [...s.tabs, { id: page, born: `${Date.now()}-${Math.random()}` }] });
-  return activateSurface(page);
+  return activateSurface(page, keepDetails);
 }
 
 export function openFile(path) {
   const s = panelState(), id = `file:${path}`, exists = s.tabs.some(t => t.id === id);
   const tab = { id, path, born: `${Date.now()}-${Math.random()}` };
-  const tabs = s.tabs.flatMap(t => t.id !== "files" ? [t] : exists ? [] : [tab]);
+  const tabs = s.tabs.flatMap(t => t.id === id && t.folder ? [{ id: t.id, path, born: t.born }] : t.id !== "files" ? [t] : exists ? [] : [tab]);
   if (!exists && !s.tabs.some(t => t.id === "files")) tabs.push(tab);
   save({ tabs });
   activateSurface(id);
+}
+
+/** Directory crumbs keep their source file; subsequent directory navigation replaces only that directory surface. */
+export function navigateFolder(path, trail = path, keepSource = false) {
+  const s = panelState(), id = path ? `file:${path}` : "files", exists = s.tabs.some(t => t.id === id && t.id !== s.active);
+  const tab = { id, ...(path ? { path } : {}), folder: true, ...(trail !== path ? { trail } : {}), born: `${Date.now()}-${Math.random()}` };
+  const tabs = s.tabs.flatMap(t => t.id === s.active ? [...(keepSource ? [t] : []), ...(!exists ? [tab] : [])]
+    : !exists && path && t.id === "files" ? [] : [t]);
+  save({ tabs }); activateSurface(id);
 }
 
 /** mode: one, others, right, all. One atomic update avoids flashing the empty surface during bulk close. */

@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { LU, COMPACT, button, iconButton, popover } from "./controls.js";
-import { scopeHeader } from "./scope.js";
+import { scopeHeader } from "./review-scope.js";
 import { navToggle, setNavOpen } from "./nav-column.js";
 
 // As the app's describeProgress, but the file's name only: the agent's paths run long, often through its own scratch folder.
