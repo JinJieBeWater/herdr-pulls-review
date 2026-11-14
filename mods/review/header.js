@@ -1,6 +1,10 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { LU, COMPACT, button, iconButton, popover } from "./controls.js";
+import { LU, COMPACT, button, popover } from "./controls.js";
+import { ghostButton } from "./button.js";
+import { trigger } from "./trigger.js";
+import { tip } from "./tip.js";
+import { popupClosed } from "./review-menu.js";
 import { scopeHeader } from "./review-scope.js";
 import { navToggle, setNavOpen } from "./nav-column.js";
 
@@ -46,15 +50,15 @@ export function head(view) {
     // As the app's DiffAnalyzeButton, the analysis's state is the button's: running or failed, it opens the status; without
     // a spinner of its own while running, as the pane's header marks the review working;
     // an agent, the settings. An analysis of an older version (the app has none) says so after its Re-analyze.
-    const analyze = !a.agent ? { text: "Set up agent", lead: `${LU}/key-round.svg`, run: (cx) => view.togglePopup("settings", cx) }
-      : view.analyzing() ? { text: "Analyzing…", run: (cx) => view.togglePopup("status", cx) }
-      : error ? { text: "Analysis failed", lead: `${LU}/circle-alert.svg`, color: "ansi1", run: (cx) => view.togglePopup("status", cx) }
+    const analyze = !a.agent ? { text: "Set up agent", lead: `${LU}/key-round.svg`, pops: "settings" }
+      : view.analyzing() ? { text: "Analyzing…", pops: "status" }
+      : error ? { text: "Analysis failed", lead: `${LU}/circle-alert.svg`, color: "ansi1", pops: "status" }
       : { text: a.state === "none" ? "Analyze with AI" : "Re-analyze", lead: `${LU}/sparkles.svg`, note: a.state === "outdated" ? "(outdated)" : null, run: (cx) => view.analyze(cx, a.state === "current") };
     buttons.push({ id: "analyze", ...analyze, ...compact && { text: null, icon: analyze.lead ?? `${LU}/sparkles.svg`, label: analyze.text } });
-    buttons.push({ id: "fold-menu", icon: `${LU}/chevrons-up-down.svg`, label: "Expand or collapse files", active: view.popup === "fold", run: (cx) => view.togglePopup("fold", cx) });
+    buttons.push({ id: "fold-menu", icon: `${LU}/chevrons-up-down.svg`, label: "Expand or collapse files", pops: "fold" });
   }
   // The view (unified or split, files as a tree or a list) is set in the settings, with the analysis.
-  buttons.push({ id: "settings", icon: "mods/review/icons/settings.svg", label: "Settings", active: view.popup === "settings", run: (cx) => view.togglePopup("settings", cx) });
+  buttons.push({ id: "settings", icon: "mods/review/icons/settings.svg", label: "Settings", pops: "settings" });
   // The diff shown is named by the scope button, which leads the header (scope.js).
   return { parts, buttons };
 }
@@ -62,16 +66,25 @@ export function head(view) {
 export function header(view, t, head) {
   // As T3's DiffPanel header: the scope and what it compares, the counts as its DiffStatLabel, then the tools. Narrow, the
   // words give way and the buttons never.
-  return h_flex().id("review-header").h(40).flex_none().px(8).gap(8).items_center().overflow_hidden().border_b(1).border_color(t.border)
+  // 12 in, as the panel head above it (t3-tokens「规则」R1); the 40 bar's buttons sm on chrome, the icons touching (P3).
+  const icons = head.buttons.filter(b => !b.text), words = head.buttons.filter(b => b.text);
+  return h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().overflow_hidden().border_b(1).border_color(t.border)
     .child(scopeHeader(view, t))
     // The counts hold, as T3's stats beside its tools: a long commit subject truncates instead.
     .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11)
       .children(head.parts.map(p => div().text_color(t[p.color] ?? t.dim).child(p.text)))))
     .child(div().flex_1())
-    .child(h_flex().flex_none().gap(4).items_center()
-      .children(head.buttons.map(b => b.text
-        ? button(view, t, b.id, b.text, b.run, { after: b.after, icon: b.lead, color: t[b.color], note: b.note })
-        : iconButton(view, t, b.id, b.icon, b.label, b.run, { color: t[b.color], disabled: b.disabled, active: b.active })))
+    .children(words.map(b => button(view, t, b.id, b.text, b.pops ? (cx) => view.togglePopup(b.pops, cx) : b.run,
+      { after: b.after, icon: b.lead, color: t[b.color], note: b.note, pops: b.pops, size: "sm", surface: "chrome" })))
+    .child(h_flex().flex_none().items_center()
+      .children(icons.map(b => {
+        const run = b.pops ? (cx) => view.togglePopup(b.pops, cx) : b.run;
+        // An icon alone says what it does in its label (tooltip-audit R1).
+        if (b.pops) return trigger(view, t, b.id, { icon: b.icon, label: b.label, color: t[b.color], disabled: b.disabled, below: true,
+          open: view.popup === b.pops, closed: popupClosed(b.pops), onOpen: (_b, cx) => run(cx) });
+        return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });
+      }))
       // Last, the file tree's switch, greyed with no files to list.
-      .child(navToggle(t, "mods/review", "review-nav-toggle", view.navOpen, (cx) => { view.panel.navOpen = !view.navOpen; setNavOpen(view.panel.navOpen); cx.notify(); }, !view.review || view.navEmpty(), view)));
+      .child(tip(view, t, "review-nav-toggle", view.navOpen ? "Hide the file tree" : "Show the file tree",
+        navToggle(view, t, "mods/review", "review-nav-toggle", view.navOpen, (cx) => { view.panel.navOpen = !view.navOpen; setNavOpen(view.panel.navOpen); cx.notify(); }, !view.review || view.navEmpty()), { below: true })));
 }

@@ -96,10 +96,10 @@ export function pageRows(view) {
   return rows.map(m => ({ id: m.key ?? `model-${m.id}`, name: m.name, detail: m.detail, on: m.id === model, pick: (cx) => saveLlm(view, { agentModel: m.id }, cx) }));
 }
 
-// The panel's rows at main.js's top 38, right 16, past its border and padding: a label, four choices of 36, a rule, a
+// The panel's rows at main.js's top 38, right 40, past its border and padding: a label, four choices of 36, a rule, a
 // label and the switch, then Language, Agent and Model.
 // shortcut: assumes all three rows and no error note above them; a row the pointer is on gives its own bounds instead.
-const navRow = (view, id) => ({ x: view.width - 16 - 320 + 5, y: 38 + 5 + 237 + MODEL_ROW * ["language", "agent", "model"].indexOf(id), width: 310, height: MODEL_ROW });
+const navRow = (view, id) => ({ x: view.width - 40 - 320 + 5, y: 38 + 5 + 237 + MODEL_ROW * ["language", "agent", "model"].indexOf(id), width: 310, height: MODEL_ROW });
 
 // A setting's submenu, beside its row (`row`, in the pane), which stays lit. A press on the panel stops there, so the
 // keyboard is sent where the submenu wants it: the model search, else the pane's keys.

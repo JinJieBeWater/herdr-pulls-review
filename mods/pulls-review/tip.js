@@ -57,7 +57,11 @@ export const dragGone = (box) => window()?.active === false || pointerGone(box);
 // The label fades and slides 4px off its control, in and out: T3's also scales, which Herdr can't. A transition adopts the first value it sees,
 // so it draws clear until laid out. A new id per opening: a size reports only the first time an id is laid out.
 // A Popup, as a HoverCard stays open under the pointer and a popup blocks what it covers even when clear: one fading out would leave a dead patch.
-const tips = new Map(), FADE = /** @type {const} */ ({ duration: 150, easing: "ease-out" });
+const tips = new Map();
+export const FADE = /** @type {const} */ ({ duration: 150, easing: "ease-out" });
+/** The label's card, as T3's TooltipPopup: docs/internals/t3-tokens.md「Tooltip」. measured-text.js's named() draws it too. */
+export const tipCard = (t, id) => v_flex().id(id).max_w(320).px(8).py(4).gap(2).rounded(6).border(1).border_color(t.border).bg(t.chrome).shadow_md()
+  .text_size(12).font_normal().line_height(1.375).text_color(t.foreground);
 let opened = 0;
 
 function dropTip(id, s) {
@@ -102,9 +106,9 @@ export function tip(view, t, id, label, trigger, { action, hint, below, delay = 
   };
   return Popup.new(`tip-${id}`, div().id(`tip-over-${id}`).on_hover(hover).on_mouse_move((e) => { pointerMoved(e.position); const at = tips.get(id); if (at) at.box = e.bounds; }).child(trigger)).anchor(below ? "top_center" : "bottom_center")
     // While lit or leaving: a dialog opened from the button covers it, nothing reports the leaving until the pointer moves, and the label would stay up over it.
-    .when(Boolean(s?.open && (hot === id || s.closing)), pop => pop.content(v_flex().id(`tip-body-${id}-${s.n}`)
+    .when(Boolean(s?.open && (hot === id || s.closing)), pop => pop.content(tipCard(t, `tip-body-${id}-${s.n}`)
       .opacity(shown ? 1 : 0).top(shown ? 0 : below ? -4 : 4).transition("opacity", FADE).transition("top", FADE)
-      .on_size_change((_size, cx) => { if (tips.get(id) !== s || s.drawn) return; s.drawn = true; cx.notify(); }).when(below, el => el.mt(4)).when(!below, el => el.mb(4)).max_w(320).px(8).py(4).gap(2).rounded(6).border(1).border_color(t.border).bg(t.chrome).shadow_md().text_size(12).line_height(1.375).text_color(t.foreground)
+      .on_size_change((_size, cx) => { if (tips.get(id) !== s || s.drawn) return; s.drawn = true; cx.notify(); }).when(below, el => el.mt(4)).when(!below, el => el.mb(4))
       .child(div().child(key ? `${label} (${key})` : label))
       .when(Boolean(hint), el => el.child(div().text_color(t.muted).child(hint)))));
 }

@@ -1,116 +1,114 @@
-// One space's surfaces (ADR 0017). Stack children are render slots, not fixed user-visible pages.
-import { layout, run, spaces, shared, setShared } from "herdr";
+// The space panel (docs/adr/0012, 0017): the `panel` column at the window's right, the `panel-body` stack its render slots.
+// Each space keeps `{ tabs, active, open, wide }` in t3.panels (docs/internals/storage.md); surfaces.js says what a step does
+// to the tabs, this stores it and lays the panel out. Where Herdr's own layout docks the Review extra in its stack instead
+// (no `panel-empty` slot), the host owns the head and these only show the page.
+import { layout, run, spaces, shared, setShared, exec } from "herdr";
 import { KEY } from "./store.js";
+import { workFolder } from "./terminal-context.js";
+import { surfaceActivate, surfaceAdd, surfaceOpenFile, surfaceNavigate, surfaceClose } from "./surfaces.js";
 
 const find = (node, id) => node?.id === id ? node : (node?.children ?? []).reduce((hit, c) => hit ?? find(c, id), null);
+const activeSpaceId = () => spaces().find(p => p.active)?.id;
+const panelSlots = () => (find(layout(), "panel-body")?.children ?? []).map(c => c.id);
+// A tab's instance name: later than any this copy gave, so a tab closed and added again in one moment is still another.
+let lastBorn = 0;
+const newBorn = () => (lastBorn = Math.max(Date.now(), lastBorn + 1));
 
-export function surfaceKey(e, cx) {
-  if (e.keystroke === "cmd-t" && panelState().pages.includes("panel-empty")) run("t3-tabs.surface-menu");
-  else if (e.keystroke === "cmd-w") closeSurface();
-  else return false;
-  cx.stop_propagation(); return true;
+/** `space`'s tabs and the active one; Review's only where the extra is installed. */
+export function surfacesFor(space = activeSpaceId(), slots = panelSlots()) {
+  const kept = shared(KEY.panels)?.[space], tabs = (kept?.tabs ?? []).filter(t => t.id !== "review" || slots.includes("review"));
+  return { tabs, active: tabs.some(t => t.id === kept?.active) ? kept.active : tabs[0]?.id ?? null };
 }
 
-export function surfacesFor(space = spaces().find(p => p.active)?.id) {
-  const kept = shared(KEY.panels)?.[space];
-  // Upgrade the old page once, without keeping the old two-page mode.
-  const pages = find(layout(), "panel-body")?.children ?? [];
-  const tabs = (kept?.tabs ?? (kept?.page && kept.page !== "panel-empty" ? [{ id: kept.page, born: "legacy" }] : []))
-    .filter(t => t.id !== "review" || pages.some(p => p.id === "review"));
-  return { tabs, active: tabs.some(t => t.id === kept?.active) ? kept.active : tabs[0]?.id ?? null, selected: kept?.selected };
+/** The instance of `space`'s `id` tab (surfaces.js `born`), or null: none, or Herdr's own stack, which has no tabs. A mod
+ * stamps what it keeps or asks for a tab with it, so a tab closed and added again doesn't take the old one's. */
+export function surfaceBorn(id, space = activeSpaceId()) {
+  const slots = panelSlots();
+  return slots.includes("panel-empty") ? surfacesFor(space, slots).tabs.find(t => t.id === id)?.born ?? null : null;
 }
 
+/** What shows: open, wide, the stack's slot (`page`) and slots; `owns` this layout's surfaces; the active space's tabs. */
 export function panelState() {
   const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body"), work = find(root, "work");
-  return { open: Boolean(panel && !panel.hidden), page: body?.active ?? null, pages: (body?.children ?? []).map(c => c.id), wide: Boolean(panel && work?.hidden), ...surfacesFor() };
+  const slots = (body?.children ?? []).map(c => c.id);
+  return { open: Boolean(panel && !panel.hidden), page: body?.active ?? null, pages: slots, owns: slots.includes("panel-empty"),
+    wide: Boolean(panel && work?.hidden), ...surfacesFor(activeSpaceId(), slots) };
 }
 
-const slot = (active, pages) => active === "review" ? "review" : active ? "files" : pages.includes("panel-empty") ? "panel-empty" : "files";
+const slot = (active) => active === "review" ? "review" : active ? "files" : "panel-empty";
 
+// The active space's record, only its fields: what an older build kept beside them goes at the first write.
 function save(want) {
-  const id = spaces().find(p => p.active)?.id;
+  const id = activeSpaceId();
   if (!id) return;
-  const all = shared(KEY.panels) ?? {};
-  setShared(KEY.panels, { ...all, [id]: { ...all[id], ...want } });
+  const all = shared(KEY.panels) ?? {}, was = all[id] ?? {};
+  setShared(KEY.panels, { ...all, [id]: { tabs: was.tabs ?? [], active: was.active ?? null, open: Boolean(was.open), wide: Boolean(was.wide), ...want } });
 }
 
+// A step's result shown: stored, its slot selected, the panel open. Opening the panel puts Details away (T3).
+function showSurfaces(next, keepDetails = false) {
+  save({ tabs: next.tabs, active: next.active, open: true });
+  run("layout.select", { stack: "panel-body", child: slot(next.active) });
+  run("layout.show", { id: "panel" });
+  if (!keepDetails) run("t3-actions.dismiss-details", {});
+}
+
+/** A tab picked (its tab, a key): it shows and is revealed again. */
 export function activateSurface(id, keepDetails = false) {
   const s = panelState();
   if (!s.tabs.some(t => t.id === id)) return false;
-  save({ tabs: s.tabs, active: id, selected: `${Date.now()}-${Math.random()}`, open: true, wide: s.wide });
-  run("layout.select", { stack: "panel-body", child: slot(id, s.pages) });
-  run("layout.show", { id: "panel" });
-  if (!keepDetails) run("t3-actions.dismiss-details", {});
+  showSurfaces(surfaceActivate(s, id), keepDetails);
   return true;
 }
 
+/** "files" or "review" added, or picked if it's there. In Herdr's own layout, its page shown. */
 export function showPage(page, keepDetails = false) {
-  if (!panelState().pages.includes(page)) return false;
   const s = panelState();
-  // The standalone Review also docks in Herdr's own stack, whose header is owned by the host, not this layout.
-  if (!s.pages.includes("panel-empty")) {
-    run("layout.select", { stack: "panel-body", child: page }); run("layout.show", { id: "panel" }); return true;
-  }
-  if (!s.tabs.some(t => t.id === page)) save({ tabs: [...s.tabs, { id: page, born: `${Date.now()}-${Math.random()}` }] });
-  return activateSurface(page, keepDetails);
+  if (!s.pages.includes(page)) return false;
+  if (!s.owns) { run("layout.select", { stack: "panel-body", child: page }); run("layout.show", { id: "panel" }); return true; }
+  showSurfaces(surfaceAdd(s, page, newBorn()), keepDetails);
+  return true;
 }
 
-export function openFile(path) {
-  const s = panelState(), id = `file:${path}`, exists = s.tabs.some(t => t.id === id);
-  const tab = { id, path, born: `${Date.now()}-${Math.random()}` };
-  const tabs = s.tabs.flatMap(t => t.id === id && t.folder ? [{ id: t.id, path, born: t.born }] : t.id !== "files" ? [t] : exists ? [] : [tab]);
-  if (!exists && !s.tabs.some(t => t.id === "files")) tabs.push(tab);
-  save({ tabs });
-  activateSurface(id);
-}
+/** A file opened from Files: its tab, or a new one (surfaces.js openFile). Not a reveal: Files shows it itself. */
+export function openFile(path) { showSurfaces(surfaceOpenFile(panelState(), path, newBorn())); }
 
-/** Directory crumbs keep their source file; subsequent directory navigation replaces only that directory surface. */
-export function navigateFolder(path, trail = path, keepSource = false) {
-  const s = panelState(), id = path ? `file:${path}` : "files", exists = s.tabs.some(t => t.id === id && t.id !== s.active);
-  const tab = { id, ...(path ? { path } : {}), folder: true, ...(trail !== path ? { trail } : {}), born: `${Date.now()}-${Math.random()}` };
-  const tabs = s.tabs.flatMap(t => t.id === s.active ? [...(keepSource ? [t] : []), ...(!exists ? [tab] : [])]
-    : !exists && path && t.id === "files" ? [] : [t]);
-  save({ tabs }); activateSurface(id);
-}
+/** A breadcrumb's folder, from the active tab (surfaces.js navigateFolder). */
+export function navigateFolder(path, trail = path, keep = false) { showSurfaces(surfaceNavigate(panelState(), path, trail, keep, newBorn())); }
 
-/** mode: one, others, right, all. One atomic update avoids flashing the empty surface during bulk close. */
+/** mode: "one", "others", "right", "all" (surfaces.js close). The last one gone puts the panel away. Each mod lets go of what a
+ * closed tab held when its `born` is gone from the list. In Herdr's own layout, the panel goes. */
 export function closeSurface(id = panelState().active, mode = "one") {
-  const s = panelState(), at = s.tabs.findIndex(t => t.id === id);
-  if (!s.pages.includes("panel-empty")) { hidePanel(); return; }
-  if (at < 0) return;
-  const tabs = s.tabs.filter((t, i) => mode === "all" ? false : mode === "others" ? t.id === id : mode === "right" ? i <= at : t.id !== id);
-  if (s.tabs.some(t => t.id === "review") && !tabs.some(t => t.id === "review")) {
-    const space = spaces().find(p => p.active)?.id, shown = { ...(shared("review.shown") ?? {}) };
-    delete shown[space]; setShared("review.shown", shown);
-    if (shared("review")?.space === space) setShared("review", null);
-  }
-  const old = s.tabs.findIndex(t => t.id === s.active);
-  const active = tabs.some(t => t.id === s.active) ? s.active : (s.tabs.slice(old + 1).find(t => tabs.includes(t)) ?? tabs.at(-1))?.id ?? null;
-  save({ tabs, active });
-  if (active) activateSurface(active);
-  else { run("layout.select", { stack: "panel-body", child: slot(null, s.pages) }); hidePanel(); }
+  const s = panelState();
+  if (!s.owns) { hidePanel(); return; }
+  const next = surfaceClose(s, id, mode);
+  if (next === s) return;
+  if (next.active) { showSurfaces(next); return; }
+  save({ tabs: next.tabs, active: null });
+  run("layout.select", { stack: "panel-body", child: "panel-empty" });
+  hidePanel();
 }
 
-// Closing it gives the work column back, if the panel had taken its place.
+// Put away: the work column back if the panel had taken its place; the tabs stay.
 export function hidePanel() {
   const s = panelState();
   if (s.wide) run("layout.show", { id: "work" });
   run("layout.hide", { id: "panel" });
-  if (s.pages.includes("panel-empty")) save({ tabs: s.tabs, active: s.active, open: false, wide: false });
+  if (s.owns) save({ open: false, wide: false });
 }
 
-/** A page's own entry: opens the panel on it, or closes the panel already showing it. Without a page, the panel on its last one. */
+/** A page's own entry: opens the panel on it, or puts away the panel already showing it. Without one: the panel as it was. */
 export function togglePanel(page) {
   const s = panelState();
-  if (s.open && (!page || s.active === page)) hidePanel();
+  if (s.open && (!page || (s.owns ? s.active : s.page) === page)) hidePanel();
   else if (page) showPage(page);
-  else if (!s.pages.includes("panel-empty") && s.page) showPage(s.page);
+  else if (!s.owns) { if (s.page) showPage(s.page); }
   else if (s.active) activateSurface(s.active);
   else {
-    run("layout.select", { stack: "panel-body", child: slot(null, s.pages) });
+    run("layout.select", { stack: "panel-body", child: "panel-empty" });
     run("layout.show", { id: "panel" });
     run("t3-actions.dismiss-details", {});
-    save({ tabs: s.tabs, active: null, open: true, wide: false });
+    save({ open: true, wide: false });
   }
 }
 
@@ -122,14 +120,40 @@ export function toggleWide() {
   save({ wide: !s.wide });
 }
 
-const same = (a, b) => Boolean(a) && a.open === b.open && a.page === b.page && a.wide === b.wide;
-
-// The panel as `space` left it, in this layout's pages; closed if it never had one.
-function keptFor(space, s) {
-  const kept = (/** @type {Record<string, any>} */ (shared(KEY.panels) ?? {}))[space];
-  return { open: Boolean(kept?.open), page: slot(surfacesFor(space).active, s.pages), wide: Boolean(kept?.open && kept?.wide) };
+/**
+ * Asks `space`'s Review for `page` of `root` (the `review` key, docs/internals/storage.md): past the last request's number, and
+ * naming the Review tab it's for (`born`), so a tab closed meanwhile doesn't take it up. Show the page first (showPage), so the
+ * tab it names is there.
+ */
+export function reviewRequest(space, root, page, { base = undefined, analyze = false } = {}) {
+  const born = surfaceBorn("review", space);
+  setShared("review", { space, root, page, ...(base ? { base } : {}), n: Math.max(Date.now(), Number(shared("review")?.n ?? 0) + 1), analyze: Boolean(analyze), ...(born != null && { born }) });
 }
 
+/**
+ * Why Review can't read `space` now, or "" when it can: a space on another machine, or no Git repository where its tab works
+ * (terminal-context.js workFolder: the last terminal's cwd, else the space folder), as T3's diff panel follows its thread's
+ * folder. `root` is that repository, Review's default. Not installed: no Review to ask about (panelState().pages).
+ * @returns {Promise<{ root: string | null, problem: string }>}
+ */
+export const reviewRepo = async (space = activeSpaceId()) => {
+  const sp = spaces().find(s => s.id === space);
+  if (!sp) return { root: null, problem: "No space is open." };
+  if (sp.machine) return { root: null, problem: "Review is unavailable on remote spaces." };
+  const folder = workFolder(sp.id);
+  const top = folder ? await exec("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"], { cwd: folder }).catch(() => null) : null;
+  const root = top?.code === 0 && top.stdout?.trim();
+  return root ? { root, problem: "" } : { root: null, problem: "This tab's folder is not in a Git repository." };
+};
+
+// --- Each space keeps its panel, as T3 keeps one per thread. The width stays the window's.
+
+const same = (a, b) => a.open === b.open && a.page === b.page && a.wide === b.wide;
+// The panel as `space` left it; closed if it never had one.
+function keptFor(space) {
+  const kept = shared(KEY.panels)?.[space];
+  return { open: Boolean(kept?.open), page: slot(surfacesFor(space).active), wide: Boolean(kept?.open && kept?.wide) };
+}
 function lay(want) {
   run("layout.select", { stack: "panel-body", child: want.page });
   run(want.wide ? "layout.hide" : "layout.show", { id: "work" });
@@ -143,29 +167,27 @@ function lay(want) {
  */
 export function restorePanel(view, space) {
   const s = panelState();
-  if (!s.pages.length) return;
-  const want = keptFor(space, s);
+  if (!s.owns) return;
+  const want = keptFor(space);
   view.panelSpace = space;
   view.panelPending = { want, until: Date.now() + 1000, space };
-  if (!same(want, { open: s.open, page: s.page, wide: s.wide })) lay(want);
+  if (!same(want, s)) lay(want);
 }
 
 /**
- * Each space keeps its panel, as T3 keeps one per thread: switching shows that space's (closed if it never had one), and whatever
- * opens, closes, pages or widens it is recorded. The width stays the window's. Called from render by one copy that always shows
- * (t3-tabs' `keys`); its first frame starts from what shows rather than restoring.
+ * Switching spaces shows that space's panel; whatever opens, closes or widens it is recorded. Called from render by one copy
+ * that always shows (t3-tabs' `keys`); its first frame starts from what shows rather than restoring.
  */
 export function syncPanel(view) {
   const s = panelState(), space = spaces().find(p => p.active);
-  if (!space || !s.pages.length) { view.panelSpace = null; return; }
+  if (!space || !s.owns) { view.panelSpace = null; return; }
   // Laid out ahead of a select (restorePanel) that spaces() doesn't show yet.
   if (view.panelPending?.space && view.panelPending.space !== space.id && Date.now() < view.panelPending.until) return;
-  const now = { open: s.open, page: s.page, wide: s.wide };
   if (space.id !== view.panelSpace) {
     const first = view.panelSpace == null;
     view.panelSpace = space.id; view.panelPending = null;
-    const want = keptFor(space.id, s);
-    if (!first && !same(want, now)) {
+    const want = keptFor(space.id);
+    if (!first && !same(want, s)) {
       // The layout's clicks land after this frame: until then (or until something else wins) what shows isn't a choice.
       view.panelPending = { want, until: Date.now() + 1000 };
       lay(want);
@@ -173,10 +195,10 @@ export function syncPanel(view) {
     }
   }
   if (view.panelPending) {
-    if (!same(view.panelPending.want, now) && Date.now() < view.panelPending.until) return;
+    if (!same(view.panelPending.want, s) && Date.now() < view.panelPending.until) return;
     view.panelPending = null;
   }
   // shortcut: a closed space's entry stays; prune by spaces() if the record ever grows noticeably.
-  const all = /** @type {Record<string, any>} */ (shared(KEY.panels) ?? {});
-  if (!same(all[space.id], now)) setShared(KEY.panels, { ...all, [space.id]: { ...all[space.id], ...surfacesFor(space.id), ...now } });
+  const kept = shared(KEY.panels)?.[space.id];
+  if (Boolean(kept?.open) !== s.open || Boolean(kept?.wide) !== s.wide) save({ open: s.open, wide: s.wide });
 }

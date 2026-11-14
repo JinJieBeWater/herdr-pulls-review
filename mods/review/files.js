@@ -1,4 +1,5 @@
 import { div } from "gpui-kit";
+import { hoverKept } from "./tip.js";
 import { h_flex } from "gpui-base";
 import { treeRows, pathEntries, sortEntries, treeList, treeRow, revealRow, statusBadge } from "./file-tree.js";
 import { foldAllButton } from "./nav-column.js";
@@ -18,17 +19,17 @@ export function navHead(view, t) {
     // 8 in, where Files' search icon and the rows' chevrons start.
     .child(div().text_size(12).font_medium().child("Files"))
     .child(div().id("review-nav-count").flex_1().min_w(0).text_size(11).text_color(t.dim).child(String(count)))
-    .when(dirs.length > 0, el => el.child(foldAllButton(t, `mods/${PANE}`, "review-fold-all", folded, (cx) => {
+    .when(dirs.length > 0, el => el.child(foldAllButton(view, t, `mods/${PANE}`, "review-fold-all", folded, (cx) => {
       for (const path of dirs) setOpen(view, path, folded);
       cx.notify();
-    }, view)));
+    })));
 }
 
 /**
  * The group shown in the panel's file tree (file-tree.js), open and in the diff's order: its folders and files, then its
- * subgroups'. The reviewed box leads every row, after the chevron, three-state on a folder or subgroup; a reviewed file is
- * struck through and dimmed. The file in front (`current`) is selected. Only the rows in view are drawn: a review runs to
- * thousands of files.
+ * subgroups', in Files' rows (file-tree.js treeRow). The reviewed box leads every row, before the icon, three-state on a folder
+ * or subgroup; a reviewed file is struck through and dimmed. The file in front (`current`) is selected. Only the rows in view
+ * are drawn: a review runs to thousands of files.
  */
 export function fileTree(view, t) {
   const mod = `mods/${PANE}`;
@@ -37,7 +38,7 @@ export function fileTree(view, t) {
     return checkMark(t, state).id(id).role("check_box").accessibility_label(`${label}: ${done} of ${files.length} reviewed`)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(files, state !== "all", cx); });
   };
-  const rows = treeOf(view), ringed = view.handle.is_focused() && view.focusPath ? rows.findIndex(r => r.path === view.focusPath) : -1;
+  const rows = treeOf(view), ringed = view.handle.is_focused() && view.focusPath ? rows.findIndex(r => r.path === view.focusPath) : -1, guides = view.treeHot === "tree";
   // The file in front, wherever the list or a key put it, shows in the tree.
   if (view.revealedCurrent !== view.current) { view.revealedCurrent = view.current; if (view.current) revealRow(view, TREE, view.current); }
   const draw = (row, i) => {
@@ -45,7 +46,7 @@ export function fileTree(view, t) {
     if (row.group) {
       const g = row.group, files = groupFiles(g).map(path => view.fileAt(path)).filter(Boolean), critical = g.critical || g.children.some(c => c.critical);
       // As the app's DiffGroupNavItem, in one 24 row: its category icon, title, critical mark and how many files.
-      return treeRow(t, mod, row, `tree-g-${g.key}`, { focused, icon: categoryIcon(t, g.category, true),
+      return treeRow(t, mod, row, `tree-g-${g.key}`, { focused, guides, icon: categoryIcon(t, g.category, true),
         leading: checkbox(`tree-gcheck-${g.key}`, files, g.label),
         trailing: h_flex().flex_none().gap(6).items_center()
           .when(critical, el => el.child(criticalMark(t, 14)))
@@ -54,20 +55,21 @@ export function fileTree(view, t) {
     }
     if (row.dir) {
       const files = row.owner.files.filter(path => path.startsWith(`${row.real}/`)).map(path => view.fileAt(path)).filter(Boolean);
-      return treeRow(t, mod, row, `tree-d-${row.path}`, { focused, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
+      return treeRow(t, mod, row, `tree-d-${row.path}`, { focused, guides, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
         .on_click((_e, cx) => { view.focusPath = null; toggleDir(view, row.path, cx); });
     }
     // A removed file has no box: its slot stays, so the icons line up.
-    if (row.missing) return treeRow(t, mod, row, `tree-m-${row.path}`, { focused, dim: true, struck: true, leading: div().size(16).flex_none() });
+    if (row.missing) return treeRow(t, mod, row, `tree-m-${row.path}`, { focused, guides, dim: true, struck: true, leading: div().size(16).flex_none() });
     const f = view.fileAt(row.path);
     if (!f) return div().id(`tree-f-${row.path}`);
-    return treeRow(t, mod, row, `tree-f-${row.path}`, { selected: view.current === row.path, focused, status: LETTER[f.status] ?? "M", dim: f.reviewed, struck: f.reviewed,
+    return treeRow(t, mod, row, `tree-f-${row.path}`, { selected: view.current === row.path, focused, guides, status: LETTER[f.status] ?? "M", dim: f.reviewed, struck: f.reviewed,
       leading: checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none").id(`tree-check-${row.path}`).role("check_box")
         .accessibility_label(f.reviewed ? `${row.path}: reviewed` : `${row.path}: not reviewed`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(f, !f.reviewed, cx); }) })
       .on_click((_e, cx) => { view.focusPath = null; view.select(row.path, cx); });
   };
-  return treeList(view, TREE, rows, draw);
+  // The indent guides show while the pointer is on the tree, as Files'.
+  return hoverKept(view, "treeHot", "tree", div().id("review-tree").size_full().child(treeList(view, TREE, rows, draw)));
 }
 
 /**

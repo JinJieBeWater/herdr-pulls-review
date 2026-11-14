@@ -5,8 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
-import { button as drawButton } from "./button.js";
-import { glow } from "./tip.js";
+import { ghostButton } from "./button.js";
 
 export const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
 
@@ -66,7 +65,8 @@ export function withNav(t, id, body, { content, head, list, open, inline = false
     .on_hover((on, cx) => { if (!on) end(cx); })
     .child(div().flex_1().min_w(0).h_full().child(content))
     .child(v_flex().id(`${id}-nav`).relative().w(width).flex_none().h_full().border_l(1).border_color(t.border)
-      .child(h_flex().id(`${id}-nav-head`).h(inline ? 36 : 40).when(inline, el => el.mb(4)).flex_none().px(8).gap(4).items_center().when(!inline, el => el.border_b(1).border_color(t.border)).child(head))
+      // 12 in, the panel head's and the page header's edge (t3-tokens「规则」R1).
+      .child(h_flex().id(`${id}-nav-head`).h(inline ? 36 : 40).when(inline, el => el.mb(4)).flex_none().px(12).gap(8).items_center().when(!inline, el => el.border_b(1).border_color(t.border)).child(head))
       .child(div().flex_1().min_h(0).when(!inline, el => el.pt(4)).child(list))
       // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
@@ -81,24 +81,14 @@ export function withNav(t, id, body, { content, head, list, open, inline = false
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); drag = { id, x: e.position.x, from: width, width }; cx.notify(); })));
 }
 
-/** T3's xs ghost icon button, as the toolbars and the column's head have them: 24, a 14 icon, `on` lit, greyed when `disabled`. */
-/** @param {any} t @param {string} mod @param {string} id @param {string} icon @param {string} label @param {any} press @param {{ on?: boolean, disabled?: boolean, view?: any, size?: "xs" | "sm" }} [state] */
-export function ghostButton(t, mod, id, icon, label, press, { on = false, disabled = false, view, size = "xs" } = {}) {
-  return drawButton(t, id, { icon: `${mod}/icons/${icon}.svg`, label, surface: "card", size, on, disabled, hot: view?.hot === id })
-    .when(!disabled, (el) => el
-      .when(Boolean(view), el => el.on_hover(glow(view, id)))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click((_e, cx) => { cx.stop_propagation(); press(cx); }));
-}
-
-/** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. */
-/** @param {any} t @param {string} mod @param {string} id @param {boolean} open @param {any} toggle @param {boolean} [disabled] @param {any} [view] */
-export function navToggle(t, mod, id, open, toggle, disabled = false, view) {
-  return ghostButton(t, mod, id, "folder-tree", open ? "Hide the file tree" : "Show the file tree", toggle, { on: open, disabled, view });
+/** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. As the 40 bar's others: sm, on chrome. */
+/** @param {any} view @param {any} t @param {string} mod @param {string} id @param {boolean} open @param {any} toggle @param {boolean} [disabled] */
+export function navToggle(view, t, mod, id, open, toggle, disabled = false) {
+  return ghostButton(view, t, id, { icon: `${mod}/icons/folder-tree.svg`, label: open ? "Hide the file tree" : "Show the file tree", act: toggle, on: open, disabled, size: "sm", surface: "chrome" });
 }
 
 /** The head's Collapse all / Expand all: `folded` says which it does now. */
-/** @param {any} t @param {string} mod @param {string} id @param {boolean} folded @param {any} press @param {any} [view] */
-export function foldAllButton(t, mod, id, folded, press, view) {
-  return ghostButton(t, mod, id, folded ? "chevrons-up-down" : "chevrons-down-up", folded ? "Expand all" : "Collapse all", press, { view });
+/** @param {any} view @param {any} t @param {string} mod @param {string} id @param {boolean} folded @param {any} press */
+export function foldAllButton(view, t, mod, id, folded, press) {
+  return ghostButton(view, t, id, { icon: `${mod}/icons/${folded ? "chevrons-up-down" : "chevrons-down-up"}.svg`, label: folded ? "Expand all" : "Collapse all", act: press });
 }

@@ -59,10 +59,10 @@ export function groupTabs(view, t, pick) {
     view.tabStats = { review: view.review, marks: view.marks, stats: new Map(groups.map(g => [g.key, groupStats(view, g)])) };
   }
   // Upstream's DiffGroupNavItem in T3's tokens: two lines, the name over its counts, 8 by 2 in, 6 apart, a 1px outline at
-  // radius 8 (T3's outline button) rather than a tab's coloured foot; the row 8 in, on the toolbar's line, ruled off as it is.
+  // radius 8 (T3's outline button) rather than a tab's coloured foot; the row 12 in, on the toolbar's line, ruled off as it is.
   // The group shown is lit at 12%, as the tree's selected row, its icon in its hue; the others fade until hovered.
   return div().id("group-tabs").flex_none().border_b(1).border_color(t.border)
-    .child(h_flex().id("group-tab-row").px(8).py(8).gap(6).overflow_x_scroll().children(groups.map(g => {
+    .child(h_flex().id("group-tab-row").px(12).py(8).gap(6).overflow_x_scroll().children(groups.map(g => {
       const id = `group-tab-${g.key}`, active = g.key === view.groupKey;
       const stats = view.tabStats.stats.get(g.key), critical = g.critical || g.children.some(c => c.critical);
       return hoverKept(view, "hovered", id, h_flex().id(id)).flex_none().px(8).py(2).gap(8).items_center().rounded(8).border(1).border_color(t.border)

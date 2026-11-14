@@ -1,6 +1,6 @@
 // The one way a popup's list moves. scripts/sync.sh copies this to the mods that use it.
 import { div } from "gpui-kit";
-import { settings } from "herdr";
+import { settings, props, closeOverlay } from "herdr";
 
 // ↑/↓, round the ends; with nothing lit, ↓ is the first row and ↑ the last. The row to move to, or -1 for any other key.
 export function step(e, at, n) {
@@ -26,6 +26,13 @@ export function menuJump(view, e, labels, at) {
   }
   return -1;
 }
+
+// The on_hover of row `i`, its highlight kept in `state[key]` (-1: none): lit while the pointer's on it, as T3's menus. Herdr can
+// report a leave after the next row's enter; that leave doesn't unlight the row the pointer is on now.
+export const litOnHover = (state, key, i) => (on, cx) => {
+  const to = on ? i : state[key] === i ? -1 : state[key];
+  if (to !== state[key]) { state[key] = to; cx.notify(); }
+};
 
 // A list that keeps the highlight in view: a scroll area can't be told to scroll, and a virtual list's rows can't hold handlers.
 // Every row is `row` px apart and only those in view are drawn. `at`: the highlighted row, or -1 if it's not in this list.
@@ -63,4 +70,19 @@ export function scrollList(view, id, { count, row, at = -1, height, draw, wheele
       cx.notify();
     })
     .children(rows);
+}
+
+/** A popup menu's keys, as T3's Base UI menus: ↑/↓, Home, End and typing move (menuJump); Enter or Space picks
+ *  `choose(at, cx)`; Escape closes the popup. `labels` the rows' words; `view.at` the lit row. */
+export function menuKeys(view, labels, choose) {
+  return (e, cx) => {
+    if (e.key === "escape") closeOverlay(props().overlay);
+    else if (e.key === "enter" || e.key === "space") { if (view.at >= 0) choose(view.at, cx); }
+    else {
+      const to = labels.length ? menuJump(view, e, labels, view.at) : -1;
+      if (to < 0) return;
+      view.at = to;
+    }
+    cx.stop_propagation(); cx.notify();
+  };
 }

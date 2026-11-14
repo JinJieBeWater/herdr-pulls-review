@@ -9,8 +9,10 @@ function source(file, seen = new Set(file === "main.js" ? ["rows.js", "daemon.js
   if (seen.has(file)) return "";
   seen.add(file);
   const src = fs.readFileSync(path.join(__dirname, file), "utf8");
-  if (file === "button.js") return "const drawButton = (() => {\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn button;\n})();";
+  if (file === "button.js") return "const { drawButton, ghostButton } = (() => {\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { drawButton: button, ghostButton };\n})();";
   const needs = [...src.matchAll(/^import [^;]*? from "\.\/(.+?)";/gm)].map(m => source(m[1], seen)).join("\n");
+  // Its `button` is button.js's, not controls.js's of the same name.
+  if (file === "trigger.js") return needs + "\nconst { trigger, opener, popupOpen } = (() => { const button = drawButton;\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { trigger, opener, popupOpen };\n})();";
   return needs + "\n" + src;
 }
 
@@ -236,7 +238,7 @@ const element = (named = null) => {
     : function (...args) { if (id) (styles[id] ??= {})[key] = args[0] ?? true; return this; } });
   return el;
 };
-const press = (id) => { handlers.get(`${id}.on_click`)({}, cx); drawn.clear(); pane.render(cx); };
+const press = (id) => { assert.ok(handlers.get(`${id}.on_click`), id); handlers.get(`${id}.on_click`)({}, cx); drawn.clear(); pane.render(cx); };
 const sharedStore = new Map();
 const pref = (key) => sharedStore.get("review.prefs")?.[key], setPref = (key, value) => sharedStore.set("review.prefs", { ...sharedStore.get("review.prefs"), [key]: value });
 // The page the panel shows, and the space that is active: s1 and s2 here, r1 on another machine.
@@ -256,13 +258,14 @@ const refField = { ...field, events: {}, focus() { keyboard = "refs"; } };
 // The page's own localStorage: whether its file tree's column is open.
 const local = new Map();
 const env = {
-  agents: () => [],
+  agents: () => [], focused: () => null, panes: () => [],
   localStorage: { getItem: (k) => local.get(k) ?? null, setItem: (k, v) => local.set(k, String(v)), removeItem: (k) => local.delete(k) },
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element, h_resizable: element, resizable_panel: element, Scrollbar: { vertical: element },
   Switch: { new: element }, settings: () => ({ zoom: 1 }),
   // tip.js's own; its watch on the pointer is checked in t3-spaces/check-sidebar.cjs.
   hoverKept: (view, key, id, el) => el.on_hover((on) => { if (on) view[key] = id; else if (view[key] === id) view[key] = null; }),
   glow: (view, id) => (on, cx) => { if (on) view.hot = id; else if (view.hot === id) view.hot = null; cx?.notify?.(); },
+  tip: (_view, _t, _id, _label, el) => el,
   // Paths build into nothing here; painting one is an element like any other.
   PathBuilder: (() => { const chain = new Proxy({}, { get: () => () => chain }); return { stroke: () => chain, fill: () => chain }; })(),
   window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }), exec: (...args) => { browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search" ? scopeField : options.placeholder === "Search refs" ? refField : field },
@@ -307,10 +310,9 @@ const icons = [
   ...vm.runInContext("FOLDS", mainScope).map(({ icon }) => `icons/${icon}`),
 ];
 for (const icon of icons) assert.ok(fs.existsSync(path.join(__dirname, `${icon}.svg`)), `icon on disk: ${icon}`);
-// File and folder icons are the Files page's (file-icons.js, checked with t3-files); here, that what the review draws is on disk.
-for (const icon of ["a/b.vue", "x.test.ts", "package.json", "Makefile", "noext"].map(p => vm.runInContext(`fileIcon(${JSON.stringify(p)})`, mainScope))
-  .concat(["packages/cli/src", "whatever"].map(n => vm.runInContext(`folderIcon(${JSON.stringify(n)})`, mainScope)))) assert.ok(fs.existsSync(path.join(__dirname, icon)), `icon on disk: ${icon}`);
-assert.equal(vm.runInContext('fileIcon("a/b.vue")', mainScope), "icons/cat/vue.svg");
+// File and folder icons are the Files page's (pierre-icons.js, file-tree.js): what the review draws is on disk.
+for (const icon of ["a/b.vue", "x.test.ts", "package.json", "Makefile", "noext"].map(p => `icons/pierre/${vm.runInContext(`pierreIconFile(${JSON.stringify(p)})`, mainScope)}.svg`)
+  .concat(["icons/tree/folder.svg", "icons/tree/folder-open.svg"])) assert.ok(fs.existsSync(path.join(__dirname, icon)), `icon on disk: ${icon}`);
 // A category icon is grey until lit, as the app's saturate-0: its hue's luminance.
 assert.equal(vm.runInContext('grey("#ff0000")', mainScope), "#363636");
 // A run's progress names the files it reads, not their paths.
@@ -400,7 +402,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(pane.head().parts.length, 3);
   pane.review.analysis = { state: "outdated", agent: true }; assert.equal(analyzeButton().note, "(outdated)");
   pane.review.analysis = { state: "running", agent: true, progress: { kind: "thinking", step: 1 } };
-  pane.render(cx); pane.popupClosedAt = 0; press("analyze");
+  pane.render(cx); press("analyze");
   assert.ok(drawn.has("review-status-panel") && !drawn.has("rerun"));
   pane.review.analysis = { state: "current", agent: true, error: "boom" }; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("review-status-panel") && drawn.has("rerun"));
@@ -423,7 +425,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // Nor does the next run bring it back, or take a press on "Analyzing…" to close it unseen.
   pane.review.analysis = { state: "running", agent: true }; drawn.clear(); pane.render(cx);
   assert.ok(!drawn.has("review-status-panel"), "not unasked");
-  pane.popupClosedAt = 0; press("analyze");
+  press("analyze");
   assert.ok(drawn.has("review-status-panel"), "the first press opens it");
   pane.key({ keystroke: "escape" }, cx);
   assert.ok(pane.popup !== "status");
@@ -487,7 +489,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   const toTop = []; pane.scrollToTop = (i) => toTop.push(i); press("tree-g-k"); delete pane.scrollToTop;
   assert.deepEqual(toTop, [subAt]);
   pane.visible = null;
-  pane.popupClosedAt = 0; press("settings");
+  press("settings");
   assert.ok(!drawn.has("groups-sidebar") && !drawn.has("groups-tabs"), "no Groups setting");
   // The settings credit pulls.review and its author, and the fork and its author, each a link.
   assert.ok(["credit-upstream", "credit-antfu", "credit-fork", "credit-jinjie"].every(id => drawn.has(id)));
@@ -495,7 +497,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.deepEqual(plain(browsed), [["open", ["https://github.com/JinJieBeWater/pulls.review"]]]);
   // Where a review opens isn't a setting: it's the panel's page.
   assert.ok(!drawn.has("open-tab") && !drawn.has("open-pane"));
-  pane.closePopup(cx); pane.popupClosedAt = 0; drawn.clear(); pane.render(cx);
+  pane.closePopup(cx); drawn.clear(); pane.render(cx);
   // The switch at the header's end closes the column and opens it again, kept in the page's own localStorage.
   assert.ok(before("settings", "review-nav-toggle"), "last in the header");
   press("review-nav-toggle");
@@ -525,9 +527,9 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.visible = null;
   // The files are always a tree, as T3's: no Tree/List setting, and the header holds no view toggles.
   assert.ok(!drawn.has("file-list") && !drawn.has("layout"));
-  pane.popupClosedAt = 0; press("settings");
+  press("settings");
   assert.ok(drawn.has("view-unified") && !drawn.has("files-list") && !drawn.has("files-tree"));
-  pane.closePopup(cx); pane.popupClosedAt = 0;
+  pane.closePopup(cx);
   // The tree's one selected row is the file in front, set by a click; the keys move a ring from it, ↵ shows the file it's on.
   pane.visible = null; drawn.clear(); pane.render(cx);
   pane.current = null; pane.render(cx);
@@ -551,7 +553,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.key({ keystroke: "right" }, cx); drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("tree-f-c.ts"));
   pane.focusPath = null;
-  // The reviewed box leads the row, after the chevron's slot and before the icon (asserted on the row in shared/check-file-tree.cjs).
+  // The reviewed box leads the row, before the icon, in Files' row (asserted in shared/check-file-tree.cjs).
   // Review's diff tree has no context menu (ADR 0017); reviewed boxes remain the direct action.
   handlers.get("tree-g-k.on_mouse_down")?.();
   assert.equal(pane.menuFor ?? null, null, "a group's row has no menu");
@@ -849,10 +851,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     sharedStore.set("review", saved); sharedStore.set("review.shown", shown);
   }
   // The settings panel closes on a press outside it or Escape; the gear's own press, which is outside too, doesn't reopen it.
+  handlers.get("settings.on_mouse_down")({ bounds: null }, cx);
   handlers.get("review-settings-panel.on_mouse_down_out")({}, cx);
   press("settings");
   assert.ok(pane.popup !== "settings" && !drawn.has("review-settings-panel"));
-  pane.popupClosedAt = 0; press("settings");
+  press("settings");
   assert.ok(pane.popup === "settings");
   pane.key({ keystroke: "escape" }, cx);
   assert.ok(pane.popup !== "settings");
@@ -866,7 +869,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(pref("split"), false);
   press("view-unified");
   assert.equal(pref("split"), false);
-  pane.closePopup(cx); pane.popupClosedAt = 0;
+  pane.closePopup(cx);
   // Every pane reads the shared preferences where it uses them: a new one starts from them, and a choice in one holds in all at once.
   const secondPanel = new (load("main.js", { ...env }).Mod)();
   secondPanel.init({}, cx); secondPanel.render(cx); await new Promise(setImmediate);
@@ -925,7 +928,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     // once, from a known run of text.
     const hunk = pane.review.files[0].hunks[0], kept = hunk.rows[2], long = hunk.rows[2] = { ...kept, columns: undefined, tokens: [["x".repeat(300)]] }; // new tokens, so not the old row's measure
     assert.ok(local.get("lines.wrap") !== "false" && pane.wrapCols, "wrapped by default");
-    pane.popupClosedAt = 0; press("settings");
+    press("settings");
     assert.ok(drawn.has("lines-scroll") && drawn.has("lines-wrap") && styles["lines-scroll"].accessibility_label === "Lines: Scroll");
     press("lines-scroll");
     assert.ok(local.get("lines.wrap") === "false" && sharedStore.get("t3.wrap") === undefined, "Files' choice untouched");
@@ -965,7 +968,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
       assert.equal(longSize(), rows(900), "cut at the width it held");
       pane.wrapHold = {}; setPref("split", true);
     }
-    pane.popupClosedAt = 0; press("settings"); press("lines-scroll"); pane.closePopup(cx);
+    press("settings"); press("lines-scroll"); pane.closePopup(cx);
     assert.equal(local.get("lines.wrap"), "false");
     assert.equal(sizeAt(1000), 40);
     hunk.rows[2] = kept; pane.version++; drawn.clear(); pane.render(cx);
@@ -1015,10 +1018,10 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     if (args.includes("for-each-ref")) return { code: 0, stdout: `other\x1fadd other\x1f${now - 3600}\x1fB\x1f\x1f\x1f\x1f3 0\n` };
     return { code: 128, stdout: "" };
   };
-  // As T3's DiffPanel header: the scope as an xs button, then what it compares, head → base; narrow, only the base.
+  // As T3's DiffPanel header: the scope as a button the size of the bar's others, then what it compares, head → base; narrow, only the base.
   pane.width = 1200; draw();
   assert.equal(texts.get("review-scope-label"), "Changes");
-  assert.ok(styles["review-scope"].h === 24 && styles["review-scope"].min_w === 0 && styles["review-scope"].flex_shrink === 1 && styles["review-scope-label"].truncate);
+  assert.ok(styles["review-scope"].h === 28 && styles["review-scope"].min_w === 0 && styles["review-scope"].flex_shrink === 1 && styles["review-scope-label"].truncate);
   // A ghost button, as the toolbar's others (docs/adr/0013): no fill of its own over the toolbar's, only hovered or open.
   assert.equal(styles["review-scope"].bg, undefined);
   assert.equal(styles["review-scope"].text_color, "#eeeeee", "what it shows, in foreground: a plain button, as T3's ghost");
@@ -1033,30 +1036,30 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // The menu: Changes, Uncommitted, Outgoing and Incoming with their counts, read on opening; then Commits.
   press("review-scope");
   assert.ok(pane.popup === "scope" && drawn.has("review-scope-menu"));
-  assert.equal(styles["review-scope"].bg, "#eeeeee1f", "open: a card-surface selected tint");
+  assert.equal(styles["review-scope"].bg, "#ffffff17", "open: the bar's on fill, chrome's selected, as the panel head's");
   await settled(); await settled(); draw();
   assert.ok(!gitCalls.some(args => args.some(a => /^(fetch|add|commit|checkout|reset|push)$/.test(a)) && !args.includes("-N")), "only reads");
-  assert.deepEqual(["scope-changes", "scope-uncommitted", "scope-push", "scope-pull"].map(id => texts.get(`${id}-detail`)), ["2 ahead of main", "1 file", "↑2", "↓0"]);
+  assert.deepEqual(["scope-changes", "scope-uncommitted", "scope-push", "scope-pull"].map(id => texts.get(`${id}-detail`)), ["2 commits", "1 file", "2 commits", "0 commits"]);
+  assert.equal(pane.scopeAt, -1, "nothing lit on opening, as T3's menus");
   assert.equal(styles["review-scope-menu"].w, 320);
   assert.ok(styles["scope-changes"].h === 28 && styles["scope-changes"].rounded === 4 && styles["review-scope-menu"].rounded === 8);
   assert.ok(styles["scope-changes"].accessibility_label.endsWith(", shown") && !styles["scope-uncommitted"].accessibility_label.endsWith(", shown"));
   // Nothing to pull: greyed, kept, and a press does nothing.
   assert.ok(styles["scope-pull"].opacity < 1 && !(styles["scope-push"].opacity < 1));
-  sharedStore.delete("review"); press("scope-pull");
-  assert.ok(pane.popup === "scope" && !sharedStore.get("review"));
+  assert.ok(!handlers.has("scope-pull.on_click"), "an empty range can't be picked");
   // Commits, a submenu right of the menu, which stays, as T3's: the branch's commits, newest first, with their age, short sha
   // and ↑ for unpushed; its first row level with Commits (5 above it), its search on top, no back row.
   delete styles["scope-commits"];
   press("scope-commits");
   assert.ok(pane.scopePage === "commits" && keyboard === "scope" && !drawn.has("scope-back") && drawn.has("review-scope-sub") && drawn.has("scope-changes"));
   assert.ok(styles["review-scope-menu"].w === 320 && styles["review-scope-sub"].w === 384 && styles["scope-commits"].bg);
-  assert.deepEqual([styles["review-sub-at"].left, styles["review-sub-at"].top], [16 + 320 - 5, 36 + 5 + 4 * 28 + 9 - 5]);
+  assert.deepEqual([styles["review-sub-at"].left, styles["review-sub-at"].top], [12 + 320 - 5, 38 + 5 + 4 * 28 + 9 - 5]);
   // A press in the submenu isn't outside the menu; one past both closes them.
   handlers.get("review-scope-menu.on_mouse_down_out")({ position: { x: 500, y: 200 } }, cx);
   assert.equal(pane.popup, "scope");
   handlers.get("review-scope-menu.on_mouse_down_out")({ position: { x: 1000, y: 500 } }, cx);
   assert.equal(pane.popup, null);
-  pane.popupClosedAt = 0; press("review-scope"); press("scope-commits");
+  press("review-scope"); press("scope-commits");
   assert.ok(drawn.has("scope-commit-c2") && drawn.has("scope-commit-c1"));
   assert.ok(styles["scope-commit-c2"].accessibility_label.endsWith(", not pushed") && !styles["scope-commit-c1"].accessibility_label.includes("not pushed"));
   // A commit row is its subject and age; the sha only matters once picked, in the header.
@@ -1119,7 +1122,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.page = "/commit/c2";
   assert.ok(!routes.includes("/api/review/analyze"), "a commit's pick and stepping start no run");
   // A radio row asks as the Review bar's count does: the page, analyzed if the setting says so.
-  pane.popupClosedAt = 0; press("review-scope"); await settled(); draw();
+  press("review-scope"); await settled(); draw();
   assert.ok(!styles["scope-changes"].accessibility_label.endsWith(", shown"), "a commit is none of the radios");
   press("scope-changes"); await settled(); draw();
   assert.deepEqual(plain(sharedStore.get("review")), { space: "s1", root: "/repo", page: base, n: sharedStore.get("review").n, analyze: true });
@@ -1128,7 +1131,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(!drawn.has("scope-branches"));
   // On Changes the base is T3's comparison-target picker: Automatic, then each local branch with its origin remote, a switch
   // between the two; a remote-only one checked; the head itself left out.
-  routes.length = 0; pane.popupClosedAt = 0; press("review-base"); await settled(); await settled(); draw();
+  routes.length = 0; press("review-base"); await settled(); await settled(); draw();
   assert.ok(pane.popup === "base" && keyboard === "refs" && styles["review-base-menu"].w === 288);
   assert.deepEqual(["base-auto", "base-main", "base-other", "base-origin/fix", "base-origin/dev"].map(id => drawn.has(id)), [true, true, true, true, true]);
   assert.deepEqual([...drawn].filter(id => ["base-auto", "base-main", "base-other"].includes(id)), ["base-auto", "base-main", "base-other"], "the default branch first, as T3's, though other was committed to later");
@@ -1148,12 +1151,12 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(pane.popup === null && keyboard === "pane" && sharedStore.get("review").page === "/compare/origin/dev...fix" && sharedStore.get("review.bases").s1 === "origin/dev");
   assert.ok(!routes.includes("/api/review/analyze"), "nor a base's");
   // The space keeps it: Changes counts against it and opens there, and Commits lists what's past it.
-  pane.popupClosedAt = 0; gitCalls.length = 0; press("review-scope"); await settled(); await settled(); draw();
-  assert.ok(texts.get("scope-changes-detail") === "5 ahead of origin/dev" && styles["scope-changes"].accessibility_label.endsWith(", shown"));
+  gitCalls.length = 0; press("review-scope"); await settled(); await settled(); draw();
+  assert.ok(texts.get("scope-changes-detail") === "5 commits" && styles["scope-changes"].accessibility_label.endsWith(", shown"));
   assert.ok(gitCalls.some(args => args.includes("log") && args.includes("origin/dev..HEAD")));
   pane.key({ keystroke: "escape" }, cx);
   // `review.base`, for a key or `herdr-app do`, opens it on the base picked; Automatic goes back to the default branch.
-  pane.popupClosedAt = 0; send("base"); await settled(); await settled(); draw();
+  send("base"); await settled(); await settled(); draw();
   assert.ok(pane.popup === "base" && keyboard === "refs" && pane.baseAt === 4);
   pane.key({ key: "down" }, cx); assert.equal(pane.baseAt, 0, "round the end");
   press("base-auto"); await settled(); draw();
@@ -1169,21 +1172,21 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   }
   pane.page = base;
   // The keyboard on the menu's first page: ↑/↓ and Enter, as T3's menu; a narrow pane narrows the popover.
-  pane.popupClosedAt = 0; press("review-scope"); await settled();
-  pane.key({ key: "down" }, cx); pane.key({ key: "enter" }, cx); await settled();
+  press("review-scope"); await settled();
+  pane.key({ key: "down" }, cx); pane.key({ key: "down" }, cx); pane.key({ key: "enter" }, cx); await settled();
   assert.equal(sharedStore.get("review").page, "/worktree");
-  pane.popupClosedAt = 0; pane.width = 300; press("review-scope");
+  pane.width = 300; press("review-scope");
   assert.equal(styles["review-scope-menu"].w, 268);
   press("scope-commits");
   assert.ok(styles["review-sub-at"].left >= 0 && styles["review-sub-at"].left + styles["review-scope-sub"].w <= 300, "narrow, kept inside the pane");
   pane.key({ keystroke: "escape" }, cx); pane.key({ keystroke: "escape" }, cx);
   // Short of 384 right of the menu, narrower down to 260 rather than over the menu.
-  pane.popupClosedAt = 0; pane.width = 620; press("review-scope"); press("scope-commits");
-  assert.deepEqual([styles["review-sub-at"].left, styles["review-scope-sub"].w], [16 + 320 - 5, 620 - 8 - (16 + 320 - 5)]);
+  pane.width = 620; press("review-scope"); press("scope-commits");
+  assert.deepEqual([styles["review-sub-at"].left, styles["review-scope-sub"].w], [12 + 320 - 5, 620 - 8 - (12 + 320 - 5)]);
   pane.key({ keystroke: "escape" }, cx);
   pane.key({ keystroke: "escape" }, cx); pane.width = 1200;
   // `review.scope`, for a key or `herdr-app do`: the menu, as its button toggles it; `scope:commits` on that page.
-  pane.popupClosedAt = 0; send("scope"); await settled(); draw();
+  send("scope"); await settled(); draw();
   assert.ok(pane.popup === "scope" && pane.scopePage === null && drawn.has("review-scope-menu"));
   send("scope"); await settled();
   assert.equal(pane.popup, null);
@@ -1214,9 +1217,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   }
   // One popup at a time: a press on another's button closes the open one (a press outside it) and opens its own at once;
   // a press on the open one's own button only closes it.
-  pane.popupClosedAt = 0; press("settings");
+  press("settings");
+  handlers.get("fold-menu.on_mouse_down")({ bounds: null }, cx);
   handlers.get("review-settings-panel.on_mouse_down_out")({}, cx); press("fold-menu");
   assert.equal(pane.popup, "fold");
+  handlers.get("fold-menu.on_mouse_down")({ bounds: null }, cx);
   handlers.get("review-fold-menu.on_mouse_down_out")({}, cx); press("fold-menu");
   assert.equal(pane.popup, null);
   // The review's own header counts reviewed files, in words: no donut.
@@ -1323,7 +1328,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   pane.width = 900; pane.review.files[0].test = true; drawn.clear(); pane.render(cx);
   // The stub list draws from the top on every render: the range a test sets goes in after the menu opens.
   const fold = (id, at = null) => {
-    pane.popupClosedAt = 0; press("fold-menu"); assert.ok(drawn.has("review-fold-menu"));
+    press("fold-menu"); assert.ok(drawn.has("review-fold-menu"));
     if (at !== null) pane.visible = { start: at, end: at + 2 };
     press(`fold-${id}`); assert.ok(!drawn.has("review-fold-menu"));
   };
@@ -1334,24 +1339,23 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     // By keys, as a menu. While it's up, the pane's shortcuts are out of reach; so they are under the status.
     const hit = (key, char) => pane.key({ key, keystroke: key, key_char: char }, cx);
     const split = pref("split"), current = pane.current;
-    pane.popupClosedAt = 0; press("fold-menu");
+    press("fold-menu");
     hit("s", "s"); hit("j", "j");
     assert.deepEqual([pref("split"), pane.current, pane.popup], [split, current, "fold"]);
     hit("end"); assert.equal(pane.foldAt, 3);
     hit("home"); assert.equal(pane.foldAt, 0);
     hit("enter"); assert.equal(pane.popup, null, "Expand all, the row lit");
-    pane.popupClosedAt = 0; press("fold-menu");
+    press("fold-menu");
     assert.equal(pane.foldAt, -1, "nothing lit on opening");
     hit("enter"); assert.equal(pane.popup, "fold", "so Enter picks nothing");
     handlers.get("fold-collapse-all.on_hover")(true, cx); assert.equal(pane.foldAt, 1, "the pointer lights its row");
     hit("space"); assert.equal(shut().length, pane.review.files.length);
-    pane.popupClosedAt = 0; press("fold-menu"); pane.typedAt = -Infinity; hit("c", "c"); assert.equal(pane.foldAt, 1, "typing");
+    press("fold-menu"); pane.typedAt = -Infinity; hit("c", "c"); assert.equal(pane.foldAt, 1, "typing");
     pane.key({ keystroke: "escape" }, cx); assert.equal(pane.popup, null);
     fold("expand-all");
     pane.popup = "status"; hit("s", "s");
     assert.equal(pref("split"), split);
     pane.key({ keystroke: "escape" }, cx); assert.equal(pane.popup, null);
-    pane.popupClosedAt = 0;
   }
   const cRow = pane.itemList.findIndex(item => item.key.startsWith("r:c.ts"));
   calls.length = 0; timers.length = 0;
@@ -1676,11 +1680,11 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(p.review.groups.length === 3 && drawn.has("group-tab-row") && order("group-tab-x", "group-tab-y"));
     assert.ok(order("review-header", "group-tab-row") && order("group-tab-row", "review-diff-area") && order("group-tab-row", "review-nav"), "under the toolbar, across the page");
     assert.ok(styles["group-tab-x"].bg === "#eeeeee1f" && styles["group-tab-y"].bg === undefined, "the group shown, lit");
-    // Upstream's proportions in T3's tokens: two lines, 8 by 2 in, 6 apart, a 1px outline at radius 8; the row 8 in, on the
+    // Upstream's proportions in T3's tokens: two lines, 8 by 2 in, 6 apart, a 1px outline at radius 8; the row 12 in, on the
     // toolbar's line. Only the group shown has a fill.
-    assert.deepEqual([styles["group-tab-row"].px, styles["group-tab-row"].py, styles["group-tab-row"].gap], [8, 8, 6]);
+    assert.deepEqual([styles["group-tab-row"].px, styles["group-tab-row"].py, styles["group-tab-row"].gap], [12, 8, 6]);
     assert.deepEqual([styles["group-tab-x"].px, styles["group-tab-x"].py, styles["group-tab-x"].rounded, styles["group-tab-x"].border], [8, 2, 8, 1]);
-    assert.equal(styles["review-header"].px, 8);
+    assert.equal(styles["review-header"].px, styles["group-tab-row"].px, "the tabs on the toolbar's edge");
     assert.equal(styles["group-tab-x"].text_size, 12);
     assert.equal(texts.get("group-tab-y-count"), "・1 file");
     assert.equal(texts.get("group-tab-z-count"), "1 file", "no lines to count, no separator before the files");
@@ -2067,22 +2071,87 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
       exec: async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "main\n" }),
     });
     sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: "first" }], active: "review" } });
-    sharedStore.set("review.shown", { [sp.id]: { root: "/repo", page: "/commit/closed-range" } });
+    sharedStore.set("review.shown", { [sp.id]: { root: "/repo", page: "/commit/closed-range", born: "first" } });
     const view = new scope.Mod(); view.init({}, cx);
     const draw = async () => { view.render(cx); await wait(); view.render(cx); await wait(); };
     await draw(); const old = view.bySpace.get(sp.id);
     assert.ok(old.review); hold = true; old.load(cx); await wait();
     vm.runInContext("closeSurface()", scope); view.render(cx); await wait();
-    assert.equal(sharedStore.get("review.shown")[sp.id], undefined);
     release(); await wait();
     assert.equal(old.review, null, "late data is released before the lifecycle timer");
     assert.equal(old.scroll, null);
-    old.publish(); assert.equal(sharedStore.get("review.shown")[sp.id], undefined, "a closed range cannot be republished");
+    const kept = JSON.stringify(sharedStore.get("review.shown"));
+    old.publish(); assert.equal(JSON.stringify(sharedStore.get("review.shown")), kept, "a closed range cannot be republished");
     hold = false; vm.runInContext("showPage('review')", scope); await draw();
     assert.notEqual(view.bySpace.get(sp.id), old);
     assert.notEqual(view.bySpace.get(sp.id).page, "/commit/closed-range", "re-add uses the default range");
     if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
     sharedStore.set("review.shown", wasShown);
+  }
+  {
+    // Review reads where the tab works, as T3's diff panel follows its thread: the space folder isn't a repository, the tab's
+    // terminal is in one. Its tab closed and added again, a request for the closed one isn't taken up.
+    const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown"), wasAsk = sharedStore.get("review");
+    const sp = { id: "cwd-test", active: true, folder: "/space", machine: null, tabs: [{ id: "tab", active: true }] };
+    const scope = load("main.js", { ...env, spaces: () => [sp],
+      focused: () => ({ space: sp.id, tab: "tab", terminal: "t9" }), panes: () => [{ tab: "tab", terminal: "t9", cwd: "/work/repo/sub" }],
+      layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "review", "panel-empty"].map(id => ({ id })) }] }] }),
+      review: async () => structuredClone(review),
+      exec: async (_cmd, args, { cwd }) => args.includes("--show-toplevel") ? (cwd.startsWith("/work/repo") ? { code: 0, stdout: "/work/repo\n" } : { code: 128, stdout: "" }) : { code: 0, stdout: "main\n" },
+    });
+    sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: 1 }], active: "review" } });
+    sharedStore.set("review.shown", {});
+    const view = new scope.Mod(); view.init({}, cx);
+    const draw = async () => { view.render(cx); await wait(); view.render(cx); await wait(); };
+    await draw();
+    assert.equal(view.bySpace.get(sp.id).root, "/work/repo", "the terminal's repository, not the space folder");
+    assert.equal(view.bySpace.get(sp.id).noRepo, false);
+    sharedStore.set("review", { space: sp.id, root: "/elsewhere", page: "/worktree", n: Date.now(), born: 1 });
+    sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: 2 }], active: "review" } });
+    await draw();
+    assert.equal(view.bySpace.get(sp.id).root, "/work/repo", "a request for the closed tab isn't the new one's");
+    if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
+    sharedStore.set("review.shown", wasShown); sharedStore.set("review", wasAsk ?? null);
+  }
+  {
+    // In this layout's panel, a range picked in the page's own scope menu names its tab (born), so the page takes it up.
+    const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown"), wasAsk = sharedStore.get("review");
+    const sp = { id: "own-pick", active: true, folder: "/repo", machine: null, tabs: [] };
+    const scope = load("main.js", { ...env, spaces: () => [sp],
+      layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "review", "panel-empty"].map(id => ({ id })) }] }] }),
+      review: async () => structuredClone(review),
+      exec: async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "main\n" }),
+    });
+    sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: 7 }], active: "review" } });
+    sharedStore.set("review.shown", {});
+    const view = new scope.Mod(); view.init({}, cx);
+    const draw = async () => { view.render(cx); await wait(); view.render(cx); await wait(); };
+    await draw();
+    const s = view.bySpace.get(sp.id);
+    assert.notEqual(s.page, "/worktree");
+    scope.__s = s; scope.__cx = cx;
+    vm.runInContext("pickScopeRow(__s, { count: 1, page: '/worktree' }, __cx)", scope);
+    await draw();
+    assert.equal(s.page, "/worktree", "the page's own pick is taken up");
+    if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
+    sharedStore.set("review.shown", wasShown); sharedStore.set("review", wasAsk ?? null);
+  }
+  {
+    // Herdr's own layout docks Review in its stack, with no tabs: a request, as stored (born null), is taken up.
+    const wasAsk = sharedStore.get("review"), wasShown = sharedStore.get("review.shown");
+    const sp = { id: "host-test", active: true, folder: "/repo", machine: null, tabs: [] };
+    const scope = load("main.js", { ...env, spaces: () => [sp],
+      layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "changes", "review"].map(id => ({ id })) }] }] }),
+      review: async () => structuredClone(review),
+      exec: async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "main\n" }),
+    });
+    sharedStore.set("review.shown", {});
+    sharedStore.set("review", JSON.parse(JSON.stringify({ space: sp.id, root: "/repo", page: "/worktree", n: Date.now(), born: undefined, analyze: false })));
+    sharedStore.set("review", { ...sharedStore.get("review"), born: null });
+    const view = new scope.Mod(); view.init({}, cx);
+    view.render(cx); await wait(); view.render(cx); await wait();
+    assert.equal(view.bySpace.get(sp.id).page, "/worktree", "a request with no tab to name is the host stack's");
+    sharedStore.set("review", wasAsk ?? null); sharedStore.set("review.shown", wasShown);
   }
   {
     // Analyze pressed, the daemon not saying it runs yet, and the space evicted at once: the status poll still follows the run

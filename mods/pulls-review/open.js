@@ -1,10 +1,10 @@
 // Where a review opens, and opening it: `open` in this folder's config.json picks the fork's daemon (in a Herdr pane, the
 // installed app or the browser) or the official CLI.
 
-import { spaces, exec, hc, window, notify, closeOverlay, shared, setShared, appHome, readTextFile } from "herdr";
+import { spaces, exec, hc, window, notify, closeOverlay, appHome, readTextFile } from "herdr";
 import { reviewLocation } from "./bar.js";
 import { argPage, changedFiles, git } from "./review-git.js";
-import { showPage } from "./panel.js";
+import { showPage, reviewRequest } from "./panel.js";
 
 // `open` in this folder's config.json, which the person creates; none means "herdr" (see mods/README.md):
 // "herdr":    the fork's daemon, drawn in the review page of the window's panel (the review mod).
@@ -74,8 +74,8 @@ function herdr(root, page, analyze, space) {
   if (activeSpace() !== space) return;
   if (page === "/") throw new Error("Nothing to review on the default branch: pick a diff in the Review bar.");
   // The review takes only a number past the last it handled: past the last sent, as its own switch's, though the clock go back.
-  setShared(PANE, { space, root, page, n: Math.max(Date.now(), (shared(PANE)?.n ?? 0) + 1), analyze: Boolean(analyze) });
   if (!showPage(PANE)) throw new Error("This layout's panel has no review page: add the review block to its panel-body stack.");
+  reviewRequest(space, root, page, { analyze });
 }
 
 // Opens a review: `{ root, args, page, analyze }` from the Review bar for one diff (analyzed by AI in the fork), its menu's

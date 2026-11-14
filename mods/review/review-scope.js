@@ -1,15 +1,19 @@
 // What the review compares, as T3's DiffPanel header shows it: a scope button naming it, what it compares (`head → base`),
-// a commit's short sha with ‹ › through its diff's commits, the scope menu, and the base picker. The menu's counts, commits,
-// and bases use a short-lived git snapshot (review-git.js, read-only, as the Review bar's); a pick is a request as
-// the bar's count's.
+// a commit's short sha with ‹ › through its diff's commits, the scope menu, and the base picker. The menu's counts, commits
+// and bases are read afresh at each opening (review-git.js, read-only, as the Review bar's); a read for a menu since closed or
+// moved on is dropped. A view drawing the menu supplies two methods: `pick(page, { analyze, base, stays }, cx)` asks for that
+// range (the Review page and Details each ask their own way, panel.js reviewRequest), and `openCommits(cx, lit)` opens the
+// Commits submenu where that view puts it.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { scrollList, step, menuJump } from "./list.js";
 import { git, readReview, readPicks, readRefs, argPage } from "./review-git.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
-import { PANE, scopeIcons, COMPACT, MODEL_ROW, iconButton, pickMark, searchField, popover, toPane, subState, subAt } from "./review-menu.js";
-import { button as drawButton } from "./button.js";
+import { PANE, LU, COMPACT, MODEL_ROW, pickMark, searchField, popover, toPane, subState, subAt, popupClosed } from "./review-menu.js";
+import { opener } from "./trigger.js";
+import { button as drawButton, ghostButton } from "./button.js";
+import { menuRow, menuRule } from "./menu-row.js";
 import { glow } from "./tip.js";
 
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -31,14 +35,13 @@ export const chosenBase = (view) => shared(BASES)?.[view.space] ?? null;
 export const changesPage = (base, head) => base ? argPage([`${base}...${head}`]) : argPage([], head);
 
 // As T3's disabled menu items: there, greyed, inert.
-const GREYED = 0.5;
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 // The diff's commits, oldest first: on one commit's page, still its base's.
 export function diffCommits(view) { return view.baseCommits ?? (view.switching ? null : view.review?.commits) ?? []; }
 
-// The last read of this review's repository, while it's the one shown.
-const repo = (view) => (view.scopeDataSource ? view.scopeDataSource === scopeSource(view) : view.scopeGit?.root === view.root) ? view.scopeGit : null;
+// The last read of this review's repository, against the base picked now.
+const repo = (view) => view.scopeRoot === view.root && view.scopeBase === chosenBase(view) ? view.scopeGit : null;
 
 /** What the page shown compares: its kind, the button's words, and for a branch's diff its head and base. */
 export function scopeOf(view) {
@@ -60,77 +63,44 @@ export function scopeOf(view) {
   return { kind: "other", label: value || page };
 }
 
-// Only this run: three completed repository/base snapshots; live reads stay single-flight until delivered or closed.
-const scopeRun = () => (globalThis.t3ReviewScopeRun ??= new Map());
-const scopeSource = view => JSON.stringify([view.root, chosenBase(view)]);
-
-/** Release before closing an overlay or changing its source. Its native async owner may never resume. */
+/** Drops a read still out, before the menu closes or its review moves on. */
 export function releaseScope(view) {
   view.scopeRead = null;
   delete view.scopeFiltered; delete view.scopeBases;
-  for (const [key, entry] of scopeRun()) {
-    if (entry.owner !== view) continue;
-    scopeRun().delete(key);
-    entry.finish("retry");
-  }
 }
 
+// Counts, commits and refs, read afresh; what comes back for a menu since closed or moved on is dropped.
 function readScope(view, cx) {
   releaseScope(view);
-  const { root, page, space } = view, base = chosenBase(view), key = scopeSource(view), run = scopeRun(), token = {};
+  const { root, space } = view, base = chosenBase(view), token = {};
   view.scopeRead = token;
-  const live = () => view.scopeRead === token && !view.evicted && root === view.root && page === view.page && space === view.space && base === chosenBase(view);
-  let entry = run.get(key);
-  if (entry && !entry.owner && Date.now() - entry.at >= 5000) { run.delete(key); entry = null; }
-  const apply = (data, cx) => {
-    if (!live()) return;
-    view.scopeGit = data.repo; view.picks = data.picks; view.refs = data.refs;
-    view.scopeDataSource = key; view.scopeRoot = root;
-    cx.notify();
-  };
-  if (entry) {
-    run.delete(key); run.set(key, entry);
-    if (!entry.owner) { apply(entry.data, cx); return; }
-    cx.spawn(async cx => {
-      const result = await entry.done;
-      if (!live()) return;
-      if (result === "retry") readScope(view, cx);
-      else if (result === "ready") apply(entry.data, cx);
-    });
-    return;
-  }
-  entry = { owner: view, at: 0, data: null, done: null, finish: null };
-  entry.done = new Promise(resolve => { entry.finish = resolve; });
-  run.set(key, entry);
-  const owned = () => live() && run.get(key) === entry;
+  const live = () => view.scopeRead === token && !view.evicted && root === view.root && space === view.space && base === chosenBase(view);
   cx.spawn(async (cx) => {
     const r = await readReview(root).catch(() => null);
-    if (!owned()) { if (run.get(key) === entry) releaseScope(view); return; }
+    if (!live()) return;
     const ab = r && base && r.branch !== "(detached)" ? await git(root, ["rev-list", "--left-right", "--count", `${base}...HEAD`]).catch(() => null) : null;
-    if (!owned()) { if (run.get(key) === entry) releaseScope(view); return; }
+    if (!live()) return;
     if (ab?.code === 0) r.chosen = { ref: base, unmerged: parseInt(ab.stdout.trim().split(/\s+/)[1], 10) || 0 };
     const [picks, refs] = r ? await Promise.all([readPicks(r.chosen ? { ...r, baseRef: r.chosen.ref, unmerged: r.chosen.unmerged } : r).catch(() => null), readRefs(root).catch(() => [])]) : [null, []];
-    if (!owned()) { if (run.get(key) === entry) releaseScope(view); return; }
-    entry.data = { repo: r, picks, refs }; entry.owner = null; entry.at = Date.now();
-    run.delete(key); run.set(key, entry);
-    const completed = [...run].filter(([, value]) => !value.owner);
-    completed.slice(0, -3).forEach(([key]) => run.delete(key));
-    apply(entry.data, cx); entry.finish("ready");
+    if (!live()) return;
+    Object.assign(view, { scopeGit: r, picks, refs, scopeRoot: root, scopeBase: base });
+    cx.notify();
   });
 }
 
-/** The menu's rows: the scopes as radios, each with its count (none: greyed, kept), then the submenu of commits. */
+/** The menu's rows: the scopes as radios, each with its count as a number and its unit, then the submenu of commits. One
+ *  checked only for the range shown (`view.page`; none before a first review). An empty one is greyed, unless it's shown. */
 export function scopeRows(view) {
   const r = repo(view), p = repo(view) && view.picks, { kind } = scopeOf(view), c = r?.chosen;
   const radio = (id, k, label, count, detail, page) => ({ id, kind: k, label, count, detail: r ? detail : "", page, on: kind === k });
-  const ahead = c ? c.unmerged : r?.unmerged;
+  const ahead = c ? c.unmerged : r?.unmerged, commits = (n) => plural(n ?? 0, "commit");
   return [
-    radio("scope-changes", "changes", "Changes", ahead, c || r?.base ? `${ahead} ahead of ${c ? c.ref : r.base}` : "", r && (c || r.base) && changesPage(c?.ref, r.branch)),
+    radio("scope-changes", "changes", "Changes", ahead, c || r?.base ? commits(ahead) : "", r && (c || r.base) && changesPage(c?.ref, r.branch)),
     radio("scope-uncommitted", "uncommitted", "Uncommitted", r?.changed, plural(r?.changed ?? 0, "file"), "/worktree"),
     // Only with an upstream: there's nothing to push to or pull from without one.
     ...r?.upstream && !r.gone ? [
-      radio("scope-push", "push", "Outgoing", r.ahead, `↑${r.ahead}`, argPage([`${r.upstream}...${r.branch}`])),
-      radio("scope-pull", "pull", "Incoming", r.behind, `↓${r.behind}`, argPage([`${r.branch}...${r.upstream}`])),
+      radio("scope-push", "push", "Outgoing", r.ahead, commits(r.ahead), argPage([`${r.upstream}...${r.branch}`])),
+      radio("scope-pull", "pull", "Incoming", r.behind, commits(r.behind), argPage([`${r.branch}...${r.upstream}`])),
     ] : [],
     { id: "scope-commits", label: "Commits", count: p?.commits.length, sub: "commits" },
   ];
@@ -146,29 +116,15 @@ export function scopeList(view) {
   return rows;
 }
 
-// A request as the Review bar's count's, handled with those in render. The menu is going, and the keyboard back on the pane,
-// unless it `stays`.
-function ask(view, page, cx, { analyze = false, base = undefined, stays = false } = {}) {
-  if (view.selectReview) return view.selectReview(page, { analyze, base, stays }, cx);
-  if (!stays) { view.closePopup(cx); view.handle.focus(); }
-  setShared(PANE, { space: view.space, root: view.root, page, ...base && { base }, n: Math.max(Date.now(), view.handled + 1), analyze });
-  cx.notify();
-}
-
 // Another page of this diff (‹ ›): its base keeps the commits, and it has no `analyze`.
-export function openReviewPage(view, page, cx) {
-  if (view.selectReview) return view.selectReview(page, { base: view.base }, cx);
-  view.closePopup(cx);
-  view.handle.focus();
-  setShared(PANE, { space: view.space, root: view.root, page, base: view.base, n: Math.max(Date.now(), view.handled + 1) });
-  cx.notify();
-}
+export function openReviewPage(view, page, cx) { view.pick(page, { base: view.base }, cx); }
 
-// A radio asks as a count's click, the analysis included; Commits opens its submenu (`lit`: its row lit).
+// A radio asks as a count's click, the analysis included; Commits opens its submenu (`lit`: its row lit). The range shown
+// stays pickable at nothing, to read it again.
 export function pickScopeRow(view, row, cx, lit = -1) {
-  if (!row.count) return;
-  if (row.sub) return openScopePage(view, row.sub, cx, lit);
-  ask(view, row.page, cx, { analyze: true });
+  if (!row.count && !row.on) return;
+  if (row.sub) return view.openCommits(cx, lit);
+  view.pick(row.page, { analyze: true }, cx);
 }
 
 // Browsing commits mustn't start and bill a run per pick. A commit of the diff shown, or of this branch's Changes, keeps
@@ -177,7 +133,7 @@ export function pickListed(view, item, cx) {
   if (!item) return;
   const r = repo(view), sha = item.commit.sha;
   const ofDiff = !view.base?.startsWith("/commit/") && diffCommits(view).some(c => c.sha === sha);
-  ask(view, item.page, cx, { base: ofDiff ? view.base : (r?.chosen ? r.chosen.unmerged : r?.unmerged) ? changesPage(r.chosen?.ref, r.branch) : undefined });
+  view.pick(item.page, { base: ofDiff ? view.base : (r?.chosen ? r.chosen.unmerged : r?.unmerged) ? changesPage(r.chosen?.ref, r.branch) : undefined }, cx);
 }
 
 /** Opens the submenu `page` ("commits") beside its row, which stays lit; the keyboard is its search's. */
@@ -204,11 +160,7 @@ function scopeRest(view, key, e, cx) {
   hoverRow(subState(view), key, toPane(view, e), cx, (key, _row, cx) => key ? openScopePage(view, key, cx) : view.scopePage && scopeBack(view, cx, false));
 }
 
-const menuWidth = (view) => Math.min(view.scopeMenuWidth ?? 320, view.width - 32);
-const menuHeadHeight = view => {
-  const s = scopeOf(view);
-  return view.scopeInMenu && (s.sha || s.head && s.base) ? MODEL_ROW : 0;
-};
+const menuWidth = (view) => Math.min(320, view.width - 32);
 
 /** Shared menu keys. True means scope/base owns the keyboard, including search-field typing. */
 export function scopeKey(view, e, cx) {
@@ -239,21 +191,19 @@ export function scopeKey(view, e, cx) {
   return false;
 }
 
-/** Opening the menu: the shown scope lit, and a current repository snapshot requested. */
+/** Opening the menu: nothing lit until a key or the pointer gets there (T3's menus), and its counts read afresh. */
 export function openScope(view, cx) {
-  view.scopePage = null; view.scopeListAt = -1;
-  view.scopeAt = scopeRows(view).findIndex(row => row.on);
+  view.scopePage = null; view.scopeListAt = -1; view.scopeAt = -1;
   readScope(view, cx);
 }
 
 // As the toolbar's xs ghost buttons (docs/adr/0013), its words truncating, a chevron at 70%: no fill of its own over the
 // toolbar's, only hovered or while its menu is open.
 function scopeButton(view, t, s) {
-  return drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, surface: "card", on: view.popup === "scope", hot: view.hot === "review-scope" }).min_w(0).flex_shrink(1)
-    .on_hover(glow(view, "review-scope"))
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.togglePopup("scope", cx); })
+  return opener(view, { closed: popupClosed("scope"), onOpen: (_b, cx) => view.togglePopup("scope", cx) })(drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, size: "sm", surface: "chrome", on: view.popup === "scope", hot: view.hot === "review-scope" }).min_w(0).flex_shrink(1)
+    .on_hover(glow(view, "review-scope")))
     .child(div().id("review-scope-label").min_w(0).truncate().child(s.label))
-    .child(svg(`${scopeIcons(view)}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
+    .child(svg(`${LU}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
 }
 
 /** The header's left end: the scope, a commit's sha and ‹ › within its diff, then `head → base` (narrow, `vs base`). */
@@ -261,20 +211,21 @@ export function scopeHeader(view, t, { trigger = true } = {}) {
   const s = scopeOf(view), list = diffCommits(view), at = s.sha ? list.findIndex(c => c.sha === s.sha) : -1;
   // A commit opened as its own diff, or no longer listed (as after an amend), has nowhere to step.
   const steps = s.sha && view.page !== view.base && at >= 0;
-  const go = (id, icon, label, c) => iconButton(view, t, id, icon, label, (cx) => openReviewPage(view, `/commit/${c.sha}`, cx), { disabled: !c });
+  // The Review header's 40 bar: its buttons sm on chrome (t3-tokens「规则」R2, P7).
+  const go = (id, icon, label, c) => ghostButton(view, t, id, { icon, label, act: (cx) => openReviewPage(view, `/commit/${c.sha}`, cx), disabled: !c, size: "sm", surface: "chrome" });
   return h_flex().id("review-scope-row").min_w(0).gap(12).items_center()
     .when(trigger, el => el.child(scopeButton(view, t, s)))
     .when(Boolean(s.sha), el => el.child(h_flex().flex_none().gap(2).items_center()
       .child(div().id("review-sha").mr(4).text_size(12).text_color(t.dim).child(s.sha.slice(0, 7)))
       .when(steps, el => el
-        .child(go("commit-older", `${scopeIcons(view)}/chevron-left.svg`, "Older commit", list[at - 1]))
-        .child(go("commit-newer", `${scopeIcons(view)}/chevron-right.svg`, "Newer commit", list[at + 1])))))
+        .child(go("commit-older", `${LU}/chevron-left.svg`, "Older commit", list[at - 1]))
+        .child(go("commit-newer", `${LU}/chevron-right.svg`, "Newer commit", list[at + 1])))))
     // As T3's refs, which drop the head below 20rem: here below COMPACT, where the header's buttons turn to icons. On Changes
     // the base is T3's comparison-target picker.
     .when(Boolean(s.head && s.base), el => el.child(h_flex().id("review-refs").min_w(0).gap(8).items_center().overflow_hidden().text_size(12).text_color(t.dim)
       .when(view.width >= COMPACT, el => el
         .child(div().id("review-ref-head").min_w(0).max_w(192).truncate().child(s.head))
-        .child(svg(`${scopeIcons(view)}/arrow-right.svg`).size(14).flex_none().opacity(0.7)))
+        .child(svg(`${LU}/arrow-right.svg`).size(14).flex_none().opacity(0.7)))
       .when(view.width < COMPACT, el => el.child(div().id("review-ref-vs").flex_none().child("vs")))
       .when(s.kind !== "changes", el => el.child(div().id("review-ref-base").min_w(0).truncate().child(s.base)))
       .when(s.kind === "changes", el => el.child(baseButton(view, t, s)))));
@@ -283,12 +234,11 @@ export function scopeHeader(view, t, { trigger = true } = {}) {
 // As T3's ComboboxTrigger there: a ghost-muted xs button, 36 to 192 wide, the ref truncating, a chevron at 70%. Its press
 // notes where it is, for the popup to hang under it.
 function baseButton(view, t, s) {
-  return drawButton(t, "review-base", { wide: true, label: `Change comparison target. Currently ${s.base}`, surface: "card", on: view.popup === "base", hot: view.hot === "review-base" }).min_w(36).max_w(192)
-    .on_hover(glow(view, "review-base"))
-    .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); view.baseX = toPane(view, e).bounds?.x ?? null; })
-    .on_click((_e, cx) => { cx.stop_propagation(); view.togglePopup("base", cx); })
+  return opener(view, { closed: popupClosed("base"), press: (e) => { view.baseX = toPane(view, e).bounds?.x ?? null; }, onOpen: (_b, cx) => view.togglePopup("base", cx) })(
+    drawButton(t, "review-base", { wide: true, label: `Change comparison target. Currently ${s.base}`, surface: "chrome", on: view.popup === "base", hot: view.hot === "review-base" }).min_w(36).max_w(192)
+      .on_hover(glow(view, "review-base")))
     .child(div().id("review-ref-base").min_w(0).truncate().child(s.base))
-    .child(svg(`${scopeIcons(view)}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
+    .child(svg(`${LU}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
 }
 
 /** The base picker's rows, as T3's buildBaseRefChoices: Automatic (unless searching), then each local branch with its
@@ -319,7 +269,7 @@ export function baseList(view) {
   return rows;
 }
 
-/** Opening the picker: a current snapshot requested, the search empty and focused, the picked row lit. */
+/** Opening the picker: its refs read afresh, the search empty and focused, the picked row lit. */
 export function openBase(view, cx) {
   view.refSearch.set_value("");
   view.baseAt = Math.max(0, baseList(view).findIndex(item => item.value === chosenBase(view)));
@@ -332,7 +282,7 @@ export function pickBase(view, value, cx, stays = false) {
   const head = scopeOf(view).head ?? repo(view)?.branch;
   releaseScope(view);
   setShared(BASES, { ...shared(BASES), [view.space]: value });
-  if (head) ask(view, changesPage(value, head), cx, { stays });
+  if (head) view.pick(changesPage(value, head), { stays }, cx);
   else if (!stays) view.closePopup(cx);
 }
 
@@ -349,7 +299,7 @@ export function baseMenu(view, t) {
       .when(i === view.baseAt, el => el.bg(t.selected)).on_hover(lit(i))
       .role("radio_button").accessibility_label(`${item.label}${on ? ", picked" : ""}`)
       .on_click((_e, cx) => pickBase(view, item.value, cx))
-      .child(pickMark(t, on, view))
+      .child(pickMark(t, on))
       .child(div().flex_1().min_w(0).truncate().child(item.label))
       .child(div().w(32).flex_none().flex().justify_end()
         .when(Boolean(item.local && item.remote), el => el.child(div().id(`${item.id}-remote`).w(22).h(14).p(1).flex().rounded_full()
@@ -358,11 +308,11 @@ export function baseMenu(view, t) {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => { cx.stop_propagation(); pickBase(view, remote ? item.local : item.remote, cx, true); })
           .child(div().size(12).rounded_full().bg(t.background))))
-        .when(Boolean(item.remote) && !item.local, el => el.child(svg(`${scopeIcons(view)}/check.svg`).size(12).text_color(t.dim))));
+        .when(Boolean(item.remote) && !item.local, el => el.child(svg(`${LU}/check.svg`).size(12).text_color(t.dim))));
   };
-  const origin = view.scopeOrigin ?? { x: 16, y: 36 }, x = Math.max(8, Math.min(view.baseX ?? origin.x, view.width - BASE_W - 8));
-  return div().absolute().top(origin.y).left(x).child(popover(view, t, "review-base-menu").w(Math.min(BASE_W, view.width - 16)).p(4)
-    .child(searchField(t, view.refSearch, view).mx(8).mt(5))
+  const x = Math.max(8, Math.min(view.baseX ?? 16, view.width - BASE_W - 8));
+  return div().absolute().top(36).left(x).child(popover(view, t, "review-base-menu").w(Math.min(BASE_W, view.width - 16)).p(4)
+    .child(searchField(t, view.refSearch).mx(8).mt(5))
     // As T3's: 10px, uppercase, the check's column kept.
     .child(h_flex().h(24).pl(30).pr(8).flex_none().items_center().border_b_1().border_color(t.border).text_size(10).font_medium().text_color(t.dim)
       .child(div().flex_1().child("BRANCH")).child(div().child("REMOTE")))
@@ -372,65 +322,63 @@ export function baseMenu(view, t) {
       .when(!items.length, el => el.child(div().id("base-none").p(8).flex_none().text_center().text_color(t.dim).child(view.refs ? "No matching refs." : "Reading…")))));
 }
 
-/** The scope menu, as T3's: radios, a rule, Commits ›, whose submenu opens beside it (scopeSub). */
-export function scopeMenu(view, t) {
-  const rows = scopeRows(view);
-  // As T3's menus, lit only while the pointer's on it (the commit list and base picker are comboboxes: theirs stays for Enter).
-  const lit = (i) => (over, cx) => { const to = over ? i : view.scopeAt === i ? -1 : view.scopeAt; if (to !== view.scopeAt) { view.scopeAt = to; cx.notify(); } };
-  // As T3's MenuRadioItem and MenuSubTrigger: 28 tall, 8 in, the mark's slot kept on every row so the words line up; a
-  // submenu's row stays lit while it's open.
-  const row = (r, i) => h_flex().id(r.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4)
-    .when(Boolean(r.count), el => el.when(i === view.scopeAt || (Boolean(r.sub) && r.sub === view.scopePage), el => el.bg(t.selected)).on_hover(lit(i)))
-    .when(!r.count, el => el.opacity(GREYED))
-    .on_mouse_move((e, cx) => scopeRest(view, r.count ? r.sub ?? null : null, e, cx))
-    .role(r.sub ? "button" : "radio_button").accessibility_label(`${r.label}${r.detail ? `, ${r.detail}` : ""}${r.on ? ", shown" : ""}`)
-    .on_click((_e, cx) => pickScopeRow(view, r, cx))
-    .child(pickMark(t, Boolean(r.on), view))
-    .child(div().flex_1().min_w(0).truncate().child(r.label))
-    .when(Boolean(r.detail), el => el.child(div().id(`${r.id}-detail`).flex_none().ml(16).text_size(12).text_color(t.dim).child(r.detail)))
-    .when(Boolean(r.sub), el => el.child(svg(`${scopeIcons(view)}/chevron-right.svg`).size(16).mr(-2).flex_none().text_color(t.dim)));
-  const radios = rows.filter(r => !r.sub).length;
-  return popover(view, t, "review-scope-menu").w(menuWidth(view)).p(4)
-    .when(Boolean(menuHeadHeight(view)), el => el.child(scopeHeader(view, t, { trigger: false }).h(MODEL_ROW).px(8)))
-    .children(rows.slice(0, radios).map(row))
-    // As T3's MenuSeparator.
-    .child(div().h(1).my(4).mx(8).flex_none().bg(t.border))
-    .children(rows.slice(radios).map((r, i) => row(r, radios + i)));
+/** One of the scope menu's rows (scopeRows' `r`, its `i`th), as T3's MenuRadioItem and MenuSubTrigger (menu-row.js): the
+ *  mark's slot kept on every row so the words line up; Commits' row stays lit while its submenu is open (`open`). `icons`: the
+ *  mod's own folder, for the check. `also(row)`: the menu's own handlers (resting on Commits opens it, submenu.js). */
+export function scopeRow(view, t, r, i, { icons = LU, open = false, also = undefined } = {}) {
+  return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(t, Boolean(r.on), icons), sub: Boolean(r.sub),
+    disabled: !r.count && !r.on, pick: (cx) => pickScopeRow(view, r, cx),
+    trail: r.detail ? div().id(`${r.id}-detail`).flex_none().ml(16).text_size(12).text_color(t.dim).child(r.detail) : null, also })
+    .role(r.sub ? "button" : "radio_button").accessibility_label(`${r.label}${r.detail ? `, ${r.detail}` : ""}${r.on ? ", shown" : ""}`);
 }
 
-/** The open submenu of commits, as T3's: its search on top, its list at most 320 tall, beside
- *  its row in the menu (main.js draws the menu at top 36, left 16: past its border and padding, rows of 28, a rule of 9). */
+/** The rows of scopeRows, the radios then a rule then Commits, each drawn by `row(r, i)`. */
+export const scopeItems = (t, rows, row) => {
+  const radios = rows.filter(r => !r.sub).length;
+  return [...rows.slice(0, radios).map(row), menuRule(t), ...rows.slice(radios).map((r, i) => row(r, radios + i))];
+};
+
+/** Commit `i` of the Commits submenu (scopeList), as T3's: its check, its type and scope dimmed, unpushed ↑, its age. */
+export function commitRow(view, t, items, i, icons = LU) {
+  const item = items[i], on = item.page === view.page, c = item.commit, now = Date.now();
+  const prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = Boolean(view.picks?.unpushed.includes(c.sha));
+  const lit = (over, cx) => { if (over && view.scopeListAt !== i) { view.scopeListAt = i; cx.notify(); } };
+  return h_flex().id(item.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4).cursor_pointer()
+    .when(i === view.scopeListAt, el => el.bg(t.selected)).on_hover(lit)
+    .on_click((_e, cx) => pickListed(view, item, cx))
+    .role("button").accessibility_label(`Review commit ${c.subject}${on ? ", shown" : ""}${out ? ", not pushed" : ""}`)
+    .child(pickMark(t, on, icons))
+    .child(h_flex().flex_1().min_w(0).gap(4)
+      .when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
+      .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))))
+    .when(out, el => el.child(div().flex_none().text_size(12).text_color(t.ansi2).child("↑")))
+    .when(Boolean(c.time), el => el.child(div().id(`${item.id}-time`).flex_none().text_size(12).text_color(t.dim).child(ago(c.time, now))));
+}
+
+/** The scope menu in the Review page, as T3's: radios, a rule, Commits ›, whose submenu opens beside it (scopeSub). */
+export function scopeMenu(view, t) {
+  const row = (r, i) => scopeRow(view, t, r, i, { open: Boolean(r.sub) && r.sub === view.scopePage,
+    also: (el) => el.on_mouse_move((e, cx) => scopeRest(view, r.count ? r.sub ?? null : null, e, cx)) });
+  return popover(view, t, "review-scope-menu").w(menuWidth(view)).p(4).children(scopeItems(t, scopeRows(view), row));
+}
+
+/** The open submenu of commits in the Review page, as T3's: its search on top, its list at most 320 tall, beside its row
+ *  in the menu (main.js draws the menu at top 38, left 12; its rows start past its border and padding: rows of 28, a rule of 9). */
 export function scopeSub(view, t) {
-  const page = view.scopePage, now = Date.now(), rows = scopeRows(view), radios = rows.filter(r => !r.sub).length;
+  const page = view.scopePage, rows = scopeRows(view), radios = rows.filter(r => !r.sub).length;
   const at = rows.findIndex(r => r.sub === page);
-  const lit = (i) => (over, cx) => { if (over && view.scopeListAt !== i) { view.scopeListAt = i; cx.notify(); } };
   const items = scopeList(view);
   const listHeight = Math.min(items.length * MODEL_ROW, Math.max(MODEL_ROW * 3, Math.min(320, view.height - 180)));
   // Its border and padding, the search and its margins, then the list or its 36 note.
   const h = 10 + 43 + (items.length ? listHeight : 36);
-  const origin = view.scopeOrigin ?? { x: 16, y: 36 };
-  const anchor = { x: origin.x + 5, y: origin.y + 5 + menuHeadHeight(view) + at * MODEL_ROW + (at >= radios ? 9 : 0), width: menuWidth(view) - 10, height: MODEL_ROW };
-  const draw = (i) => {
-    const item = items[i], on = item.page === view.page, tail = (id, text) => div().id(`${item.id}-${id}`).flex_none().text_size(12).text_color(t.dim).child(text);
-    const el = h_flex().id(item.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4)
-      .when(i === view.scopeListAt, el => el.bg(t.selected)).on_hover(lit(i))
-      .on_click((_e, cx) => pickListed(view, item, cx))
-      .child(pickMark(t, on, view));
-    const c = item.commit, prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = view.picks.unpushed.includes(c.sha);
-    return el.role("button").accessibility_label(`Review commit ${c.subject}${on ? ", shown" : ""}${out ? ", not pushed" : ""}`)
-      .child(h_flex().flex_1().min_w(0).gap(4)
-        .when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
-        .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))))
-      .when(out, el => el.child(div().flex_none().text_size(12).text_color(t.ansi2).child("↑")))
-      .when(Boolean(c.time), el => el.child(tail("time", ago(c.time, now))));
-  };
+  const anchor = { x: 17, y: 43 + at * MODEL_ROW + (at >= radios ? 9 : 0), width: menuWidth(view) - 10, height: MODEL_ROW };
   // 384 where there's room right of the menu, else narrower down to 260 (its subjects truncate) rather than over the menu.
   const { at: box, w } = subAt(view, anchor, [260, 384], h);
   // The pointer on it: nothing pending on the menu's rows opens or closes it.
   return box.child(popover(view, t, "review-scope-sub", false).w(w).p(4).on_hover((on) => { if (on) subLeft(subState(view)); })
-    .child(searchField(t, view.scopeSearch, view).mx(8).mt(5).mb(5))
+    .child(searchField(t, view.scopeSearch).mx(8).mt(5).mb(5))
     .child(v_flex().flex_none()
-      .child(scrollList(view, "scope-list", { count: items.length, row: MODEL_ROW, at: view.scopeListAt, draw, height: listHeight,
+      .child(scrollList(view, "scope-list", { count: items.length, row: MODEL_ROW, at: view.scopeListAt, draw: (i) => commitRow(view, t, items, i), height: listHeight,
         wheeled: (keep) => { if (keep >= 0) view.scopeListAt = keep; } }))
       .when(!items.length, el => el.child(div().id("scope-none").p(8).flex_none().text_center().text_color(t.dim).child(view.picks ? "No matches" : "Reading…")))));
 }

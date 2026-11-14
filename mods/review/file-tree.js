@@ -1,15 +1,15 @@
 // The space panel's file tree, one for the Files and Review pages (docs/adr/0013): T3's Pierre tree at its compact density.
 // The rows as data (treeRows, pathEntries, rowAt, treeKey) and one row drawn (treeRow); scripts/sync.sh copies this, with
-// list.js and file-icons.js, to both mods.
-import { div, svg, image } from "gpui-kit";
+// list.js and pierre-icons.js, to both mods.
+import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { scrollList } from "./list.js";
-import { fileIcon, folderIcon } from "./file-icons.js";
+import { pierreFileIcon } from "./pierre-icons.js";
 
-// Pierre's compact density (factor 0.8): a 24 row; a level is its gap, the icon and the row's gap.
+// Pierre's compact density (factor 0.8): a 24 row, 6.4 in, a 16 icon and a 4.8 gap; a level is one icon and its gap, so a
+// folder's rows start under its name.
 export const TREE_ROW = 24;
-const PAD = 6.4, GAP = 4.8, LEVEL = 6.4 + 16 + GAP;
-const CLEAR = "#00000000";
+const PAD = 6.4, GAP = 4.8, ICON = 16, LEVEL = ICON + GAP;
 // A change's letter in its status's color, as T3's FileStatus.
 export const STATUS = { A: "#22c55e", D: "#ef4444", M: "#f59e0b", R: "#3b82f6", C: "#3b82f6" };
 
@@ -112,35 +112,36 @@ export function treeKey(key, rows, at) {
 /** @param {any} view @param {string} id */
 export const revealRow = (view, id, path) => { view.treeReveal = { ...view.treeReveal, [id]: path }; };
 
-/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. */
+/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. Pierre's viewport: 16 in
+ *  less the rows' 1.6, and 6 less on the right for the scrollbar. */
 export function treeList(view, id, rows, draw) {
   const want = view.treeReveal?.[id], at = want == null ? -1 : rowAt(rows, want);
   if (at >= 0 && view.listHeight?.[id] !== undefined) view.treeReveal = { ...view.treeReveal, [id]: undefined };
-  return scrollList(view, id, { count: rows.length, row: TREE_ROW, at, draw: (i) => draw(rows[i], i), wheeled: () => {} });
+  return div().id(`${id}-viewport`).size_full().pl(14.4).pr(8.4)
+    .child(scrollList(view, id, { count: rows.length, row: TREE_ROW, at, draw: (i) => draw(rows[i], i), wheeled: () => {} }).size_full());
 }
 
 /**
- * One row, as Pierre's: a level's indent, a folder's chevron, the page's own `leading` (Review's reviewed box), the icon, the
- * name, then a change's letter and the page's own `trailing`. Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed. `mod` is the mod's folder,
- * whose icons/ hold the chevrons and file-icons.js's; `icon`, a 16 element, stands in for the file or folder icon.
+ * One row, as Pierre's, the same on the Files and Review pages: a level's indent, the page's own `leading` in a fixed lane
+ * before the icon (Review's reviewed box), the icon, the name, then a change's letter and the page's own `trailing`. No
+ * chevron: a folder's icon opens with it. A file's icon is its Pierre one, `icon` stands in for either (a Review group's).
+ * Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed; `dim` (ignored, reviewed) greys the name
+ * and halves the icon. `guides`, while the tree is hovered: a line down each open folder, under its icon. `mod` is the mod's
+ * folder, whose icons/ hold icons/tree and icons/pierre.
  */
 /** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any }} options */
 export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon } = {}) {
-  // Review's reviewed box keeps its extra chevron lane; Pierre's plain Files row has only one icon lane.
-  const decorated = Boolean(leading), indent = decorated ? row.depth * LEVEL : row.depth ? 19.2 + (row.depth - 1) * 18.7 : 0;
-  return h_flex().id(id).relative().h(TREE_ROW).mx(decorated ? 2 : 1.6).pl(PAD + indent).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12).cursor_pointer()
-    .when(decorated, el => el.border_1().border_color(focused ? t.accent : CLEAR))
-    .when(!decorated && focused, el => el.child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)))
+  const lane = leading ? ICON + GAP : 0;
+  return h_flex().id(id).relative().h(TREE_ROW).mx(1.6).pl(PAD + row.depth * LEVEL).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12).cursor_pointer()
     .when(selected, (el) => el.bg(t.foreground + "1f")).when(!selected, (el) => el.hover((s) => s.bg(t.foreground + "12")))
     .when(context && !selected, el => el.bg(t.foreground + "12"))
-    .when(decorated || Boolean(row.dir), el => el.child(div().size(16).flex_none().flex().items_center().justify_center()
-      .when(Boolean(row.dir), (el) => el.child(row.chevron ?? svg(`${mod}/icons/chevron-${row.open ? "down" : "right"}.svg`).size(decorated ? 12 : 16).text_color(t.dim)))))
     .when(Boolean(leading), (el) => el.child(leading))
-    .when(decorated || !row.dir, el => el.child((icon ?? image(`${mod}/${row.dir ? folderIcon(row.path, row.open) : fileIcon(row.path)}`).size(16).flex_none()).when(dim, (el) => el.opacity(0.5))))
-    .child(div().flex_1().min_w(0).truncate().when(dim, (el) => decorated ? el.opacity(0.5) : el.text_color(t.dim)).when(struck, (el) => el.line_through()).child(row.label ?? row.name))
+    .child((icon ?? (row.dir ? svg(`${mod}/icons/tree/folder${row.open ? "-open" : ""}.svg`).size(ICON).flex_none().text_color(t.dim) : pierreFileIcon(t, mod, row.path))).when(dim, (el) => el.opacity(0.5)))
+    .child(div().flex_1().min_w(0).truncate().when(dim, (el) => el.text_color(t.dim)).when(struck, (el) => el.line_through()).child(row.label ?? row.name))
     .when(Boolean(status), (el) => el.child(statusBadge(status)))
     .when(Boolean(trailing), (el) => el.child(trailing))
-    .when(guides && !decorated, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + 7.5 + level * 18.7).w(1).bg(t.foreground + "24"))));
+    .when(focused, el => el.child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)))
+    .when(guides, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + level * LEVEL + lane + ICON / 2 - 0.5).w(1).bg(t.foreground + "24"))));
 }
 
 // The letter in its status's color, on a tenth of it; T3's sm Badge.

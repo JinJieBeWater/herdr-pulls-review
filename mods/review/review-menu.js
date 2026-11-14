@@ -2,22 +2,22 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Input } from "gpui-base";
 import { settings } from "herdr";
 import { subPlace } from "./submenu.js";
-import { button as drawButton } from "./button.js";
-import { glow } from "./tip.js";
 
 export const PANE = "review", LU = "mods/review/icons", COMPACT = 640, MODEL_ROW = 28;
-export const scopeIcons = view => `mods/${view?.scopeMod ?? PANE}/icons`;
 export const zoom = () => Number(settings()?.zoom) || 1;
-export const hover = t => t.foreground + "0f";
+// Stamped as the Review page's popover `name` closes to a press outside it, for the button that opened it (trigger.js); another's
+// button still opens its own. One key for every Review tab: two presses 50 ms apart in two of them can't both be on a button.
+export const popupClosed = (name) => `${PANE}.${name}Closed`;
 
-export function pickMark(t, on, view = null) {
+// `icons`: the drawing mod's own folder, as a mod draws only its own icons.
+export function pickMark(t, on, icons = LU) {
   // The row's own colour, as T3's MenuRadioItemIndicator.
-  return div().w(14).flex_none().when(on, el => el.child(svg(`${scopeIcons(view)}/check.svg`).size(14)));
+  return div().w(14).flex_none().when(on, el => el.child(svg(`${icons}/check.svg`).size(14)));
 }
 
-export function searchField(t, state, view = null) {
+export function searchField(t, state, icons = LU) {
   return h_flex().h(33).pb(6).gap(4).flex_none().items_center().border_b_1().border_color(t.border)
-    .child(svg(`${scopeIcons(view)}/search.svg`).size(16).flex_none().text_color(t.dim))
+    .child(svg(`${icons}/search.svg`).size(16).flex_none().text_color(t.dim))
     .child(Input.new(state).flex_1().h_full().text_size(14).text_color(t.foreground));
 }
 
@@ -48,11 +48,4 @@ export function subAt(view, row, [min, max], h) {
   view.subRect = { x, y, width: w, height: h };
   Object.assign(subState(view), { sub: view.subRect, side: p.side });
   return { at: div().id("review-sub-at").absolute().left(x).top(y), w };
-}
-
-export function iconButton(view, t, id, icon, label, action, { color, disabled, active, press } = /** @type {{ color?: any, disabled?: any, active?: any, press?: any }} */ ({})) {
-  return drawButton(t, id, { icon, label, color, disabled, on: active, surface: "card", hot: view.hot === id })
-    .when(!disabled, el => el.on_hover(glow(view, id)))
-    .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); press?.(e); })
-    .when(!disabled, el => el.on_click((_e, cx) => { cx.stop_propagation(); action(cx); }));
 }
