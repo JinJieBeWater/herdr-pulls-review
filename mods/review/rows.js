@@ -217,11 +217,11 @@ export function pairRows(rows) {
 /** The width a note's text wraps at, past the row's or card's padding and border and the mark before it. */
 // shortcut: Herdr's Markdown wraps without its inline code chips' padding, so a line of them runs past the width;
 // 32px of slack covers a few chips a line. A wrap that counted the chips would drop it.
-export const noteWidth = (width, anchored) => (anchored ? Math.min(width - 16, 800) - 22 : width - 24) - 20 - 32;
+export const noteWidth = (width, anchored) => (anchored ? Math.min(width - 24, 800) - 22 : width - 24) - 20 - 32;
 
 /**
  * Rough height of a note, as the app's AnalysisNoteCard lays it out: a file's own note is a row across the file
- * (12px in, 6px padding), a line's is a card under the line (8px in, at most 800 wide, 1px border, 4px padding,
+ * (12px in, 6px padding), a line's is a card under the line (12px in, at most 800 wide, 1px border, 4px padding,
  * 3px apart). Either has a 12px mark and an 8px gap before its text. Characters take charWidth's columns.
  */
 export function noteHeight(text, width, anchored) {

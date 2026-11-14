@@ -54,7 +54,7 @@ export function fileTree(view, t) {
         .on_click((_e, cx) => { view.focusPath = null; pickGroup(view, row, cx); });
     }
     if (row.dir) {
-      const files = row.owner.files.filter(path => path.startsWith(`${row.real}/`)).map(path => view.fileAt(path)).filter(Boolean);
+      const files = (underFolders(view, row.owner).get(row.real) ?? []).map(path => view.fileAt(path)).filter(Boolean);
       return treeRow(t, mod, row, `tree-d-${row.path}`, { focused, guides, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
         .on_click((_e, cx) => { view.focusPath = null; toggleDir(view, row.path, cx); });
     }
@@ -103,6 +103,21 @@ export function treeOf(view) {
       rows: treeRows(rel => kids.get(rel) ?? [], path => isOpen(view, path)) };
   }
   return view.treeOf.rows;
+}
+
+// A group's files under each of its folders, made with the tree's rows: a filter of the group per folder row drawn was
+// rows × files each render.
+function underFolders(view, group) {
+  const made = view.treeOf.under ??= new Map();
+  if (!made.has(group)) {
+    const under = new Map();
+    for (const path of group.files) for (let at = path.indexOf("/"); at > 0; at = path.indexOf("/", at + 1)) {
+      const dir = path.slice(0, at), list = under.get(dir);
+      if (list) list.push(path); else under.set(dir, [path]);
+    }
+    made.set(group, under);
+  }
+  return made.get(group);
 }
 
 // Folders start folded, as Files'; a subgroup's row (`group:<key>`) open. `flipped` holds the rows turned from that.

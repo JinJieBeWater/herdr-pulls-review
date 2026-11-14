@@ -1624,6 +1624,21 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.equal(p.current, order[2], "the keys'");
   }
   {
+    // A big review's tree draws its folder rows without reading the whole group again for each: a filter of every file per
+    // folder row drawn was 40 × 20k reads a render, 63 ms in Herdr (performance-audit.md).
+    const big = Array.from({ length: 3000 }, (_, i) => `dir${String(i % 30).padStart(2, "0")}/f${i}.ts`);
+    const groups = [{ key: "s", label: "S", category: "core", critical: false, missing: [], notes: {}, files: big, children: [] }];
+    const { p, scope } = await paneOf({ review: async () => ({ ...review, files: big.map(f => file(f, { hunks: undefined })), groups }) });
+    const g = p.group(), real = g.files;
+    let reads = 0;
+    g.files = new Proxy(real, { get(t, k) { if (typeof k === "string" && /^\d+$/.test(k)) reads++; return Reflect.get(t, k); } });
+    const drawn = () => { reads = 0; scope.fileTree(p, env.theme()); return reads; };
+    assert.ok(drawn() <= 2 * real.length, `${reads} reads to draw the tree first`);
+    const rows = p.treeOf.rows.filter(r => r.dir).length;
+    assert.ok(rows >= 30, `${rows} folder rows`);
+    assert.ok(drawn() <= real.length, `${reads} reads of a ${real.length}-file group to draw ${rows} folder rows`);
+  }
+  {
     // After a rows read that fails, Retry asks for its files again, and they leave "Loading…".
     const { p, scope } = await paneOf();
     delete p.fileAt("a.ts").hunks; p.version++;

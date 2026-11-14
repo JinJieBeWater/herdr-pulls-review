@@ -112,12 +112,12 @@ export function treeKey(key, rows, at) {
 /** @param {any} view @param {string} id */
 export const revealRow = (view, id, path) => { view.treeReveal = { ...view.treeReveal, [id]: path }; };
 
-/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. Pierre's viewport: 16 in
- *  less the rows' 1.6, and 6 less on the right for the scrollbar. */
+/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. A row's box 12 in on both
+ *  sides, the column head's edge (t3-tokens「规则」R1), not Pierre's 16: 12 less the rows' 1.6. */
 export function treeList(view, id, rows, draw) {
   const want = view.treeReveal?.[id], at = want == null ? -1 : rowAt(rows, want);
   if (at >= 0 && view.listHeight?.[id] !== undefined) view.treeReveal = { ...view.treeReveal, [id]: undefined };
-  return div().id(`${id}-viewport`).size_full().pl(14.4).pr(8.4)
+  return div().id(`${id}-viewport`).size_full().px(10.4)
     .child(scrollList(view, id, { count: rows.length, row: TREE_ROW, at, draw: (i) => draw(rows[i], i), wheeled: () => {} }).size_full());
 }
 

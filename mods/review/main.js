@@ -526,7 +526,7 @@ export default class ReviewPanel extends View {
           // The group shown's summary over its diff, as the app's group header: its title 13 medium, its words 12.
           content: v_flex().size_full().min_w(0)
             // A rule-based group's summary is the daemon's boilerplate for its folder rule.
-            .when(Boolean(group?.summary) && this.review.source !== "rule-based", el => el.child(v_flex().id("group-summary").flex_none().max_h(160).overflow_hidden().px(16).py(10).gap(4).border_b(1).border_color(t.border)
+            .when(Boolean(group?.summary) && this.review.source !== "rule-based", el => el.child(v_flex().id("group-summary").flex_none().max_h(160).overflow_hidden().px(12).py(10).gap(4).border_b(1).border_color(t.border)
               .child(div().text_size(13).font_medium().child(group.label))
               .child(TextView.markdown(`summary-${group.key}`, group.summary).selectable(true).scrollable(false).text_size(12).text_color(t.muted))))
             .child(div().flex_1().min_h(0).child(diffView(this, t))) }))).when(Boolean(this.switching), el => el.opacity(DISABLED)))

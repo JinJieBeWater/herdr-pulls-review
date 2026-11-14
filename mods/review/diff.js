@@ -120,7 +120,7 @@ export function toggleFull(view, file, cx) {
 export function headerPress(view, file, x, cx) {
   if (view.switching) return;
   const fromEnd = view.view - x;
-  if (x < 30) return view.setReviewed(file, !file.reviewed, cx);
+  if (x < 32) return view.setReviewed(file, !file.reviewed, cx);
   if (fromEnd > 32 && fromEnd <= 56 && canFull(file)) return view.toggleFull(file, cx);
   view.collapsed.has(file.path) ? view.collapsed.delete(file.path) : view.collapsed.add(file.path);
   view.version++;
@@ -232,9 +232,9 @@ function diffItem(view, t, item) {
       // As the app's file header: the reviewed box, the path and its marks; the counts, the status, the whole file and the fold.
       // A row holds no handlers: headerPress places a press by these parts' positions.
       const f = item.file, open = !view.collapsed.has(f.path), full = view.full.has(f.path), loading = full && !view.full.get(f.path);
-      // As T3's: 8 and 12 in, its controls icon-micro.
+      // 12 in on both sides, the page's edge (t3-tokens「规则」R1); its controls icon-micro.
       const slot = () => div().size(20).flex_none().flex().items_center().justify_center();
-      return h_flex().w_full().h(item.size).pl(8).pr(12).gap(8).items_center().border_t(1).border_b(1).border_color(t.border)
+      return h_flex().w_full().h(item.size).px(12).gap(8).items_center().border_t(1).border_b(1).border_color(t.border)
         .bg(view.current === f.path ? t.selected : t.chrome)
         .child(checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none"))
         .child(div().min_w(0).flex_shrink_1().truncate().when(f.reviewed, el => el.text_color(t.dim)).child(f.previousPath ? `${f.previousPath} → ${f.path}` : f.path))
@@ -255,7 +255,9 @@ function diffItem(view, t, item) {
         .child(div().min_w(0).truncate().child(item.group.label));
     case "hunk":
       // Hunk headers on the raised tone, as Herdr's own changes diff draws them, 11px as T3's hunk separators; `@@` is code, so mono.
-      return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(mono()).text_size(11).text_color(t.dim).truncate().child(item.text);
+      // Cut inside the 12 on the right too: truncate on the padded row would clip the text at its border.
+      return div().w_full().h(item.size).px(12).flex().items_center().bg(t.raised).font_family(mono()).text_size(11).text_color(t.dim)
+        .child(div().min_w(0).truncate().child(item.text));
     case "note": {
       // As the app's AnalysisNoteCard: a sparkle, or a critical note's mark, then its Markdown in the UI font.
       // A file's own notes run across the file under its header; a line's sits under the line as a card.
@@ -268,7 +270,7 @@ function diffItem(view, t, item) {
         .child(v_flex().w(noteWidth(view.view, item.anchored)).flex_none()
           .child(TextView.markdown(`note-${item.key}`, note.text).selectable(true).scrollable(false).text_size(12).text_color(t.foreground)));
       return item.anchored
-        ? div().w_full().h(item.size).px(8).py(3)
+        ? div().w_full().h(item.size).px(12).py(3)
           .child(body.w_full().max_w(800).h_full().px(10).py(4).rounded(8).border_1()
             .border_color(critical ? t.blocked + "4d" : t.border).bg(critical ? t.blocked + "1a" : t.background))
         : body.w_full().h(item.size).px(12).py(6).when(critical, el => el.bg(t.blocked + "1a"))
