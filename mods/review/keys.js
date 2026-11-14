@@ -1,7 +1,7 @@
 import { step, menuJump } from "./list.js";
 import { settingsBack, submitModel } from "./settings.js";
 import { FOLDS, foldAll } from "./diff.js";
-import { scopeKey } from "./review-scope.js";
+import { scopeKey } from "./scope-header.js";
 import { treeKey, revealRow } from "./file-tree.js";
 import { TREE, toggleDir, pickGroup } from "./files.js";
 

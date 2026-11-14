@@ -120,6 +120,12 @@ export function toggleWide() {
   save({ wide: !s.wide });
 }
 
+/** What `space`'s Review shows (`review.shown`), while the tab that showed it is still there (its `born`): a closed one's is gone. */
+export function reviewShown(space) {
+  const shown = shared("review.shown")?.[space];
+  return shown && (shown.born ?? null) === surfaceBorn("review", space) ? shown : null;
+}
+
 /**
  * Asks `space`'s Review for `page` of `root` (the `review` key, docs/internals/storage.md): past the last request's number, and
  * naming the Review tab it's for (`born`), so a tab closed meanwhile doesn't take it up. Show the page first (showPage), so the

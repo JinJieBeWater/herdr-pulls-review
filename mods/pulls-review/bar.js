@@ -7,26 +7,24 @@
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popup } from "gpui-base";
-import { spaces, panes, focused, watchFolder, window, openOverlay, props, setShared, shared, theme, settings, home } from "herdr";
+import { spaces, panes, focused, watchFolder, window, openOverlay, props, setShared, shared, theme, home } from "herdr";
 import { launch } from "./open.js";
 import { detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { glow, tip } from "./tip.js";
 import { step, scrollList } from "./list.js";
 import { stop, pressed, justClosed } from "./focus.js";
-import { KEY } from "./store.js";
+import { KEY, closedKey } from "./store.js";
 import { git, argPage, readReview, readPicks } from "./review-git.js";
 import { button, radiusOf } from "./button.js";
+import { statusMark } from "./status-mark.js";
+import { hang } from "./trigger.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
 const PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
 // When the logo's menu last closed: a press outside a popup closes it before the press's own click lands.
-const MENU_CLOSED = `${MOD}.menuClosed`;
+const MENU_CLOSED = closedKey(MOD, "menu");
 export const menuClosed = () => setShared(MENU_CLOSED, Date.now());
-
-// A menu hangs 4 under its button (T3's sideOffset), right edges together, as T3's (align end) and the layout's other menus
-// from a right-side button: `b` is its bounds from the press. With none (assistive tech clicks without one), the app's default: the pointer.
-const underBar = (b) => { const z = Number(settings()?.zoom) || 1; return b && { x: b.x + b.width - MENU_W * z, y: b.y + b.height + 4 * z }; };
 
 // The menu's rows (T3's MenuItem), and what sits above them: its padding, search field and either the pages' switch or a title.
 const MENU_ROW = 28, MENU_W = 368, menuChrome = (tabs) => 8 + 43 + (tabs ? 32 : 28);
@@ -287,9 +285,7 @@ function openPicks(view, r, at, still = () => true) {
 
 export function reviewBar(view, t, stopPress) {
   // How the space's analysis goes: the panel head's mark, here too (docs/adr/0011).
-  const space = spaces().find(s => s.active)?.id, word = shared("review.status")?.[space], mark = word === "working" ? svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)
-    : word === "blocked" ? div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!")
-    : word === "done" ? div().size(6).flex_none().rounded_full().bg(t.done) : null;
+  const space = spaces().find(s => s.active)?.id, word = shared("review.status")?.[space], mark = statusMark(t, word, 14);
   // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
   if (props()?.toggle) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017).
   // Looked up on each render, so the frame that shows another space already shows its own counts.
@@ -327,7 +323,7 @@ export function reviewBar(view, t, stopPress) {
   const openMenu = (_e, cx) => {
     view.hot = null; cx.notify();
     // Under this click's press, if it came with one; read now, as a press while git reads is another click's.
-    const at = view.pressAt == null ? undefined : underBar(view.reviewPress);
+    const at = view.pressAt == null ? undefined : hang(view.reviewPress, MENU_W).at;
     const from = JSON.stringify(reviewLocation());
     // Started here, so a second click while git reads finds it reading.
     const reading = openPicks(view, r, at, () => JSON.stringify(reviewLocation()) === from);

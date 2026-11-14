@@ -4,7 +4,15 @@
 import { button, radiusOf } from "./button.js";
 import { tip, glow } from "./tip.js";
 import { stop, pressed, justClosed } from "./focus.js";
-import { shared } from "herdr";
+import { shared, settings } from "herdr";
+
+/** Where a popup `width` wide hangs under the pressed control `b` (its bounds, zoomed px): `gap` below it, right edges together
+ *  (`align` "end", `nudge` px past the right edge) or left ("start"). No press (keys, assistive tech): {}, the app's place. */
+export function hang(b, width, { align = "end", gap = 4, nudge = 0 } = {}) {
+  if (!b) return {};
+  const z = Number(settings()?.zoom) || 1;
+  return { at: { x: align === "end" ? b.x + b.width + (nudge - width) * z : b.x, y: b.y + b.height + gap * z } };
+}
 
 /** What `id` opened is up: opened here since the popup's close last stamped `closed`. */
 export const popupOpen = (view, id, closed) => view.opened?.id === id && view.opened.at > (shared(closed) ?? 0);

@@ -5,7 +5,7 @@ import { ghostButton } from "./button.js";
 import { trigger } from "./trigger.js";
 import { tip } from "./tip.js";
 import { popupClosed } from "./review-menu.js";
-import { scopeHeader } from "./review-scope.js";
+import { scopeHeader } from "./scope-header.js";
 import { navToggle, setNavOpen } from "./nav-column.js";
 
 // As the app's describeProgress, but the file's name only: the agent's paths run long, often through its own scratch folder.

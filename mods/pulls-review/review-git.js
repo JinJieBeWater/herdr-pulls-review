@@ -18,7 +18,7 @@ export async function changedFiles(root, lines) {
   return net?.code === 0 ? net.stdout.split("\0").filter(Boolean).length : lines;
 }
 
-export const browserPath = page => encodeURI(page).replaceAll("#", "%23");
+const browserPath = page => encodeURI(page).replaceAll("#", "%23");
 
 // The page the CLI opens for `args` (its pageFor), `branch` standing in for its default-branch lookup: what the bar knows without git.
 export const argPage = (args, branch) => browserPath(args[0] === "--worktree" ? "/worktree"

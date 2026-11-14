@@ -54,7 +54,7 @@ const env = {
   // Herdr T3's layout: the space panel, its pages Files and Review.
   layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", hidden: true, children: [{ id: "panel-body", active: "files", children: [{ id: "files" }, { id: "review" }] }] }] }),
 };
-const source = ["button.js", "store.js", "details.js", "tip.js", "list.js", "focus.js", "panel.js", "review-git.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
+const source = ["button.js", "store.js", "details.js", "tip.js", "list.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
   .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
 // Timers fire at once: a card that waits 150ms is up by the next render.
 const cx = { notify() {}, stop_propagation() {}, spawn: (f) => f(cx), focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every() {}, after: (_ms, f) => (f(cx), { cancel() {} }) } };

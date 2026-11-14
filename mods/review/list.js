@@ -73,15 +73,22 @@ export function scrollList(view, id, { count, row, at = -1, height, draw, wheele
 }
 
 /** A popup menu's keys, as T3's Base UI menus: ↑/↓, Home, End and typing move (menuJump); Enter or Space picks
- *  `choose(at, cx)`; Escape closes the popup. `labels` the rows' words; `view.at` the lit row. */
-export function menuKeys(view, labels, choose) {
+ *  `choose(at, cx, true)` (true: keys picked it); Escape closes the popup. `labels` the rows' words; `view[at]` the lit row.
+ *  `close(cx)`: what Escape does. `back`: ← closes too (a submenu). `sub(i)`: row `i` opens a submenu, so → picks it.
+ *  `disabled(i)`: moves skip row `i`. `enter()`: false leaves Enter and Space to what has the keyboard inside the row.
+ *  @param {any} view @param {string[]} labels @param {(at: number, cx: any, keys?: boolean) => void} choose
+ *  @param {{ at?: string, close?: (cx?: any) => void, back?: boolean, sub?: (i: number) => boolean, disabled?: (i: number) => boolean, enter?: () => boolean }} [o] */
+export function menuKeys(view, labels, choose, { at = "at", close = () => closeOverlay(props().overlay), back = false, sub = undefined, disabled = undefined, enter = undefined } = {}) {
   return (e, cx) => {
-    if (e.key === "escape") closeOverlay(props().overlay);
-    else if (e.key === "enter" || e.key === "space") { if (view.at >= 0) choose(view.at, cx); }
+    const i = view[at];
+    if (e.key === "escape" || (back && e.key === "left")) close(cx);
+    else if (e.key === "enter" || e.key === "space") { if (enter?.() === false) return; if (i >= 0) choose(i, cx, true); }
+    else if (e.key === "right" && i >= 0 && sub?.(i)) choose(i, cx, true);
     else {
-      const to = labels.length ? menuJump(view, e, labels, view.at) : -1;
+      const rows = labels.map((_, j) => j).filter((j) => !disabled?.(j));
+      const to = rows.length ? menuJump(view, e, rows.map((j) => labels[j]), rows.indexOf(i)) : -1;
       if (to < 0) return;
-      view.at = to;
+      view[at] = rows[to];
     }
     cx.stop_propagation(); cx.notify();
   };

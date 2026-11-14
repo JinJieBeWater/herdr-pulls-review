@@ -7,14 +7,15 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
 import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
-import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest } from "./panel.js";
-import { buildItems, contentWidth, groupFiles, pageLabel, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
+import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown } from "./panel.js";
+import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./controls.js";
 import { popupClosed } from "./review-menu.js";
 import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
-import { scopeOf, diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage, releaseScope } from "./review-scope.js";
+import { scopeOf, diffCommits, scopeList, pickListed, openScope, chosenBase, changesPage, releaseScope } from "./review-scope.js";
+import { openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu } from "./scope-header.js";
 import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
@@ -167,7 +168,7 @@ export default class ReviewPanel extends View {
   begin(space) {
     this.surfaceBorn = surfaceBorn("review", space);
     // What it showed, if that was this tab's: closed and added again, it starts from the default.
-    const shown = shared(`${PANE}.shown`)?.[space], was = (shown?.born ?? null) === this.surfaceBorn ? shown : null;
+    const was = reviewShown(space);
     this.space = space; this.root = was?.root ?? null; this.page = was?.page ?? null; this.base = was?.base ?? this.page;
     this.handled = Date.now() - FRESH; this.noRepo = false; this.evicted = false; this.awayAnalysis = null;
     // The width wrapped lines are cut at (`at`), a moment behind a width that's moving (nav-column.js holdWidth).

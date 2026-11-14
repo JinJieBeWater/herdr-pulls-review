@@ -1,11 +1,43 @@
 import { div, svg } from "gpui-kit";
-import { h_flex } from "gpui-base";
+import { v_flex, h_flex } from "gpui-base";
 import { settings, setShared, shared } from "herdr";
 import { button as drawButton } from "./button.js";
 import { glow } from "./tip.js";
-import { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField, popover, toPane, subState, subAt, popupClosed } from "./review-menu.js";
+import { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField, popupClosed } from "./review-menu.js";
+import { subPlace } from "./submenu.js";
 import { opener } from "./trigger.js";
-export { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField, popover, toPane, subState, subAt };
+export { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField };
+
+// The page's popovers (settings, status, the scope menu and its submenu): drawn inside the pane, not popups. A press outside
+// one closes it, unless it's on its submenu (`subRect`, subAt).
+export function popover(view, t, id, closes = true) {
+  return v_flex().id(id).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(14).shadow_lg()
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
+    .when(closes, el => el.on_mouse_down_out((e, cx) => { if (!inSub(view, e)) view.closePopup(cx, true); }));
+}
+
+export function toPane(view, e) {
+  const z = zoom(), o = view.paneAt ?? { x: 0, y: 0 }, b = e.bounds;
+  return { position: { x: (e.position.x - o.x) / z, y: (e.position.y - o.y) / z },
+    bounds: b && { x: (b.x - o.x) / z, y: (b.y - o.y) / z, width: b.width / z, height: b.height / z } };
+}
+
+function inSub(view, e) {
+  const r = view.subRect, p = r && toPane(view, e).position;
+  return Boolean(r) && p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+}
+
+export const subState = view => (view.subHover ??= {});
+
+export function subAt(view, row, [min, max], h) {
+  const side = subPlace(row, max, 0, view.width).side, room = side === "right" ? view.width - 8 - (row.x + row.width) : row.x - 8;
+  const w = Math.min(max, Math.max(min, room), view.width - 16), p = subPlace(row, w, 0, view.width);
+  const x = Math.max(8, Math.min(p.x, view.width - w - 8)), y = Math.max(8, Math.min(p.y, view.height - h - 8));
+  view.subRect = { x, y, width: w, height: h };
+  Object.assign(subState(view), { sub: view.subRect, side: p.side });
+  return { at: div().id("review-sub-at").absolute().left(x).top(y), w };
+}
 
 // Preferences every review pane shares: a pane's localStorage is its own, so a new pane would start from the defaults.
 const PREFS = `${PANE}.prefs`;

@@ -7,7 +7,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
 import { ghostButton } from "./button.js";
 
-export const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
+const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
 
 /** How wide the column may be in a page `body` wide: [least, most]. */
 export const navRange = (body) => [NAV_MIN, Math.max(NAV_MIN, Math.min(NAV_MAX, body - CONTENT_MIN))];

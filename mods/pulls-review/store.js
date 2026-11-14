@@ -7,8 +7,12 @@ import { shared, setShared } from "herdr";
 export const KEY = {
   settings: "t3.settings", pins: "t3.pins", notice: "t3.notice", focus: "t3.focus", spaceIcons: "t3.spaceIcons", agentOrder: "t3.agentOrder", panels: "t3.panels",
   home: "t3-tabs.home", undo: "t3-tabs.undo", unsettled: "t3-tabs.unsettled", compact: "t3-tabs.compact", recent: "t3-tabs.recent",
-  inboxRows: "t3-inbox.rows", agentsRows: "t3-agents.rows", actions: "t3-actions.actions", openTarget: "t3.openTarget", detailsItems: "t3-actions.detailsItems", menuChain: "t3-menu.chain",
+  inboxRows: "t3-inbox.rows", agentsRows: "t3-agents.rows", actions: "t3-actions.actions", openTarget: "t3.openTarget", detailsItems: "t3-actions.detailsItems",
 };
+
+// The stamp a popup's close() writes and the control that opens it reads (justClosed in focus.js): `<mod>.closed` when the mod
+// is the popup, `<mod>.<popup>Closed` when it also opens as that popup.
+export const closedKey = (mod, popup) => popup ? `${mod}.${popup}Closed` : `${mod}.closed`;
 
 // Each page keeps its own line mode; copies of this module run in each mod's localStorage.
 export const wrapLines = () => localStorage.getItem("lines.wrap") !== "false";
@@ -31,6 +35,8 @@ const RENAMED = [
   ["t3-inbox.notice", KEY.notice, false], ["t3-inbox.undo", KEY.undo, false], ["t3-inbox.unsettled", KEY.unsettled, false],
   ["space.icons", KEY.spaceIcons, false], ["t3-agent-order", KEY.agentOrder, false], ["t3-focus", KEY.focus, false],
   ["t3-picker.back", KEY.recent, false],
+  // t3-menu's submenu chain, now this run's popup-menu.js registry: only the old key goes.
+  ["t3-menu.chain", "", false],
 ];
 
 // Nothing in it: null, or an empty list or record, as a list nothing was ever pinned to.

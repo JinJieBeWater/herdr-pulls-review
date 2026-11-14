@@ -8,10 +8,10 @@ import { pierreFileIcon } from "./pierre-icons.js";
 
 // Pierre's compact density (factor 0.8): a 24 row, 6.4 in, a 16 icon and a 4.8 gap; a level is one icon and its gap, so a
 // folder's rows start under its name.
-export const TREE_ROW = 24;
+const TREE_ROW = 24;
 const PAD = 6.4, GAP = 4.8, ICON = 16, LEVEL = ICON + GAP;
 // A change's letter in its status's color, as T3's FileStatus.
-export const STATUS = { A: "#22c55e", D: "#ef4444", M: "#f59e0b", R: "#3b82f6", C: "#3b82f6" };
+const STATUS = { A: "#22c55e", D: "#ef4444", M: "#f59e0b", R: "#3b82f6", C: "#3b82f6" };
 
 // Names as people read them, case aside, digit runs by value. Keys are made once per entry: regexes per comparison exceed
 // Herdr's script budget on a folder of 12k entries. shortcut: digit runs past 16 digits compare as text; pad more if needed.
