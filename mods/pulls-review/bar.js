@@ -18,6 +18,7 @@ import { git, argPage, readReview, readPicks } from "./review-git.js";
 import { button, radiusOf } from "./button.js";
 import { statusMark } from "./status-mark.js";
 import { hang } from "./trigger.js";
+import { reviewShown } from "./panel.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -295,7 +296,7 @@ export function reviewBar(view, t, stopPress) {
   // A narrow bar's layout sets it (Herdr T3's bar-measure): each count with an icon for what it counts. Unset, the words.
   const compact = shared(KEY.compact);
   // What the space's review shows, when it's this repository's.
-  const reviewed = shared("review.shown")?.[space], here = reviewed?.root === r.root ? reviewed : null;
+  const reviewed = reviewShown(space), here = reviewed?.root === r.root ? reviewed : null;
   const pickLabel = `Change what to review${word ? `, analysis ${{ working: "running", done: "done", blocked: "failed" }[word]}` : ""}`;
   // The diff, whichever of its commits the pane is on.
   const isShown = (args) => here?.base === argPage(args, r.branch);

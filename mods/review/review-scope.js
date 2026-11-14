@@ -188,16 +188,13 @@ export const scopeItems = (t, rows, row) => {
 export function commitRow(view, t, items, i, icons = LU) {
   const item = items[i], on = item.page === view.page, c = item.commit, now = Date.now();
   const prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = Boolean(view.picks?.unpushed.includes(c.sha));
-  const lit = (over, cx) => { if (over && view.scopeListAt !== i) { view.scopeListAt = i; cx.notify(); } };
-  return h_flex().id(item.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4).cursor_pointer()
-    .when(i === view.scopeListAt, el => el.bg(t.selected)).on_hover(lit)
-    .on_click((_e, cx) => pickListed(view, item, cx))
-    .role("button").accessibility_label(`Review commit ${c.subject}${on ? ", shown" : ""}${out ? ", not pushed" : ""}`)
-    .child(pickMark(t, on, icons))
-    .child(h_flex().flex_1().min_w(0).gap(4)
-      .when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
-      .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))))
+  const label = h_flex().w_full().min_w(0).gap(4)
+    .when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
+    .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length)));
+  const trail = (out || c.time) ? h_flex().flex_none().gap(8).items_center()
     .when(out, el => el.child(div().flex_none().text_size(12).text_color(t.ansi2).child("↑")))
-    .when(Boolean(c.time), el => el.child(div().id(`${item.id}-time`).flex_none().text_size(12).text_color(t.dim).child(ago(c.time, now))));
+    .when(Boolean(c.time), el => el.child(div().id(`${item.id}-time`).flex_none().text_size(12).text_color(t.dim).child(ago(c.time, now)))) : null;
+  return menuRow(view, t, item.id, { at: [view, "scopeListAt", i], label, lead: pickMark(t, on, icons), trail, pick: (cx) => pickListed(view, item, cx) })
+    .accessibility_label(`Review commit ${c.subject}${on ? ", shown" : ""}${out ? ", not pushed" : ""}`);
 }
 

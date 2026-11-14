@@ -20,7 +20,8 @@ export const MENU_ROW = 28;
  */
 export function menuRow(view, t, id, { at: [state, key, i], label, open = false, icon, lead, trail, color, sub = false, disabled = false, hint, pick, also }) {
   const row = h_flex().id(id).h(MENU_ROW).px(8).gap(8).flex_none().items_center().rounded(4).text_size(14).text_color(color ?? t.foreground)
-    .role("button").accessibility_label(String(label))
+    // A label that isn't words (an element) names itself: the caller sets accessibility_label.
+    .role("button").when(typeof label === "string", (el) => el.accessibility_label(label))
     .when(disabled, (el) => el.opacity(DISABLED))
     .when(!disabled, (el) => el.cursor_pointer().when(state[key] === i || open, (el) => el.bg(t.selected)).on_hover(litOnHover(state, key, i))
       .when(Boolean(pick), (el) => el.on_click((_e, cx) => { cx.stop_propagation(); pick(cx); })))

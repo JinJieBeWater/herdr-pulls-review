@@ -348,6 +348,15 @@ const load = (props = {}, setup = record) => {
   assert.ok(!isLit("review-open"), "a commit opened as its own diff lights no count");
   pane("/branch/feat"); state["review.shown"].s.root = "/other";
   assert.ok(!isLit("review-open"), "another repository's diff lights nothing");
+  // In Herdr T3's panel, what the Review tab now open showed: one closed since (another `born`) lights nothing.
+  const layout = scope.layout;
+  scope.layout = () => ({ id: "root", children: [{ id: "panel", children: [{ id: "panel-body", active: "review", children: [{ id: "files" }, { id: "review" }, { id: "panel-empty" }] }] }] });
+  state["t3.panels"] = { s: { tabs: [{ id: "review", born: 9 }], active: "review", open: true } };
+  pane("/branch/feat"); state["review.shown"].s.born = 8;
+  assert.ok(!isLit("review-open"), "a closed Review tab's diff lights nothing");
+  state["review.shown"].s.born = 9;
+  assert.ok(isLit("review-open"), "the open one's does");
+  scope.layout = layout; delete state["t3.panels"];
   // The logo's menu picks what to review, whatever the review shows: the log and the branches, both on their own page.
   pane("/commit/c2");
   gits.length = 0;

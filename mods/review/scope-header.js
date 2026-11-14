@@ -12,6 +12,7 @@ import { BASES, chosenBase, changesPage, diffCommits, repo, scopeOf, scopeRows, 
 import { opener } from "./trigger.js";
 import { button as drawButton, ghostButton } from "./button.js";
 import { glow } from "./tip.js";
+import { menuRow } from "./menu-row.js";
 
 /** Opens the submenu `page` ("commits") beside its row, which stays lit; the keyboard is its search's. */
 export function openScopePage(view, page, cx, lit = -1) {
@@ -152,23 +153,18 @@ const BASE_W = 288; // T3's w-72
  *  256 tall at most. A row with a local and a remote ref has T3's switch to take the remote one; a remote-only row, a check. */
 export function baseMenu(view, t) {
   const items = baseList(view), picked = chosenBase(view), height = Math.min(items.length * MODEL_ROW, 256);
-  const lit = (i) => (over, cx) => { if (over && view.baseAt !== i) { view.baseAt = i; cx.notify(); } };
   const draw = (i) => {
     const item = items[i], on = item.value === picked, remote = Boolean(item.remote) && item.value === item.remote;
-    return h_flex().id(item.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4)
-      .when(i === view.baseAt, el => el.bg(t.selected)).on_hover(lit(i))
-      .role("radio_button").accessibility_label(`${item.label}${on ? ", picked" : ""}`)
-      .on_click((_e, cx) => pickBase(view, item.value, cx))
-      .child(pickMark(t, on))
-      .child(div().flex_1().min_w(0).truncate().child(item.label))
-      .child(div().w(32).flex_none().flex().justify_end()
+    return menuRow(view, t, item.id, { at: [view, "baseAt", i], label: item.label, lead: pickMark(t, on), pick: (cx) => pickBase(view, item.value, cx),
+      trail: div().w(32).flex_none().flex().justify_end()
         .when(Boolean(item.local && item.remote), el => el.child(div().id(`${item.id}-remote`).w(22).h(14).p(1).flex().rounded_full()
           .bg(remote ? t.accent : t.input).when(remote, el => el.justify_end())
           .role("switch").accessibility_label(`Use remote version of ${item.label}${remote ? ", on" : ""}`)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => { cx.stop_propagation(); pickBase(view, remote ? item.local : item.remote, cx, true); })
           .child(div().size(12).rounded_full().bg(t.background))))
-        .when(Boolean(item.remote) && !item.local, el => el.child(svg(`${LU}/check.svg`).size(12).text_color(t.dim))));
+        .when(Boolean(item.remote) && !item.local, el => el.child(svg(`${LU}/check.svg`).size(12).text_color(t.dim))) })
+      .role("radio_button").accessibility_label(`${item.label}${on ? ", picked" : ""}`);
   };
   const x = Math.max(8, Math.min(view.baseX ?? 16, view.width - BASE_W - 8));
   return div().absolute().top(36).left(x).child(popover(view, t, "review-base-menu").w(Math.min(BASE_W, view.width - 16)).p(4)
