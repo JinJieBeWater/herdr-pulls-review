@@ -15,10 +15,11 @@ import { step, scrollList } from "./list.js";
 import { stop, pressed, justClosed } from "./focus.js";
 import { KEY, closedKey } from "./store.js";
 import { git, argPage, readReview, readPicks } from "./review-git.js";
-import { button, radiusOf } from "./button.js";
+import { button, radiusOf, tint } from "./button.js";
+import { menuRow, MENU_ROW } from "./menu-row.js";
 import { statusMark } from "./status-mark.js";
 import { hang } from "./trigger.js";
-import { reviewShown } from "./panel.js";
+import { reviewShown, REVIEW_STATUS } from "./panel.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -28,7 +29,7 @@ const MENU_CLOSED = closedKey(MOD, "menu");
 export const menuClosed = () => setShared(MENU_CLOSED, Date.now());
 
 // The menu's rows (T3's MenuItem), and what sits above them: its padding, search field and either the pages' switch or a title.
-const MENU_ROW = 28, MENU_W = 368, menuChrome = (tabs) => 8 + 43 + (tabs ? 32 : 28);
+const MENU_W = 368, menuChrome = (tabs) => 8 + 43 + (tabs ? 32 : 28);
 
 // The shipped `changes` mod's lookup, except for a mod pane (below).
 export function reviewLocation() {
@@ -157,7 +158,7 @@ function setTab(view, tab, cx) {
 // The logo's menu, this mod opened as an overlay with props.menu (main.js).
 export function reviewMenu(view) {
   const t = theme(), { base, branch, height, upstream } = props(), { commits, branches } = reviewMatches(view);
-  const now = Date.now(), picks = menuPicks(view), lit = picks[view.at]?.id;
+  const now = Date.now(), picks = menuPicks(view);
   // The card follows the highlight, by pointer or key: a commit's opens, anything else's closes it.
   const highlight = (at, cx) => {
     view.at = at;
@@ -168,20 +169,19 @@ export function reviewMenu(view) {
   // As T3's MenuGroupLabel.
   const title = (text) => div().h(28).px(8).flex_none().flex().items_center().text_size(12).font_medium().text_color(t.dim).child(text);
   const tabs = menuTabs(), tab = view.tab, scope = tab === "branches" ? `vs ${base}` : branch === "(detached)" ? "" : `on ${branch}`;
-  // As T3's segmented ToggleGroup.
+  // As T3's segmented ToggleGroup; the page shown on a popover's on fill (button.js tint), as a pressed button on a card.
   const segment = (id, label, n) => h_flex().id(`review-tab-${id}`).h(24).px(10).gap(8).flex_none().items_center().rounded(6).text_size(12).font_medium()
-    .when(id === tab, el => el.bg(t.selected).text_color(t.foreground)).when(id !== tab, el => el.text_color(t.dim).hover(s => s.bg(t.foreground + "0a")))
+    .when(id === tab, el => el.bg(tint(t, "card", true)).text_color(t.foreground)).when(id !== tab, el => el.text_color(t.dim).hover(s => s.bg(t.foreground + "0a")))
     .role("button").accessibility_label(`${label}, ${n}${id === tab ? ", shown" : ""}`).on_click((_e, cx) => setTab(view, id, cx))
     .child(label).child(div().text_color(t.dim).child(String(n)));
-  // As the Actions and New menus: the highlighted row `selected`, set by the pointer or ↑/↓, the others lifted faintly on hover.
-  const row = (id, name, action, cells) => h_flex().id(id).h(MENU_ROW).px(8).gap(8).flex_none().items_center().rounded(4).text_color(t.foreground)
-    .when(id === lit, el => el.bg(t.selected)).when(id !== lit, el => el.hover(s => s.bg(t.foreground + "0a")))
-    .on_hover((on, cx) => {
-      if (on) { view.hovered = id; highlight(picks.findIndex(p => p.id === id), cx); }
-      else if (view.hovered === id) { view.hovered = null; detailsFor(view, null, cx); cx.notify(); }
-    })
-    .on_mouse_move((e) => detailsAt(view, id, e))
-    .role("button").accessibility_label(name).on_click(action).children(cells);
+  // menu-row.js's row, lit by the pointer or ↑/↓ (list `i` is pick `i`); its hover also opens the row's card, its last child.
+  const row = (i, id, name, action, { icon = null, label, trail, card }) => menuRow(view, t, id, { at: [view, "at", i], label, icon, trail, pick: (cx) => action(null, cx),
+    also: (el) => el.accessibility_label(name).child(card)
+      .on_hover((on, cx) => {
+        if (on) { view.hovered = id; highlight(i, cx); }
+        else if (view.hovered === id) { view.hovered = null; detailsFor(view, null, cx); cx.notify(); }
+      })
+      .on_mouse_move((e) => detailsAt(view, id, e)) });
   // Rows keep their handlers, as a virtual list's can't: a hovered commit opens its card. Only the rows in view are built.
   // The list shown is the picks, row for row. The wheel takes the highlight along, and a card moves off.
   const list = (id, count, draw) => scrollList(view, id, { count, row: MENU_ROW, at: view.at, draw, wheeled: (keep, cx) => {
@@ -211,25 +211,25 @@ export function reviewMenu(view) {
     .when(!tabs, el => el.child(title(tab === "branches" ? `Branches vs ${base}` : branch === "(detached)" ? "Commits" : `Commits on ${branch}`)))
     .when(tab === "branches", el => el.child(list("review-branches", branches.length, (i) => {
       const b = branches[i], id = `review-branch-${b.name}`;
-      return row(id, `Review branch ${b.name}` + (b.count === undefined ? "" : `, ${b.count} ahead of ${base}`), (_e, cx) => openPick(branchArgs(b), cx), [
-        svg("mods/pulls-review/icons/git-branch.svg").size(16).mx(-2).flex_none().text_color(t.dim),
-        h_flex().flex_1().min_w(0).gap(8)
+      return row(i, id, `Review branch ${b.name}` + (b.count === undefined ? "" : `, ${b.count} ahead of ${base}`), (_e, cx) => openPick(branchArgs(b), cx), {
+        icon: svg("mods/pulls-review/icons/git-branch.svg").size(16).flex_none().text_color(t.dim),
+        label: h_flex().min_w(0).gap(8)
           .child(div().flex_none().max_w(160).truncate().child(b.name))
           .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(b.subject ?? "")),
-        h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
+        trail: h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
           .when(b.count !== undefined, el => el.child(`${b.count} ahead`))
           .child(b.time ? ago(b.time, now) : ""),
-        branchCard(view, t, id, b, base, now)]);
+        card: branchCard(view, t, id, b, base, now) });
     })))
     .when(tab === "commits", el => el.child(list("review-commit-list", commits.length, (i) => {
         const c = commits[i], id = `review-commit-${c.sha}`, prefix = PREFIX.exec(c.subject)?.[0] ?? "", out = view.unpushed.has(c.sha);
-        return row(id, `Review commit ${c.subject}` + (out ? ", not pushed" : ""), (_e, cx) => openPick([c.sha], cx), [
-          h_flex().flex_1().min_w(0).gap(4).when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
+        return row(i, id, `Review commit ${c.subject}` + (out ? ", not pushed" : ""), (_e, cx) => openPick([c.sha], cx), {
+          label: h_flex().min_w(0).gap(4).when(Boolean(prefix), el => el.child(div().flex_none().text_color(t.dim).child(prefix.trim())))
             .child(div().flex_1().min_w(0).truncate().child(c.subject.slice(prefix.length))),
-          h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
+          trail: h_flex().flex_none().ml(4).gap(8).items_center().text_size(12).text_color(t.dim)
             .when(out, el => el.child(div().text_color(t.ansi2).child("↑")))
             .child(c.time ? ago(c.time, now) : ""),
-          commitCard(view, t, id, c, upstream, out, now)]);
+          card: commitCard(view, t, id, c, upstream, out, now) });
       })))
     .when(!picks.length, el => el.child(div().p(8).text_center().text_color(t.dim).child("No matches")));
 }
@@ -286,7 +286,7 @@ function openPicks(view, r, at, still = () => true) {
 
 export function reviewBar(view, t, stopPress) {
   // How the space's analysis goes: the panel head's mark, here too (docs/adr/0011).
-  const space = spaces().find(s => s.active)?.id, word = shared("review.status")?.[space], mark = statusMark(t, word, 14);
+  const space = spaces().find(s => s.active)?.id, word = shared(REVIEW_STATUS)?.[space], mark = statusMark(t, word, 14);
   // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
   if (props()?.toggle) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017).
   // Looked up on each render, so the frame that shows another space already shows its own counts.

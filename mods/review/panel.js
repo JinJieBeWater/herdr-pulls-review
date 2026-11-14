@@ -8,9 +8,10 @@ import { GROUP_GAP } from "./button.js";
 import { workFolder } from "./terminal-context.js";
 import { surfaceActivate, surfaceAdd, surfaceOpenFile, surfaceNavigate, surfaceClose } from "./surfaces.js";
 
-const find = (node, id) => node?.id === id ? node : (node?.children ?? []).reduce((hit, c) => hit ?? find(c, id), null);
+/** Layout `node`'s descendant (or itself) with `id`, else null. */
+export const layoutNode = (node, id) => node?.id === id ? node : (node?.children ?? []).reduce((hit, c) => hit ?? layoutNode(c, id), null);
 const activeSpaceId = () => spaces().find(p => p.active)?.id;
-const panelSlots = () => (find(layout(), "panel-body")?.children ?? []).map(c => c.id);
+const panelSlots = () => (layoutNode(layout(), "panel-body")?.children ?? []).map(c => c.id);
 // A tab's instance name: later than any this copy gave, so a tab closed and added again in one moment is still another.
 let lastBorn = 0;
 const newBorn = () => (lastBorn = Math.max(Date.now(), lastBorn + 1));
@@ -30,7 +31,7 @@ export function surfaceBorn(id, space = activeSpaceId()) {
 
 /** What shows: open, wide, the stack's slot (`page`) and slots; `owns` this layout's surfaces; the active space's tabs. */
 export function panelState() {
-  const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body"), work = find(root, "work");
+  const root = layout(), panel = layoutNode(root, "panel"), body = layoutNode(root, "panel-body"), work = layoutNode(root, "work");
   const slots = (body?.children ?? []).map(c => c.id);
   return { open: Boolean(panel && !panel.hidden), page: body?.active ?? null, pages: slots, owns: slots.includes("panel-empty"),
     wide: Boolean(panel && work?.hidden), ...surfacesFor(activeSpaceId(), slots) };
@@ -47,7 +48,7 @@ export function windowEndPx(open) {
 // the toggle where they end up. t3-tabs' fit() would size it only from that frame's measure, a frame late.
 function showPanel(open) {
   run(open ? "layout.show" : "layout.hide", { id: "panel" });
-  if (find(layout(), "window-end")) run("layout.resize", { id: "window-end", px: windowEndPx(open) });
+  if (layoutNode(layout(), "window-end")) run("layout.resize", { id: "window-end", px: windowEndPx(open) });
 }
 
 const slot = (active) => active === "review" ? "review" : active ? "files" : "panel-empty";
@@ -135,9 +136,13 @@ export function toggleWide() {
   save({ wide: !s.wide });
 }
 
+// The Review extra's keys, by space id, that the layout reads: what each space's Review shows (its scope, written by Review's
+// keep()) and its run's status word. Named once here, as store.js's KEY names the layout's own (an extra's aren't `t3`).
+export const REVIEW_SHOWN = "review.shown", REVIEW_STATUS = "review.status";
+
 /** What `space`'s Review shows (`review.shown`), while the tab that showed it is still there (its `born`): a closed one's is gone. */
 export function reviewShown(space) {
-  const shown = shared("review.shown")?.[space];
+  const shown = shared(REVIEW_SHOWN)?.[space];
   return shown && (shown.born ?? null) === surfaceBorn("review", space) ? shown : null;
 }
 

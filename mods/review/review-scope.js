@@ -4,9 +4,9 @@
 // the menu supplies two methods: `pick(page, { analyze, base, stays }, cx)` asks for that range (the Review page and Details
 // each ask their own way, panel.js reviewRequest), and `openCommits(cx, lit)` opens Commits where that view puts it. The
 // Review page's header, base picker and in-page menus are its own (extras/mods/review/scope-header.js).
-import { div, svg } from "gpui-kit";
+import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { shared, setShared } from "herdr";
+import { shared } from "herdr";
 import { scrollList, step, menuJump } from "./list.js";
 import { git, readReview, readPicks, readRefs, argPage } from "./review-git.js";
 import { PANE, LU, MODEL_ROW, pickMark, searchField } from "./review-menu.js";

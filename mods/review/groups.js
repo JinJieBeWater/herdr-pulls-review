@@ -29,7 +29,7 @@ export function criticalMark(t, size = 16) {
 }
 
 // As the app's countGroupStats, countGroupFiles and groupProgress: a group's own files and its subgroups'.
-export function groupStats(view, g) {
+function groupStats(view, g) {
   const files = groupFiles(g).map(path => view.fileAt(path)).filter(Boolean);
   return {
     added: files.reduce((n, f) => n + f.additions, 0), deleted: files.reduce((n, f) => n + f.deletions, 0), count: files.length,

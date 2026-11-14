@@ -24,7 +24,7 @@ export function openScopePage(view, page, cx, lit = -1) {
 }
 
 /** Closes the submenu, the keyboard back on the menu: by keys, on the row that opened it (`lit`); by the pointer, where it is. */
-export function scopeBack(view, cx, lit = true) {
+function scopeBack(view, cx, lit = true) {
   const from = view.scopePage;
   view.scopePage = null; view.scopeSearch.set_value("");
   if (lit) view.scopeAt = scopeRows(view).findIndex(row => row.sub === from);

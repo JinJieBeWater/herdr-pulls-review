@@ -54,7 +54,7 @@ const env = {
   // Herdr T3's layout: the space panel, its pages Files and Review.
   layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", hidden: true, children: [{ id: "panel-body", active: "files", children: [{ id: "files" }, { id: "review" }] }] }] }),
 };
-const source = ["button.js", "store.js", "details.js", "tip.js", "list.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
+const source = ["button.js", "store.js", "details.js", "tip.js", "list.js", "menu-row.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
   .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
 // Timers fire at once: a card that waits 150ms is up by the next render.
 const cx = { notify() {}, stop_propagation() {}, spawn: (f) => f(cx), focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every() {}, after: (_ms, f) => (f(cx), { cancel() {} }) } };
@@ -374,7 +374,7 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual(ids, ["review-commit-c3", "review-commit-c2", "review-commit-c1"]);
   assert.deepEqual(strings(find(inMenu.render(), "review-menu")).filter(text => /^(Commits|Branches|\d+|on feat)$/.test(text)), ["Commits", "3", "Branches", "1", "on feat"],
     "the switch counts each page, and says what the page shown lists");
-  // The highlight as the Actions and New menus': `selected`, on the top row first, moved by ↑/↓ (round) and by the pointer.
+  // The highlight as every menu's (menu-row.js): `selected`, on the top row first, moved by ↑/↓ (round) and by the pointer.
   const highlighted = () => ids.filter(id => find(inMenu.render(), id)?.style.bg === theme.selected);
   assert.deepEqual(highlighted(), ["review-commit-c3"]);
   const key = (k) => fire(find(inMenu.render(), "review-menu"), "on_key_down", { key: k }, cx);
@@ -386,7 +386,6 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual(highlighted(), ["review-commit-c1"], "up from the top goes round to the bottom");
   fire(find(inMenu.render(), "review-commit-c3"), "on_hover", true, cx);
   assert.deepEqual(highlighted(), ["review-commit-c3"], "the pointer moves it too");
-  assert.equal(find(inMenu.render(), "review-commit-c2").hoverStyle.bg, theme.foreground + "0a", "the rest lift faintly under the pointer");
   fire(find(inMenu.render(), "review-commit-c1"), "on_click", {}, cx);
   assert.deepEqual(launched.at(-1), { root: "/repo", args: ["c1"], page: "/commit/c1" }, "a pick opens it as its own diff, unanalyzed");
   // Tab turns to the branches' page, and back.

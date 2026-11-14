@@ -4,10 +4,10 @@
 // `{ space, root, page, base?, n, analyze }`. The Files page asks nothing of it (docs/adr/0015).
 // Everything comes from the jin.review daemon, which listens on this machine only: a remote space has no review.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
 import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
-import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown } from "./panel.js";
+import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown, REVIEW_SHOWN, REVIEW_STATUS } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./controls.js";
 import { GROUP_GAP } from "./button.js";
@@ -252,14 +252,14 @@ export default class ReviewPanel extends View {
     if (this.wasRunning && !real) this.news = this.analyzeError ?? a?.error ? "blocked" : "done";
     this.wasRunning = real;
     if (this.analyzing() || this.onScreen()) this.news = null;
-    this.keep("status", this.analyzing() ? "working" : this.news ?? null);
+    this.keep(REVIEW_STATUS, this.analyzing() ? "working" : this.news ?? null);
   }
 
   // This space's entry in a value shared by space, none with no value. Every write redraws every mod: only a change, and
   // spaces gone (or the tabs these were keyed by before) drop out.
-  keep(name, value) {
+  keep(key, value) {
     if (!this.surfaceAlive()) return;
-    const key = `${PANE}.${name}`, all = shared(key) ?? {}, ids = new Set(spaces().map(s => s.id));
+    const all = shared(key) ?? {}, ids = new Set(spaces().map(s => s.id));
     const live = Object.entries(all).filter(([id]) => id !== this.space && ids.has(id));
     if (JSON.stringify(all[this.space] ?? null) === JSON.stringify(value) && live.length === Object.keys(all).length - (this.space in all ? 1 : 0)) return;
     setShared(key, Object.fromEntries(value ? [...live, [this.space, value]] : live));
@@ -268,7 +268,7 @@ export default class ReviewPanel extends View {
   // What this space's review shows: for the Review bar to light its count, and to show it again after a restart.
   // `label`: its scope button's words (a commit's subject once read), so Details names the same range.
   // `born`: the tab it was shown in (panel.js), so a closed tab's range isn't taken for a new one's, here or in Details.
-  publish() { if (this.page) this.keep("shown", { root: this.root, page: this.page, base: this.base, label: scopeOf(this).label, ...(this.surfaceBorn != null && { born: this.surfaceBorn }) }); }
+  publish() { if (this.page) this.keep(REVIEW_SHOWN, { root: this.root, page: this.page, base: this.base, label: scopeOf(this).label, ...(this.surfaceBorn != null && { born: this.surfaceBorn }) }); }
 
   diffCommits() { return diffCommits(this); }
 

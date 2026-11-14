@@ -122,7 +122,7 @@ function underFolders(view, group) {
 
 // Folders start folded, as Files'; a subgroup's row (`group:<key>`) open. `flipped` holds the rows turned from that.
 export const isOpen = (view, path) => /^group:[^/]*$/.test(path) !== view.flipped.has(path);
-export function setOpen(view, path, open) {
+function setOpen(view, path, open) {
   if (isOpen(view, path) === open) return false;
   view.flipped.has(path) ? view.flipped.delete(path) : view.flipped.add(path);
   view.dirsMoved = (view.dirsMoved ?? 0) + 1;

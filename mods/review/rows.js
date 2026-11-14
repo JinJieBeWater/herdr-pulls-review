@@ -9,7 +9,7 @@ export const CHAR = 7.25, MAX_COLUMNS = 1000;
 // Code lines go to the list in runs of up to this many, one item each: Herdr's v_virtual_list takes at most 10000 items,
 // which a group of a few thousand changed lines passes when each line is one.
 // shortcut: a group past about 5000 hunks still passes it; fold its files there if one ever does.
-export const RUN = 32;
+const RUN = 32;
 
 /** Where code starts in a row, past the line numbers and sign: notes and placeholders line up with it. */
 export const codeInset = (split) => split ? 52 : 92;
