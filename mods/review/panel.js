@@ -2,8 +2,9 @@
 // Each space keeps `{ tabs, active, open, wide }` in t3.panels (docs/internals/storage.md); surfaces.js says what a step does
 // to the tabs, this stores it and lays the panel out. Where Herdr's own layout docks the Review extra in its stack instead
 // (no `panel-empty` slot), the host owns the head and these only show the page.
-import { layout, run, spaces, shared, setShared, exec } from "herdr";
+import { layout, run, spaces, shared, setShared, exec, window } from "herdr";
 import { KEY } from "./store.js";
+import { GROUP_GAP } from "./button.js";
 import { workFolder } from "./terminal-context.js";
 import { surfaceActivate, surfaceAdd, surfaceOpenFile, surfaceNavigate, surfaceClose } from "./surfaces.js";
 
@@ -35,6 +36,20 @@ export function panelState() {
     wide: Boolean(panel && work?.hidden), ...surfacesFor(activeSpaceId(), slots) };
 }
 
+/** The tab bar's window part (t3-tabs' `window-end` block) as it draws with the panel `open` or not, logical px: closed, the
+ *  panel's 28 toggle a group's gap after Details, then the window's own buttons 8 on, three of 28; open, nothing, the panel
+ *  head has them. */
+export function windowEndPx(open) {
+  return open ? 0 : (panelSlots().length ? GROUP_GAP + 28 : 0) + (window()?.buttons ? 8 + 3 * 28 : 0);
+}
+
+// The panel shown or put away, the window part sized for it in the same go: the frame that shows the change has Details and
+// the toggle where they end up. t3-tabs' fit() would size it only from that frame's measure, a frame late.
+function showPanel(open) {
+  run(open ? "layout.show" : "layout.hide", { id: "panel" });
+  if (find(layout(), "window-end")) run("layout.resize", { id: "window-end", px: windowEndPx(open) });
+}
+
 const slot = (active) => active === "review" ? "review" : active ? "files" : "panel-empty";
 
 // The active space's record, only its fields: what an older build kept beside them goes at the first write.
@@ -49,7 +64,7 @@ function save(want) {
 function showSurfaces(next, keepDetails = false) {
   save({ tabs: next.tabs, active: next.active, open: true });
   run("layout.select", { stack: "panel-body", child: slot(next.active) });
-  run("layout.show", { id: "panel" });
+  showPanel(true);
   if (!keepDetails) run("t3-actions.dismiss-details", {});
 }
 
@@ -65,7 +80,7 @@ export function activateSurface(id, keepDetails = false) {
 export function showPage(page, keepDetails = false) {
   const s = panelState();
   if (!s.pages.includes(page)) return false;
-  if (!s.owns) { run("layout.select", { stack: "panel-body", child: page }); run("layout.show", { id: "panel" }); return true; }
+  if (!s.owns) { run("layout.select", { stack: "panel-body", child: page }); showPanel(true); return true; }
   showSurfaces(surfaceAdd(s, page, newBorn()), keepDetails);
   return true;
 }
@@ -93,7 +108,7 @@ export function closeSurface(id = panelState().active, mode = "one") {
 export function hidePanel() {
   const s = panelState();
   if (s.wide) run("layout.show", { id: "work" });
-  run("layout.hide", { id: "panel" });
+  showPanel(false);
   if (s.owns) save({ open: false, wide: false });
 }
 
@@ -106,7 +121,7 @@ export function togglePanel(page) {
   else if (s.active) activateSurface(s.active);
   else {
     run("layout.select", { stack: "panel-body", child: "panel-empty" });
-    run("layout.show", { id: "panel" });
+    showPanel(true);
     run("t3-actions.dismiss-details", {});
     save({ open: true, wide: false });
   }
@@ -163,7 +178,7 @@ function keptFor(space) {
 function lay(want) {
   run("layout.select", { stack: "panel-body", child: want.page });
   run(want.wide ? "layout.hide" : "layout.show", { id: "work" });
-  run(want.open ? "layout.show" : "layout.hide", { id: "panel" });
+  showPanel(want.open);
 }
 
 /**

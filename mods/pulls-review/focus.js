@@ -41,6 +41,12 @@ export function onStop(view) {
   return null;
 }
 
+// The keyboard onto stop `id`, ringed: Tab's work done by keys in an overlay (Details' arrows), or enter's. Not in render.
+export function focusStop(view, id) {
+  view.fs.keyboard = true;
+  handleOf(view.fs, id)?.focus();
+}
+
 // T3's group-focus-within: what a row shows hovered it shows with the keyboard on it or inside it.
 export const within = (view, ids) => ids.includes(onStop(view));
 
@@ -64,11 +70,10 @@ function watch(view, cx) {
 // pane.go landed here: onto the stop it left, else `first`, which is always drawn. Once only: a stop gone from the list loses
 // the keyboard, and Herdr would hand it back here for another try.
 export function enter(view, cx, first) {
-  const s = view.fs, h = handleOf(s, s.last ?? first);
+  const s = view.fs, id = s.last ?? first;
   s.last = null;
-  s.keyboard = true;
   setShared(MODE, s.me);
-  h?.focus();
+  focusStop(view, id);
   watch(view, cx);
   cx.notify();
 }

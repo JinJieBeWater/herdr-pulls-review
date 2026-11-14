@@ -10,6 +10,7 @@ import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindo
 import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./controls.js";
+import { GROUP_GAP } from "./button.js";
 import { popupClosed } from "./review-menu.js";
 import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
@@ -435,7 +436,7 @@ export default class ReviewPanel extends View {
     if (this.panel.front && this.panel.front.space !== space?.id) releaseScope(this.panel.front);
     // With no review to show, the toolbar names the page alone and keeps the column's switch, greyed.
     const note = (body) => v_flex().id("review-pane").size_full().text_color(t.foreground).text_size(12)
-      .child(h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center()
         .child(div().id("review-title").flex_1().pl(8).font_medium().child("Review"))
         .child(navToggle(this, t, "mods/review", "review-nav-toggle", this.navOpen, () => {}, true)))
       .child(div().id("review-note").flex_1().min_h(0).child(body));
@@ -504,9 +505,10 @@ export default class ReviewPanel extends View {
     if (this.popup === "status" && (!this.review || this.switching || !(running || error))) this.popup = null;
     // Set again by the submenu drawn, if one is.
     this.subRect = null;
-    // The settings and fold menus hang 4 under their 28 buttons (38 down the 40 header), right-aligned with them: past the 12
-    // inset and the tree's switch (header.js), the buttons touching.
-    const right = 12 + 28, below = 38;
+    // The settings and fold menus hang 4 under their 28 buttons (38 down the 40 header), right-aligned with them: the
+    // settings' right edge past the 12 inset, the tree's switch and the group's gap (header.js), the fold's a button and a gap on.
+    // Keys open them too, with no press to place them by.
+    const right = 12 + 28 + GROUP_GAP, below = 38;
     return v_flex().id("review-pane").relative().size_full().min_h(0).text_color(t.foreground).text_size(12)
       // cmd-w and cmd-t are keys.json's (mod:review): review.close, t3-chrome.surface-menu.
       .track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
@@ -529,16 +531,16 @@ export default class ReviewPanel extends View {
           // The group shown's summary over its diff, as the app's group header: its title 13 medium, its words 12.
           content: v_flex().size_full().min_w(0)
             // A rule-based group's summary is the daemon's boilerplate for its folder rule.
-            .when(Boolean(group?.summary) && this.review.source !== "rule-based", el => el.child(v_flex().id("group-summary").flex_none().max_h(160).overflow_hidden().px(12).py(10).gap(4).border_b(1).border_color(t.border)
+            .when(Boolean(group?.summary) && this.review.source !== "rule-based", el => el.child(v_flex().id("group-summary").flex_none().max_h(160).overflow_hidden().px(12).py(10).gap(4)
               .child(div().text_size(13).font_medium().child(group.label))
               .child(TextView.markdown(`summary-${group.key}`, group.summary).selectable(true).scrollable(false).text_size(12).text_color(t.muted))))
             .child(div().flex_1().min_h(0).child(diffView(this, t))) }))).when(Boolean(this.switching), el => el.opacity(DISABLED)))
       // Built only while open: render runs on every live change, and a catalog runs to hundreds of rows.
       // Each 4 under its button (T3's sideOffset) in the 40 header.
-      .when(this.popup === "settings", el => el.child(div().absolute().top(below).right(right).child(settingsPanel(this, t))))
+      .when(this.popup === "settings", el => el.child(div().id("settings-anchor").absolute().top(below).right(right).child(settingsPanel(this, t))))
       .when(this.popup === "settings" && Boolean(this.settingsPage), el => el.child(settingsSub(this, t)))
       // Under its button, the one left of the gear.
-      .when(this.popup === "fold" && Boolean(this.review) && !this.switching, el => el.child(div().absolute().top(below).right(right + 28).child(foldMenu(this, t))))
+      .when(this.popup === "fold" && Boolean(this.review) && !this.switching, el => el.child(div().id("fold-anchor").absolute().top(below).right(right + 28 + GROUP_GAP).child(foldMenu(this, t))))
       // Under the header's left end, where the scope button starts.
       .when(this.popup === "scope", el => el.child(div().absolute().top(below).left(12).child(scopeMenu(this, t))))
       .when(this.popup === "scope" && Boolean(this.scopePage), el => el.child(scopeSub(this, t)))

@@ -10,7 +10,7 @@ import { LU, COMPACT, MODEL_ROW, pickMark, searchField, popupClosed } from "./re
 import { popover, toPane, subState, subAt } from "./controls.js";
 import { BASES, chosenBase, changesPage, diffCommits, repo, scopeOf, scopeRows, scopeList, scopeRow, scopeItems, readScope, releaseScope, openReviewPage, menuKey, commitsKey, commitsBody } from "./review-scope.js";
 import { opener } from "./trigger.js";
-import { button as drawButton, ghostButton } from "./button.js";
+import { button as drawButton, ghostButton, GROUP_GAP } from "./button.js";
 import { glow } from "./tip.js";
 import { menuRow } from "./menu-row.js";
 
@@ -74,10 +74,10 @@ export function scopeHeader(view, t, { trigger = true } = {}) {
   // A commit opened as its own diff, or no longer listed (as after an amend), has nowhere to step.
   const steps = s.sha && view.page !== view.base && at >= 0;
   // The Review header's 40 bar: its buttons sm on chrome (t3-tokens「规则」R2, P7).
-  const go = (id, icon, label, c) => ghostButton(view, t, id, { icon, label, act: (cx) => openReviewPage(view, `/commit/${c.sha}`, cx), disabled: !c, size: "sm", surface: "chrome" });
+  const go = (id, icon, label, c) => ghostButton(view, t, id, { icon, label, act: (cx) => openReviewPage(view, `/commit/${c.sha}`, cx), disabled: !c, size: "sm", iconSize: 14, surface: "chrome" });
   return h_flex().id("review-scope-row").min_w(0).gap(12).items_center()
     .when(trigger, el => el.child(scopeButton(view, t, s)))
-    .when(Boolean(s.sha), el => el.child(h_flex().flex_none().gap(2).items_center()
+    .when(Boolean(s.sha), el => el.child(h_flex().flex_none().gap(GROUP_GAP).items_center()
       .child(div().id("review-sha").mr(4).text_size(12).text_color(t.dim).child(s.sha.slice(0, 7)))
       .when(steps, el => el
         .child(go("commit-older", `${LU}/chevron-left.svg`, "Older commit", list[at - 1]))

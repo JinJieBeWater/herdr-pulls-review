@@ -3,6 +3,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { groupFiles } from "./rows.js";
 import { LU, zoom, isLight, diffStats, FADED } from "./controls.js";
 import { hoverKept } from "./tip.js";
+import { tint } from "./button.js";
 
 // The app's category icons (Lucide here, for one icon set across the layout; the app's are Phosphor duotone, in its own shapes) and hues (Tailwind's 300 on dark, 800 on light), by category.
 const CATEGORY = {
@@ -58,16 +59,16 @@ export function groupTabs(view, t, pick) {
   if (view.tabStats?.review !== view.review || view.tabStats.marks !== view.marks) {
     view.tabStats = { review: view.review, marks: view.marks, stats: new Map(groups.map(g => [g.key, groupStats(view, g)])) };
   }
-  // Upstream's DiffGroupNavItem in T3's tokens: two lines, the name over its counts, 8 by 2 in, 6 apart, a 1px outline at
-  // radius 8 (T3's outline button) rather than a tab's coloured foot; the row 12 in, on the toolbar's line, ruled off as it is.
-  // The group shown is lit at 12%, as the tree's selected row, its icon in its hue; the others fade until hovered.
-  return div().id("group-tabs").flex_none().border_b(1).border_color(t.border)
+  // Upstream's DiffGroupNavItem in T3's tokens: two lines, the name over its counts, 8 by 2 in, 6 apart, radius 8, no outline
+  // and no coloured foot; the row 12 in, on the toolbar's line, unruled as T3's subheaders in the panel. The group shown is lit
+  // as the panel's tabs (button.js tint), its icon in its hue; the others fade until hovered.
+  return div().id("group-tabs").flex_none()
     .child(h_flex().id("group-tab-row").px(12).py(8).gap(6).overflow_x_scroll().children(groups.map(g => {
       const id = `group-tab-${g.key}`, active = g.key === view.groupKey;
       const stats = view.tabStats.stats.get(g.key), critical = g.critical || g.children.some(c => c.critical);
-      return hoverKept(view, "hovered", id, h_flex().id(id)).flex_none().px(8).py(2).gap(8).items_center().rounded(8).border(1).border_color(t.border)
+      return hoverKept(view, "hovered", id, h_flex().id(id)).flex_none().px(8).py(2).gap(8).items_center().rounded(8)
         .text_size(12).font_medium().text_color(t.foreground)
-        .when(active, el => el.bg(t.foreground + "1f")).when(!active, el => el.opacity(FADED).hover(s => s.opacity(1).bg(t.foreground + "12")))
+        .when(active, el => el.bg(tint(t, "chrome", true))).when(!active, el => el.opacity(FADED).hover(s => s.opacity(1).bg(tint(t, "chrome", false))))
         .role("tab").accessibility_label(g.label).on_click((_e, cx) => pick(g.key, cx))
         .child(v_flex().items_start()
           .child(h_flex().gap(6).items_center()

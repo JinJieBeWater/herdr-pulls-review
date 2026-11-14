@@ -117,7 +117,7 @@ const load = (props = {}, setup = record) => {
   const counted = ["review-changes", "review-open", "review-ahead", "review-behind"];
   assert.deepEqual(counted.map(colorOf), counted.map(() => theme.dim));
   for (const id of counted) assert.ok(find(bar.render(), id).style.font_medium !== undefined && !find(bar.render(), id).items.flatMap(walk).some(n => n.style.text_color || n.style.font_medium !== undefined), `${id}: the shared button sets the weight, nothing inside sets its own color or weight`);
-  for (const id of counted) assert.deepEqual(plain(find(bar.render(), id).hoverStyle), { bg: theme.hover }, id);
+  for (const id of counted) assert.deepEqual(plain(find(bar.render(), id).hoverStyle), { bg: theme.foreground + "0a" }, `${id}: hovered, the text color at 4%`);
   fire(find(drawn, "review-open"), "on_hover", true, cx);
   assert.equal(colorOf("review-open"), theme.foreground, "hovered, lit");
   assert.equal(colorOf("review-changes"), theme.dim, "only the one hovered");
@@ -324,7 +324,8 @@ const load = (props = {}, setup = record) => {
   // The space's review lights the count of the diff it shows, whichever of its commits it's on.
   const pane = (page, base = "/branch/feat", space = "s") => { state["review.shown"] = { [space]: { root: "/repo", page, base } }; };
   // The diff shown: lit, foreground on the hover's fill.
-  const isLit = (id) => find(bar.render(), id).style.bg === theme.selected && find(bar.render(), id).style.text_color === theme.foreground;
+  // On: the text color at 7% (shared button.js), as every ghost on chrome.
+  const isLit = (id) => find(bar.render(), id).style.bg === theme.foreground + "12" && find(bar.render(), id).style.text_color === theme.foreground;
   pane("/branch/feat"); show(r);
   let lit = bar.render();
   assert.ok(isLit("review-open"));

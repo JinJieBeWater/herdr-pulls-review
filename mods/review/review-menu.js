@@ -1,4 +1,4 @@
-// What the Review page and Details' Quick Review draw alike: their names, the radio's check and a menu's search field.
+// What the Review page and Details' Review row draw alike: their names, the radio's check and a menu's search field.
 import { div, svg } from "gpui-kit";
 import { h_flex, Input } from "gpui-base";
 import { settings } from "herdr";

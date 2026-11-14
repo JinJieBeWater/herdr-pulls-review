@@ -1,5 +1,5 @@
 // The space panel's navigation column, one for the Files and Review pages (docs/adr/0013): right of the content, ruled off
-// on its left, its left edge dragged, a 40 head over what it lists. As T3's FileExplorerPane: 256 to start, 160 at least,
+// on its left, its left edge dragged, a 36 head over what it lists. As T3's FileExplorerPane: 256 to start, 160 at least,
 // at most 560 and never leaving the content less than 256. Each page keeps its width (`nav.width`) and whether its column
 // is open (`nav.open`) in its own localStorage. scripts/sync.sh copies this to both mods.
 import { div } from "gpui-kit";
@@ -35,12 +35,13 @@ export function holdWidth(hold, width, after) {
 let drag = null;
 
 /**
- * The page's `content`, and right of it, while `open`, the column: `head` in its 40 head, `list` under it. `id` names it;
+ * The page's `content`, and right of it, while `open`, the column: `head` in its 36 head, `list` under it. `id` names it;
  * `body` is the page's width. Its left edge drags, and the width it lands at stays on this page.
  */
-/** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, inline?: boolean, handle?: any }} parts */
-export function withNav(t, id, body, { content, head, list, open, inline = false, handle }) {
-  if (!open) return div().id(`${id}-solo`).size_full().min_w(0).child(content);
+/** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, handle?: any }} parts */
+export function withNav(t, id, body, { content, head, list, open, handle }) {
+  // The content on the theme's `background`, as T3's code surface (`--code-background`); the column stays on the page's chrome.
+  if (!open) return div().id(`${id}-solo`).size_full().min_w(0).bg(t.background).child(content);
   const [least, most] = navRange(body), z = Number(settings()?.zoom) || 1, mine = drag?.id === id;
   const width = mine ? Math.min(most, Math.max(least, drag.width)) : navWidth(body);
   // Written once, on release. A pointer leaving the page lets go there.
@@ -63,11 +64,13 @@ export function withNav(t, id, body, { content, head, list, open, inline = false
     })
     .on_mouse_up("left", (_e, cx) => end(cx))
     .on_hover((on, cx) => { if (!on) end(cx); })
-    .child(div().flex_1().min_w(0).h_full().child(content))
-    .child(v_flex().id(`${id}-nav`).relative().w(width).flex_none().h_full().border_l(1).border_color(t.border)
-      // 12 in, the panel head's and the page header's edge (t3-tokens「规则」R1).
-      .child(h_flex().id(`${id}-nav-head`).h(inline ? 36 : 40).when(inline, el => el.mb(4)).flex_none().px(12).gap(8).items_center().when(!inline, el => el.border_b(1).border_color(t.border)).child(head))
-      .child(div().flex_1().min_h(0).when(!inline, el => el.pt(4)).child(list))
+    .child(div().id(`${id}-main`).flex_1().min_w(0).h_full().bg(t.background).child(content))
+    .child(v_flex().id(`${id}-nav`).relative().w(width).flex_none().h_full().pl(1)
+      // As T3's FileExplorerPane, `border-border/60`; an element's opacity, as a theme's border may carry its own alpha.
+      .child(div().id(`${id}-nav-rule`).absolute().top(0).bottom(0).left(0).w(1).bg(t.border).opacity(0.6))
+      // 12 in, the panel head's and the page header's edge (t3-tokens「规则」R1); no rule under it, as T3's subheaders in the panel.
+      .child(h_flex().id(`${id}-nav-head`).h(36).mb(4).flex_none().px(12).gap(8).items_center().child(head))
+      .child(div().flex_1().min_h(0).child(list))
       // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
         .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize file explorer")
@@ -81,14 +84,14 @@ export function withNav(t, id, body, { content, head, list, open, inline = false
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); drag = { id, x: e.position.x, from: width, width }; cx.notify(); })));
 }
 
-/** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. As the 40 bar's others: sm, on chrome. */
+/** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. As the 40 bar's others: sm, on chrome, a 14 icon. */
 /** @param {any} view @param {any} t @param {string} mod @param {string} id @param {boolean} open @param {any} toggle @param {boolean} [disabled] */
 export function navToggle(view, t, mod, id, open, toggle, disabled = false) {
-  return ghostButton(view, t, id, { icon: `${mod}/icons/folder-tree.svg`, label: open ? "Hide the file tree" : "Show the file tree", act: toggle, on: open, disabled, size: "sm", surface: "chrome" });
+  return ghostButton(view, t, id, { icon: `${mod}/icons/folder-tree.svg`, label: open ? "Hide the file tree" : "Show the file tree", act: toggle, on: open, disabled, size: "sm", iconSize: 14, surface: "chrome" });
 }
 
 /** The head's Collapse all / Expand all: `folded` says which it does now. */
 /** @param {any} view @param {any} t @param {string} mod @param {string} id @param {boolean} folded @param {any} press */
 export function foldAllButton(view, t, mod, id, folded, press) {
-  return ghostButton(view, t, id, { icon: `${mod}/icons/${folded ? "chevrons-up-down" : "chevrons-down-up"}.svg`, label: folded ? "Expand all" : "Collapse all", act: press });
+  return ghostButton(view, t, id, { icon: `${mod}/icons/${folded ? "chevrons-up-down" : "chevrons-down-up"}.svg`, label: folded ? "Expand all" : "Collapse all", act: press, surface: "chrome" });
 }

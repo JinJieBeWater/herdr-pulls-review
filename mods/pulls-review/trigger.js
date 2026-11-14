@@ -41,13 +41,13 @@ export const opener = (view, { id, closed, onOpen, press }) => (el) => el
  * icon (marks, a count).
  * @param {any} view @param {any} t @param {string} id
  * @param {{ label: string, hint?: string, action?: string, below?: boolean, open?: boolean, closed?: string,
- *   onOpen: (bounds: any, cx: any) => any, icon?: string, text?: string, size?: "default" | "sm" | "compact" | "xs" | "micro" | "tiny",
+ *   onOpen: (bounds: any, cx: any) => any, icon?: string, iconSize?: number, text?: string, size?: "default" | "sm" | "compact" | "xs" | "micro" | "tiny",
  *   surface?: "chrome" | "card" | "row" | "tab", wide?: boolean, color?: string, disabled?: boolean }} o
  * @param {(el: any) => any} [extra]
  */
-export function trigger(view, t, id, { label, hint, action, below, open, closed, onOpen, icon, text, size = "sm", surface = "chrome", wide, color, disabled }, extra = (el) => el) {
+export function trigger(view, t, id, { label, hint, action, below, open, closed, onOpen, icon, iconSize, text, size = "sm", surface = "chrome", wide, color, disabled }, extra = (el) => el) {
   open ??= popupOpen(view, id, closed);
-  const el = extra(button(t, id, { icon, text, label, size, surface, wide, color, disabled, on: open, hot: view.hot === id }))
+  const el = extra(button(t, id, { icon, iconSize, text, label, size, surface, wide, color, disabled, on: open, hot: view.hot === id }))
     .when(!disabled, (b) => opener(view, { id, closed, onOpen })(b.on_hover(glow(view, id))));
   // A view that keeps no tab stops (focus.js stopsInit) draws it without one.
   return tip(view, t, id, label, view.fs ? stop(view, t, id, el, radiusOf(size)) : el, { action, hint, below, off: open });

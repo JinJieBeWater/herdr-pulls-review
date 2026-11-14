@@ -9,7 +9,7 @@ function source(file, seen = new Set(file === "main.js" ? ["rows.js", "daemon.js
   if (seen.has(file)) return "";
   seen.add(file);
   const src = fs.readFileSync(path.join(__dirname, file), "utf8");
-  if (file === "button.js") return "const { drawButton, ghostButton } = (() => {\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { drawButton: button, ghostButton };\n})();";
+  if (file === "button.js") return "const { drawButton, ghostButton, tint, GROUP_GAP } = (() => {\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { drawButton: button, ghostButton, tint, GROUP_GAP };\n})();";
   const needs = [...src.matchAll(/^import [^;]*? from "\.\/(.+?)";/gm)].map(m => source(m[1], seen)).join("\n");
   // Its `button` is button.js's, not controls.js's of the same name.
   if (file === "trigger.js") return needs + "\nconst { trigger, opener, popupOpen } = (() => { const button = drawButton;\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { trigger, opener, popupOpen };\n})();";
@@ -277,7 +277,7 @@ const env = {
   layout: () => ({ id: "root", children: [{ id: "work", hidden: workHidden, children: barIn ? [{ id: "review-bar", content: { mod: "pulls-review" } }] : [] }, { id: "panel", children: [{ id: "panel-body", active: pageShown, children: [{ id: "files" }, { id: "review" }] }] }] }),
   // Shared values every mod sees.
   shared: (key) => sharedStore.get(key) ?? null, setShared: (key, value) => sharedStore.set(key, value),
-  run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), nextCommand: () => new Promise(done => waiting.push(done)), theme: () => ({ background: "#17191d", selected: "#ffffff17", foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888", input: "#ffffff24" }),
+  run: (name, args) => calls.push([name, args]), notify: (n) => notes.push(n), nextCommand: () => new Promise(done => waiting.push(done)), theme: () => ({ background: "#17191d", chrome: "#111315", selected: "#ffffff17", foreground: "#eeeeee", ansi1: "#ff0000", ansi2: "#00ff00", dim: "#888888", input: "#ffffff24" }),
   FILE: 32, ROW: 20, CHAR: 7.25, groupFiles, buildItems, pageLabel, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns,
   // The daemon: rows only for the files asked for, and the first group's with `firstRows`; no run going. A later batch's
   // rows come on their own.
@@ -331,6 +331,29 @@ assert.equal(vm.runInContext('progressText({ kind: "thinking", step: 2 })', main
   assert.ok(code.length <= vm.runInContext("SPANS", mainScope), `${code.length} code elements`);
   // Next runs of one color are one element; a run's trailing spaces lead the next.
   assert.deepEqual(plain(vm.runInContext("spans", mainScope)([["a", "#f00"], ["b ", "#f00"], ["c", "#f00"], [" ", "#0f0"], ["d", "#0f0"]])), [["ab c", "#f00"], [" d", "#0f0"]]);
+}
+{
+  // As Pierre's diff: no rules or boxes in it (a file's header, a hunk's, a note's, the split's middle), the current file's
+  // header unlit; a hunk's band the text color at 5%, a line's note card at 4%.
+  const seen = [], swap = ["div", "h_flex", "v_flex", "svg"].map(k => [k, mainScope[k]]);
+  const rec = () => { const el = new Proxy(function () {}, { get: (_t, key) => key === "when" ? (c, f) => (c && f(el), el) : (...a) => { seen.push([key, a[0]]); return el; } }); return el; };
+  for (const [k] of swap) mainScope[k] = rec;
+  const t = { foreground: "#eeeeee", dim: "#888888", border: "#444444", selected: "#ffffff17", chrome: "#111315", raised: "#555555", background: "#17191d", canvas: "#000000",
+    accent: "#0000ff", input: "#ffffff24", ansi1: "#ff0000", ansi2: "#00ff00", ansi3: "#ffff00", blocked: "#ffaa00", working: "#00aaff", accent_foreground: "#ffffff" };
+  const view = { collapsed: new Set(), full: new Map(), current: "x.ts", view: 600, shift: [0, 0, 0], sideMax: () => 0, splitShown: () => true };
+  const draw = (item) => { seen.length = 0; vm.runInContext("diffItem", mainScope)(view, t, item); return seen.slice(); };
+  // A rule: a side's border, or anything outlined in the border color (the reviewed box's outline is its own, `input`).
+  const rules = (made) => made.filter(([k, v]) => /^border_[tblr]$/.test(k) || (k === "border_color" && v === t.border));
+  const fileHead = draw({ key: "f:x.ts", kind: "file", file: file("x.ts"), size: 32 });
+  assert.deepEqual(rules(fileHead), [], "a file's header: no rules");
+  assert.ok(!fileHead.some(([k, v]) => k === "bg" && v === t.selected), "the current file's header unlit: the tree says which");
+  assert.deepEqual(draw({ key: "h", kind: "hunk", text: "@@", size: 20 }).filter(([k]) => k === "bg"), [["bg", "#eeeeee0d"]], "a hunk: 5%");
+  const card = draw({ key: "n", kind: "note", note: { text: "x" }, anchored: true, size: 40 });
+  assert.ok(!rules(card).length && card.some(([k, v]) => k === "bg" && v === "#eeeeee0a"), "a line's note: a 4% card, no outline");
+  assert.deepEqual(rules(draw({ key: "m", kind: "note", note: { text: "x" }, anchored: false, last: true, size: 40 })), [], "a file's notes: no rule after");
+  const r = { kind: " ", old: 1, new: 1, tokens: [["a"]] };
+  assert.ok(!draw({ key: "p", kind: "pair", lines: [{ left: r, right: r }], size: 20 }).some(([k, v]) => k === "bg" && v === t.border), "split: no rule down the middle");
+  for (const [k, v] of swap) mainScope[k] = v;
 }
 // The 150ms timer is the scroll spy; the others, by period, each pane's in the order they started. A test runs them by hand.
 let spy; const every = {};
@@ -475,20 +498,35 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // Elements are made in the order they're placed.
   const before = (a, b) => [...drawn].indexOf(a) < [...drawn].indexOf(b);
   assert.ok(drawn.has("review-nav") && !drawn.has("group-tab-g") && !drawn.has("review-sidebar") && !drawn.has("review-aside") && !drawn.has("group-header"));
-  assert.ok(before("review-diff-area", "review-nav") && styles["review-nav"].border_l === 1 && styles["review-nav-head"].h === 40, "right of the diff, ruled off, a 40 head");
+  assert.ok(before("review-diff-area", "review-nav") && !styles["review-nav"].border_l && styles["review-nav-rule"].opacity === 0.6, "right of the diff, ruled off at 60% of the border, as T3's");
+  assert.ok(styles["review-nav-head"].h === 36 && styles["review-nav-head"].mb === 4 && !styles["review-nav-head"].border_b, "Files' head: 36, 4 under it, no rule");
   assert.equal(texts.get("review-nav-head"), undefined);
   assert.ok(styles["review-pane"] && styles["review-pane"].bg === undefined && styles["review-header"].bg === undefined, "no background of its own: the panel's shows");
+  assert.equal(styles["review-header"].border_b, undefined, "no rule under the toolbar, as T3's subheaders in the panel");
+  assert.equal(styles["review-tools"].gap, 4, "the toolbar's icon buttons 4 apart (P3), as T3's DiffPanel");
   // One column: a lone group lists no groups; the tree is the group shown, its files first, its subgroups after them as
   // rows; its summary heads its diff.
   assert.ok(!drawn.has("group-tab-row") && !drawn.has("tree-g-g"));
   assert.ok(["tree-f-a.ts", "tree-f-b.png", "tree-m-gone.ts", "tree-g-k", "tree-f-c.ts"].every(id => drawn.has(id)));
   assert.ok(before("tree-m-gone.ts", "tree-g-k") && before("tree-g-k", "tree-f-c.ts"));
   assert.ok(drawn.has("group-summary") && before("group-summary", "review-diff-area"));
+  assert.equal(styles["group-summary"].border_b, undefined, "no rule under the group's summary");
   // A subgroup's row brings its header to the top and opens it.
   const subAt = pane.itemList.findIndex(item => item.key === "g:k");
   const toTop = []; pane.scrollToTop = (i) => toTop.push(i); press("tree-g-k"); delete pane.scrollToTop;
   assert.deepEqual(toTop, [subAt]);
   pane.visible = null;
+  {
+    // The settings and fold menus hang under their buttons, right edges together (T3's align="end"), from the toolbar as drawn:
+    // its 12 in, then each button right of theirs and the group's gap.
+    const fromRight = (ids) => styles["review-header"].px + ids.reduce((sum, id) => sum + styles[id].w + styles["review-tools"].gap, 0);
+    press("fold-menu");
+    assert.equal(styles["fold-anchor"].right, fromRight(["review-nav-toggle", "settings"]), "the fold menu's right edge on its button's");
+    pane.closePopup(cx); drawn.clear(); pane.render(cx);
+    press("settings");
+    assert.equal(styles["settings-anchor"].right, fromRight(["review-nav-toggle"]), "the settings menu's right edge on its button's");
+    pane.closePopup(cx); drawn.clear(); pane.render(cx);
+  }
   press("settings");
   assert.ok(!drawn.has("groups-sidebar") && !drawn.has("groups-tabs"), "no Groups setting");
   // The settings credit pulls.review and its author, and the fork and its author, each a link.
@@ -1038,7 +1076,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // The menu: Changes, Uncommitted, Outgoing and Incoming with their counts, read on opening; then Commits.
   handlers.get("review-scope.on_mouse_down")?.({ bounds: { x: 12, y: 6, width: 120, height: 28 } }, cx); press("review-scope");
   assert.ok(pane.popup === "scope" && drawn.has("review-scope-menu"));
-  assert.equal(styles["review-scope"].bg, "#ffffff17", "open: the bar's on fill, chrome's selected, as the panel head's");
+  assert.equal(styles["review-scope"].bg, "#eeeeee12", "open: the bar's on fill, the text color at 7%, as the panel head's");
   await settled(); await settled(); draw();
   assert.ok(!gitCalls.some(args => args.some(a => /^(fetch|add|commit|checkout|reset|push)$/.test(a)) && !args.includes("-N")), "only reads");
   assert.deepEqual(["scope-changes", "scope-uncommitted", "scope-push", "scope-pull"].map(id => texts.get(`${id}-detail`)), ["2 commits", "1 file", "2 commits", "0 commits"]);
@@ -1258,7 +1296,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(!drawn.has("sticky-file"), "a header in view doesn't stick");
   pane.visible = { start: rowAt, end: rowAt + 2 }; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("sticky-file"));
-  assert.equal(styles["sticky-file"].bg, env.theme().background, "the stuck header covers code even when the theme's selection is translucent");
+  assert.equal(styles["sticky-file"].bg, env.theme().background, "the stuck header covers code in the diff's own colour (nav-column.js puts it on background), even when the theme's selection is translucent");
   pane.current = null; calls.length = 0;
   handlers.get("review-diff-area.on_mouse_down")({ local_position: { x: 300, y: 10 } }, cx);
   handlers.get("null.on_item_click")(pane.itemList[rowAt].key, cx);
@@ -1700,11 +1738,12 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const order = (a, b) => [...drawn].indexOf(a) < [...drawn].indexOf(b);
     assert.ok(p.review.groups.length === 3 && drawn.has("group-tab-row") && order("group-tab-x", "group-tab-y"));
     assert.ok(order("review-header", "group-tab-row") && order("group-tab-row", "review-diff-area") && order("group-tab-row", "review-nav"), "under the toolbar, across the page");
-    assert.ok(styles["group-tab-x"].bg === "#eeeeee1f" && styles["group-tab-y"].bg === undefined, "the group shown, lit");
-    // Upstream's proportions in T3's tokens: two lines, 8 by 2 in, 6 apart, a 1px outline at radius 8; the row 12 in, on the
+    assert.ok(styles["group-tab-x"].bg === "#eeeeee12" && styles["group-tab-y"].bg === undefined, "the group shown, lit as the panel's tabs: 7%");
+    // Upstream's proportions in T3's tokens: two lines, 8 by 2 in, 6 apart, radius 8 with no outline; the row 12 in, on the
     // toolbar's line. Only the group shown has a fill.
     assert.deepEqual([styles["group-tab-row"].px, styles["group-tab-row"].py, styles["group-tab-row"].gap], [12, 8, 6]);
-    assert.deepEqual([styles["group-tab-x"].px, styles["group-tab-x"].py, styles["group-tab-x"].rounded, styles["group-tab-x"].border], [8, 2, 8, 1]);
+    assert.deepEqual([styles["group-tab-x"].px, styles["group-tab-x"].py, styles["group-tab-x"].rounded, styles["group-tab-x"].border], [8, 2, 8, undefined], "no outline");
+    assert.equal(styles["group-tabs"].border_b, undefined, "no rule under the row");
     assert.equal(styles["review-header"].px, styles["group-tab-row"].px, "the tabs on the toolbar's edge");
     assert.equal(styles["group-tab-x"].text_size, 12);
     assert.equal(texts.get("group-tab-y-count"), "・1 file");

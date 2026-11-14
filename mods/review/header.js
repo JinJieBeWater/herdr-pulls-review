@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { LU, COMPACT, button, popover } from "./controls.js";
-import { ghostButton } from "./button.js";
+import { ghostButton, GROUP_GAP } from "./button.js";
 import { trigger } from "./trigger.js";
 import { tip } from "./tip.js";
 import { popupClosed } from "./review-menu.js";
@@ -66,23 +66,24 @@ export function head(view) {
 export function header(view, t, head) {
   // As T3's DiffPanel header: the scope and what it compares, the counts as its DiffStatLabel, then the tools. Narrow, the
   // words give way and the buttons never.
-  // 12 in, as the panel head above it (t3-tokens「规则」R1); the 40 bar's buttons sm on chrome, the icons touching (P3).
+  // 12 in, as the panel head above it (t3-tokens「规则」R1); the 40 bar's buttons sm on chrome, their icons 14 (T3's diff toolbar),
+  // the icons a group's gap apart (P3). No rule under it, as T3's subheaders in the panel.
   const icons = head.buttons.filter(b => !b.text), words = head.buttons.filter(b => b.text);
-  return h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().overflow_hidden().border_b(1).border_color(t.border)
+  return h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().overflow_hidden()
     .child(scopeHeader(view, t))
     // The counts hold, as T3's stats beside its tools: a long commit subject truncates instead.
     .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11)
       .children(head.parts.map(p => div().text_color(t[p.color] ?? t.dim).child(p.text)))))
     .child(div().flex_1())
     .children(words.map(b => button(view, t, b.id, b.text, b.pops ? (cx, keys) => view.togglePopup(b.pops, cx, keys) : b.run,
-      { after: b.after, icon: b.lead, color: t[b.color], note: b.note, pops: b.pops, size: "sm", surface: "chrome" })))
-    .child(h_flex().flex_none().items_center()
+      { after: b.after, icon: b.lead, iconSize: 14, color: t[b.color], note: b.note, pops: b.pops, size: "sm", surface: "chrome" })))
+    .child(h_flex().id("review-tools").flex_none().gap(GROUP_GAP).items_center()
       .children(icons.map(b => {
         const run = b.pops ? (cx, keys) => view.togglePopup(b.pops, cx, keys) : b.run;
         // An icon alone says what it does in its label (tooltip-audit R1).
-        if (b.pops) return trigger(view, t, b.id, { icon: b.icon, label: b.label, color: t[b.color], disabled: b.disabled, below: true,
+        if (b.pops) return trigger(view, t, b.id, { icon: b.icon, iconSize: 14, label: b.label, color: t[b.color], disabled: b.disabled, below: true,
           open: view.popup === b.pops, closed: popupClosed(b.pops), onOpen: (at, cx) => run(cx, !at) });
-        return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });
+        return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, iconSize: 14, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });
       }))
       // Last, the file tree's switch, greyed with no files to list.
       .child(tip(view, t, "review-nav-toggle", view.navOpen ? "Hide the file tree" : "Show the file tree",

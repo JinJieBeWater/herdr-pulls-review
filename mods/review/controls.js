@@ -71,8 +71,8 @@ export function checkMark(t, state) {
 }
 
 // The pane's xs buttons; `note` stays dim after the label. `pops`: the popover it toggles, on while it's open (trigger.js).
-export function button(view, t, id, label, action, { color, icon, after, primary, note, pops, size = "xs", surface = "card" } = /** @type {{ color?: any, icon?: any, after?: any, primary?: boolean, note?: any, pops?: string, size?: "sm" | "xs", surface?: "chrome" | "card" }} */ ({})) {
-  const el = drawButton(t, id, { variant: primary ? "primary" : "plain", text: label, icon, color, size, surface, hot: view.hot === id, on: Boolean(pops) && view.popup === pops })
+export function button(view, t, id, label, action, { color, icon, iconSize, after, primary, note, pops, size = "xs", surface = "card" } = /** @type {{ color?: any, icon?: any, iconSize?: number, after?: any, primary?: boolean, note?: any, pops?: string, size?: "sm" | "xs", surface?: "chrome" | "card" }} */ ({})) {
+  const el = drawButton(t, id, { variant: primary ? "primary" : "plain", text: label, icon, iconSize, color, size, surface, hot: view.hot === id, on: Boolean(pops) && view.popup === pops })
     .on_hover(glow(view, id));
   return (pops ? opener(view, { closed: popupClosed(pops), onOpen: (b, cx) => action(cx, !b) })(el)
     : el.on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); action(cx); }))
