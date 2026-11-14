@@ -1,7 +1,7 @@
 // The layout's buttons, as T3's Button (`ui/button.tsx`): a variant for its colors, a size for its box, the theme for every color.
 // docs/internals/t3-tokens.md「按钮」 is the table this draws. The caller adds what a button does: on_click (unless `act` is
 // given), hover tracking for `hot`, stop() for the keyboard and tip() for a label. scripts/sync.sh copies this to each mod.
-import { svg } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 
 // T3's sm: sizes. An outlined button's 1px border is inside its padding, as T3's `px-[calc(--spacing(3)-1px)]`.
@@ -38,6 +38,8 @@ const tint = (t, surface, on) => surface === "row" ? null : surface === "tab" ? 
  *   `on` pressed or its popup open.
  */
 export function button(t, id, { variant = "ghost", size = "xs", surface = "chrome", text, icon, wide = false, label, color, hot = false, on = false, disabled = false, act } = {}) {
+  // A disabled toggle isn't pressed: it draws no on fill.
+  on = on && !disabled;
   const s = SIZES[size], filled = variant !== "ghost" && variant !== "plain", lit = variant === "plain" || (!disabled && (hot || on));
   // primary's border is its fill: drawn, a disabled one's faded edge shows lighter than its faded fill.
   const ruled = filled && variant !== "primary";
@@ -54,4 +56,35 @@ export function button(t, id, { variant = "ghost", size = "xs", surface = "chrom
     .when(Boolean(act) && !disabled, (b) => b.cursor_pointer().on_click((_e, cx) => act(cx)));
   return el.when(Boolean(icon), (b) => b.child(svg(icon).size(text ? s.icon : ICON[size]).flex_none()))
     .when(Boolean(text), (b) => b.child(text));
+}
+
+// `sm`: a header's icon-only pair, 28 high beside sm buttons, its chevron half narrower so the pair reads as one control.
+// `row`: a details row, 32 high, words 13 medium, the chevron in a 32 slot (T3 threadDetailsPanelStyles' split).
+const SPLIT = { sm: { h: 28, more: 20 }, row: { h: 32, more: 32 } };
+
+/**
+ * T3's split control (OpenInPicker, ThreadDetailsControl primary/secondary) as one ghost group on a card: nothing at rest,
+ * one fill under both halves while either is hovered (7%) or its menu is open (12%), the hairline between them only then.
+ * `main` and `more` add each half's children and behaviour (`el => el…`); the caller tracks `hot`, the half under the pointer
+ * or the keyboard, as svg takes no hover style. `locked`: only the main half is off (its menu still says why).
+ * `quiet`: the chevron shows only while lit, for a column of rows.
+ * @param {any} t @param {{ id: string, mainId: string, moreId: string, chevron: string, size?: keyof typeof SPLIT,
+ *   hot?: "main" | "more" | null, on?: boolean, disabled?: boolean, locked?: boolean, quiet?: boolean, label?: string, moreLabel?: string }} o
+ * @param {(el: any) => any} main @param {(el: any) => any} more
+ */
+export function split(t, { id, mainId, moreId, chevron, size = "sm", hot = null, on = false, disabled = false, locked = false, quiet = false, label, moreLabel }, main, more) {
+  const s = SPLIT[size], row = size === "row", lit = !disabled && (on || hot === "more" || (hot === "main" && !locked));
+  // A details row's half under the pointer adds its own 7% on the group's, as T3's primary/secondary (t3-tokens: 详情 popup).
+  const half = (hid, off, name, key) => h_flex().id(hid).h(s.h).items_center().role("button").accessibility_label(name)
+    .when(off, (h) => h.opacity(DISABLED)).when(!off, (h) => h.cursor_pointer())
+    .when(row && !off && hot === key, (h) => h.bg(t.foreground + "12"));
+  return h_flex().id(id).h(s.h).min_w(0).items_center().rounded(8).cursor_default()
+    .when(row, (g) => g.w_full()).when(!row, (g) => g.flex_none())
+    .when(lit, (g) => g.bg(t.foreground + (on ? "1f" : "12")))
+    .child(main(half(mainId, disabled || locked, label, "main").rounded_l(8)
+      .when(row, (h) => h.flex_1().min_w(0).px(10).gap(10).text_size(13).font_medium().text_color(t.foreground))
+      .when(!row, (h) => h.w(s.h).flex_none().justify_center())))
+    .child(div().id(`${id}-rule`).w(1).h(16).flex_none().when(lit, (r) => r.bg(t.border)))
+    .child(more(half(moreId, disabled, moreLabel, "more").w(s.more).flex_none().justify_center().rounded_r(8)
+      .when(!quiet || lit, (h) => h.child(svg(chevron).size(16).flex_none().text_color(on || hot === "more" ? t.foreground : t.dim)))));
 }

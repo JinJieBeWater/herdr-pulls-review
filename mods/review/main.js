@@ -13,7 +13,7 @@ import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./
 import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
-import { diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage, releaseScope } from "./review-scope.js";
+import { scopeOf, diffCommits, scopeList, pickListed, openScope, openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu, chosenBase, changesPage, releaseScope } from "./review-scope.js";
 import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
@@ -261,7 +261,8 @@ export default class ReviewPanel extends View {
   }
 
   // What this space's review shows: for the Review bar to light its count, and to show it again after a restart.
-  publish() { if (this.page) this.keep("shown", { root: this.root, page: this.page, base: this.base }); }
+  // `label`: its scope button's words (a commit's subject once read), so Details names the same range.
+  publish() { if (this.page) this.keep("shown", { root: this.root, page: this.page, base: this.base, label: scopeOf(this).label }); }
 
   diffCommits() { return diffCommits(this); }
 

@@ -6,6 +6,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
 import { button as drawButton } from "./button.js";
+import { glow } from "./tip.js";
 
 export const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
 
@@ -85,7 +86,7 @@ export function withNav(t, id, body, { content, head, list, open, inline = false
 export function ghostButton(t, mod, id, icon, label, press, { on = false, disabled = false, view, size = "xs" } = {}) {
   return drawButton(t, id, { icon: `${mod}/icons/${icon}.svg`, label, surface: "card", size, on, disabled, hot: view?.hot === id })
     .when(!disabled, (el) => el
-      .when(Boolean(view), el => el.on_hover((on, cx) => { view.hot = on ? id : null; cx.notify(); }))
+      .when(Boolean(view), el => el.on_hover(glow(view, id)))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => { cx.stop_propagation(); press(cx); }));
 }

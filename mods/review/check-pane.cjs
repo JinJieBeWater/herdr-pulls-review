@@ -262,6 +262,7 @@ const env = {
   Switch: { new: element }, settings: () => ({ zoom: 1 }),
   // tip.js's own; its watch on the pointer is checked in t3-spaces/check-sidebar.cjs.
   hoverKept: (view, key, id, el) => el.on_hover((on) => { if (on) view[key] = id; else if (view[key] === id) view[key] = null; }),
+  glow: (view, id) => (on, cx) => { if (on) view.hot = id; else if (view.hot === id) view.hot = null; cx?.notify?.(); },
   // Paths build into nothing here; painting one is an element like any other.
   PathBuilder: (() => { const chain = new Proxy({}, { get: () => () => chain }); return { stroke: () => chain, fill: () => chain }; })(),
   window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }), exec: (...args) => { browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search" ? scopeField : options.placeholder === "Search refs" ? refField : field },
@@ -984,7 +985,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(drawn.has("analyze"));
   // The bar reads what the pane shows, for its count; the commits are the pane's own now.
   const base = pane.page, baseEntry = () => sharedStore.get("review.shown").s1;
-  assert.deepEqual(plain(baseEntry()), { root: "/repo", page: base, base });
+  assert.deepEqual(plain(baseEntry()), { root: "/repo", page: base, base, label: "Changes" }, "with its scope button's words, for Details");
   const settled = () => new Promise(setImmediate);
   const draw = () => { drawn.clear(); pane.render(cx); };
   // One commit's page lists only itself, as the daemon's: the diff's list stays its base's.
@@ -1101,6 +1102,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.deepEqual([pane.page, pane.base, baseEntry().page, baseEntry().base], ["/commit/c1", base, "/commit/c1", base], "review.shown says where it is");
   // On one commit: its subject on the button, its short sha, and ‹ › through the diff's commits.
   assert.deepEqual([texts.get("review-scope-label"), texts.get("review-sha")], ["one", "c1"]);
+  assert.equal(baseEntry().label, "one", "Details is told the commit's subject, as the scope button shows it");
   assert.ok(styles["review-counts"].flex_none && styles["review-scope"].min_w === 0, "a long subject truncates, the counts hold");
   assert.ok(!drawn.has("review-ref-head"), "a commit compares nothing");
   assert.equal(handlers.get("commit-older.on_click"), undefined, "disabled: no click handler");

@@ -2,6 +2,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { settings, setShared, shared } from "herdr";
 import { button as drawButton } from "./button.js";
+import { glow } from "./tip.js";
 import { PANE, LU, COMPACT, MODEL_ROW, zoom, hover, pickMark, searchField, popover, toPane, subState, subAt, iconButton } from "./review-menu.js";
 export { PANE, LU, COMPACT, MODEL_ROW, zoom, hover, pickMark, searchField, popover, toPane, subState, subAt, iconButton };
 
@@ -39,7 +40,7 @@ export function checkMark(t, state) {
 // The pane's xs buttons; `note` stays dim after the label.
 export function button(view, t, id, label, action, { color, icon, after, primary, note } = /** @type {{ color?: any, icon?: any, after?: any, primary?: boolean, note?: any }} */ ({})) {
   return drawButton(t, id, { variant: primary ? "primary" : "plain", text: label, icon, color, surface: "card", hot: view.hot === id })
-    .on_hover((on, cx) => { view.hot = on ? id : null; cx.notify(); })
+    .on_hover(glow(view, id))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); action(cx); })
     .when(Boolean(note), el => el.child(div().opacity(FADED).child(note)))
     .when(Boolean(after), el => el.child(svg(after).size(14).flex_none()));

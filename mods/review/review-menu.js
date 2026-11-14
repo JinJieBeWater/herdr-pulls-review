@@ -3,6 +3,7 @@ import { v_flex, h_flex, Input } from "gpui-base";
 import { settings } from "herdr";
 import { subPlace } from "./submenu.js";
 import { button as drawButton } from "./button.js";
+import { glow } from "./tip.js";
 
 export const PANE = "review", LU = "mods/review/icons", COMPACT = 640, MODEL_ROW = 28;
 export const scopeIcons = view => `mods/${view?.scopeMod ?? PANE}/icons`;
@@ -10,7 +11,8 @@ export const zoom = () => Number(settings()?.zoom) || 1;
 export const hover = t => t.foreground + "0f";
 
 export function pickMark(t, on, view = null) {
-  return div().w(14).flex_none().text_color(t.accent).when(on, el => el.child(svg(`${scopeIcons(view)}/check.svg`).size(14)));
+  // The row's own colour, as T3's MenuRadioItemIndicator.
+  return div().w(14).flex_none().when(on, el => el.child(svg(`${scopeIcons(view)}/check.svg`).size(14)));
 }
 
 export function searchField(t, state, view = null) {
@@ -50,7 +52,7 @@ export function subAt(view, row, [min, max], h) {
 
 export function iconButton(view, t, id, icon, label, action, { color, disabled, active, press } = /** @type {{ color?: any, disabled?: any, active?: any, press?: any }} */ ({})) {
   return drawButton(t, id, { icon, label, color, disabled, on: active, surface: "card", hot: view.hot === id })
-    .when(!disabled, el => el.on_hover((on, cx) => { view.hot = on ? id : null; cx.notify(); }))
+    .when(!disabled, el => el.on_hover(glow(view, id)))
     .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); press?.(e); })
     .when(!disabled, el => el.on_click((_e, cx) => { cx.stop_propagation(); action(cx); }));
 }

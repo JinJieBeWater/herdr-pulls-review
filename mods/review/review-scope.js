@@ -10,6 +10,7 @@ import { git, readReview, readPicks, readRefs, argPage } from "./review-git.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
 import { PANE, scopeIcons, COMPACT, MODEL_ROW, iconButton, pickMark, searchField, popover, toPane, subState, subAt } from "./review-menu.js";
 import { button as drawButton } from "./button.js";
+import { glow } from "./tip.js";
 
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
 const PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
@@ -249,7 +250,7 @@ export function openScope(view, cx) {
 // toolbar's, only hovered or while its menu is open.
 function scopeButton(view, t, s) {
   return drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, surface: "card", on: view.popup === "scope", hot: view.hot === "review-scope" }).min_w(0).flex_shrink(1)
-    .on_hover((on, cx) => { view.hot = on ? "review-scope" : null; cx.notify(); })
+    .on_hover(glow(view, "review-scope"))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.togglePopup("scope", cx); })
     .child(div().id("review-scope-label").min_w(0).truncate().child(s.label))
     .child(svg(`${scopeIcons(view)}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
@@ -283,7 +284,7 @@ export function scopeHeader(view, t, { trigger = true } = {}) {
 // notes where it is, for the popup to hang under it.
 function baseButton(view, t, s) {
   return drawButton(t, "review-base", { wide: true, label: `Change comparison target. Currently ${s.base}`, surface: "card", on: view.popup === "base", hot: view.hot === "review-base" }).min_w(36).max_w(192)
-    .on_hover((on, cx) => { view.hot = on ? "review-base" : null; cx.notify(); })
+    .on_hover(glow(view, "review-base"))
     .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); view.baseX = toPane(view, e).bounds?.x ?? null; })
     .on_click((_e, cx) => { cx.stop_propagation(); view.togglePopup("base", cx); })
     .child(div().id("review-ref-base").min_w(0).truncate().child(s.base))
@@ -374,7 +375,8 @@ export function baseMenu(view, t) {
 /** The scope menu, as T3's: radios, a rule, Commits ›, whose submenu opens beside it (scopeSub). */
 export function scopeMenu(view, t) {
   const rows = scopeRows(view);
-  const lit = (i) => (over, cx) => { if (over && view.scopeAt !== i) { view.scopeAt = i; cx.notify(); } };
+  // As T3's menus, lit only while the pointer's on it (the commit list and base picker are comboboxes: theirs stays for Enter).
+  const lit = (i) => (over, cx) => { const to = over ? i : view.scopeAt === i ? -1 : view.scopeAt; if (to !== view.scopeAt) { view.scopeAt = to; cx.notify(); } };
   // As T3's MenuRadioItem and MenuSubTrigger: 28 tall, 8 in, the mark's slot kept on every row so the words line up; a
   // submenu's row stays lit while it's open.
   const row = (r, i) => h_flex().id(r.id).h(MODEL_ROW).px(8).gap(8).flex_none().items_center().rounded(4)
