@@ -59,9 +59,10 @@ export function scopeKey(view, e, cx) {
 
 
 // As the toolbar's xs ghost buttons (docs/adr/0013), its words truncating, a chevron at 70%: no fill of its own over the
-// toolbar's, only hovered or while its menu is open.
+// toolbar's, only hovered or while its menu is open. It leads the row with no fill at rest, so its words line up as Files' first
+// crumb's, 14 in, its box at 12 (t3-tokens「规则」R1): padding 2 on the left, as a crumb's.
 function scopeButton(view, t, s) {
-  return opener(view, { closed: popupClosed("scope"), onOpen: (_b, cx) => view.togglePopup("scope", cx) })(drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, size: "sm", surface: "chrome", on: view.popup === "scope", hot: view.hot === "review-scope" }).min_w(0).flex_shrink(1)
+  return opener(view, { closed: popupClosed("scope"), onOpen: (b, cx) => view.togglePopup("scope", cx, !b) })(drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, size: "sm", surface: "chrome", on: view.popup === "scope", hot: view.hot === "review-scope" }).pl(2).min_w(0).flex_shrink(1)
     .on_hover(glow(view, "review-scope")))
     .child(div().id("review-scope-label").min_w(0).truncate().child(s.label))
     .child(svg(`${LU}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
@@ -195,8 +196,8 @@ export function scopeSub(view, t) {
   // Its border and padding, the search and its margins, then the list or its 36 note.
   const h = 10 + 43 + (items.length ? Math.min(items.length * MODEL_ROW, most) : 36);
   const anchor = { x: 17, y: 43 + at * MODEL_ROW + (at >= radios ? 9 : 0), width: menuWidth(view) - 10, height: MODEL_ROW };
-  // 384 where there's room right of the menu, else narrower down to 260 (its subjects truncate) rather than over the menu.
-  const { at: box, w } = subAt(view, anchor, [260, 384], h);
+  // 384 where there's room beside the menu, else narrower (its subjects truncate), never over its row (subAt).
+  const { at: box, w } = subAt(view, anchor, 384, h);
   // The pointer on it: nothing pending on the menu's rows opens or closes it.
   return box.child(popover(view, t, "review-scope-sub", false).w(w).p(4).on_hover((on) => { if (on) subLeft(subState(view)); })
     .children(commitsBody(view, t, { height: most })));

@@ -15,6 +15,7 @@ import { subOpened } from "./submenu.js";
 import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
 import { scopeOf, diffCommits, scopeList, pickListed, openScope, chosenBase, changesPage, releaseScope } from "./review-scope.js";
+import { openLit } from "./list.js";
 import { openScopePage, scopeMenu, scopeSub, baseList, openBase, pickBase, baseMenu } from "./scope-header.js";
 import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
@@ -82,9 +83,9 @@ export default class ReviewPanel extends View {
         const [name, page] = (await nextCommand()).split(":"), s = this.shown();
         if (name === "close") { if (s?.popup) s.closePopup(cx); else closeSurface(); }
         if ((name !== "scope" && name !== "settings" && name !== "base") || !s?.page) continue;
-        if (!page || s.popup !== name) s.togglePopup(name, cx);
+        if (!page || s.popup !== name) s.togglePopup(name, cx, true);
         if (name === "scope" && page === "commits") openScopePage(s, page, cx, 0);
-        if (name === "settings" && ["language", "agent", "model"].includes(page)) openPage(s, page, cx);
+        if (name === "settings" && ["language", "agent", "model"].includes(page)) openPage(s, page, cx, null, true);
         cx.notify();
       }
     });
@@ -277,15 +278,16 @@ export default class ReviewPanel extends View {
   locale() { return locale(this); }
 
   // A popup's button (trigger.js) or key toggles it. The settings read the daemon's agents and settings on opening: the browser may have changed them.
-  togglePopup(name, cx) {
+  // `keys`: opened by keys (a command, or its button with no pointer press), so a menu lights its first row (list.js openLit).
+  togglePopup(name, cx, keys = false) {
     // The button's press stops there, short of the pane that would take the keyboard.
     this.handle.focus();
     if (this.popup === name) return this.closePopup(cx);
     releaseScope(this);
-    this.popup = name; this.foldAt = -1;
+    this.popup = name; this.foldAt = openLit(keys);
     if (name === "settings") loadSettings(this, cx);
     // On the row shown, so ↑/↓ start from it.
-    if (name === "scope") openScope(this, cx);
+    if (name === "scope") openScope(this, cx, openLit(keys));
     if (name === "base") openBase(this, cx);
     cx.notify();
   }

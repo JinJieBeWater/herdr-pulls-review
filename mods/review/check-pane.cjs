@@ -652,12 +652,13 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     handlers.get("settings-credit.on_mouse_move")({ ...at(400), position: { x: pane.width - 100, y: 410 } }, cx);
     tick();
     assert.equal(pane.settingsPage, null);
-    // Narrow, neither side has room: the submenu stays inside the pane.
-    pane.width = 400; press("settings-model");
-    assert.ok(subBox().left >= 0 && subBox().left + styles["review-settings-sub"].w <= 400);
+    // Narrow, neither side has room: the submenu stays inside the pane, beside its row, never over it.
+    const besideRow = (w) => { const r = pane.subRow, x = subBox().left; return x + w <= r.x || x >= r.x + r.width; };
+    pane.width = 400; press("settings-agent");
+    assert.ok(subBox().left >= 0 && subBox().left + styles["review-settings-sub"].w <= 400 && besideRow(styles["review-settings-sub"].w), "not over the Agent row");
     // Short of 320 left of the panel, narrower rather than over its rows.
     pane.width = 620; press("settings-model");
-    assert.ok(styles["review-settings-sub"].w < 320 && subBox().left + styles["review-settings-sub"].w <= 620 - 336 + 5);
+    assert.ok(styles["review-settings-sub"].w < 320 && subBox().left + styles["review-settings-sub"].w <= 620 - 336 + 5 && besideRow(styles["review-settings-sub"].w));
     pane.key({ keystroke: "escape" }, cx); pane.width = 1200;
   }
   press("settings-agent");
@@ -1024,6 +1025,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(styles["review-scope"].h === 28 && styles["review-scope"].min_w === 0 && styles["review-scope"].flex_shrink === 1 && styles["review-scope-label"].truncate);
   // A ghost button, as the toolbar's others (docs/adr/0013): no fill of its own over the toolbar's, only hovered or open.
   assert.equal(styles["review-scope"].bg, undefined);
+  assert.equal(styles["review-scope"].pl, 2, "its words 14 in, as Files' first crumb (R1, a row-leading word)");
   assert.equal(styles["review-scope"].text_color, "#eeeeee", "what it shows, in foreground: a plain button, as T3's ghost");
   handlers.get("review-scope.on_hover")(true, cx); draw();
   assert.equal(styles["review-scope"].text_color, "#eeeeee", "hover brightens the scope and its icon");
@@ -1034,13 +1036,13 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(!drawn.has("review-ref-head") && texts.get("review-ref-vs") === "vs" && texts.get("review-ref-base") === "origin/main");
   pane.width = 1200; draw();
   // The menu: Changes, Uncommitted, Outgoing and Incoming with their counts, read on opening; then Commits.
-  press("review-scope");
+  handlers.get("review-scope.on_mouse_down")?.({ bounds: { x: 12, y: 6, width: 120, height: 28 } }, cx); press("review-scope");
   assert.ok(pane.popup === "scope" && drawn.has("review-scope-menu"));
   assert.equal(styles["review-scope"].bg, "#ffffff17", "open: the bar's on fill, chrome's selected, as the panel head's");
   await settled(); await settled(); draw();
   assert.ok(!gitCalls.some(args => args.some(a => /^(fetch|add|commit|checkout|reset|push)$/.test(a)) && !args.includes("-N")), "only reads");
   assert.deepEqual(["scope-changes", "scope-uncommitted", "scope-push", "scope-pull"].map(id => texts.get(`${id}-detail`)), ["2 commits", "1 file", "2 commits", "0 commits"]);
-  assert.equal(pane.scopeAt, -1, "nothing lit on opening, as T3's menus");
+  assert.equal(pane.scopeAt, -1, "opened by the pointer: nothing lit, as T3's menus");
   assert.equal(styles["review-scope-menu"].w, 320);
   assert.ok(styles["scope-changes"].h === 28 && styles["scope-changes"].rounded === 4 && styles["review-scope-menu"].rounded === 8);
   assert.ok(styles["scope-changes"].accessibility_label.endsWith(", shown") && !styles["scope-uncommitted"].accessibility_label.endsWith(", shown"));
@@ -1172,15 +1174,18 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   }
   pane.page = base;
   // The keyboard on the menu's first page: ↑/↓ and Enter, as T3's menu; a narrow pane narrows the popover.
+  // Opened by keys (its button clicked with no press), the first row is lit: one ↓ is Uncommitted.
   press("review-scope"); await settled();
-  pane.key({ key: "down" }, cx); pane.key({ key: "down" }, cx); pane.key({ key: "enter" }, cx); await settled();
+  assert.equal(pane.scopeAt, 0, "opened by keys: the first row lit");
+  pane.key({ key: "down" }, cx); pane.key({ key: "enter" }, cx); await settled();
   assert.equal(sharedStore.get("review").page, "/worktree");
   pane.width = 300; press("review-scope");
   assert.equal(styles["review-scope-menu"].w, 268);
   press("scope-commits");
   assert.ok(styles["review-sub-at"].left >= 0 && styles["review-sub-at"].left + styles["review-scope-sub"].w <= 300, "narrow, kept inside the pane");
+  assert.ok(styles["review-sub-at"].left >= 12 + 268 - 5 || styles["review-sub-at"].left + styles["review-scope-sub"].w <= 17, "and never over the Commits row");
   pane.key({ keystroke: "escape" }, cx); pane.key({ keystroke: "escape" }, cx);
-  // Short of 384 right of the menu, narrower down to 260 rather than over the menu.
+  // Short of 384 right of the menu, narrower, never over its row.
   pane.width = 620; press("review-scope"); press("scope-commits");
   assert.deepEqual([styles["review-sub-at"].left, styles["review-scope-sub"].w], [12 + 320 - 5, 620 - 8 - (12 + 320 - 5)]);
   pane.key({ keystroke: "escape" }, cx);
@@ -1346,8 +1351,9 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     hit("home"); assert.equal(pane.foldAt, 0);
     hit("enter"); assert.equal(pane.popup, null, "Expand all, the row lit");
     press("fold-menu");
-    assert.equal(pane.foldAt, -1, "nothing lit on opening");
-    hit("enter"); assert.equal(pane.popup, "fold", "so Enter picks nothing");
+    assert.equal(pane.foldAt, 0, "opened by keys (no press): the first row lit");
+    hit("enter"); assert.equal(pane.popup, null, "so Enter picks it");
+    press("fold-menu");
     handlers.get("fold-collapse-all.on_hover")(true, cx); assert.equal(pane.foldAt, 1, "the pointer lights its row");
     hit("space"); assert.equal(shut().length, pane.review.files.length);
     press("fold-menu"); pane.typedAt = -Infinity; hit("c", "c"); assert.equal(pane.foldAt, 1, "typing");

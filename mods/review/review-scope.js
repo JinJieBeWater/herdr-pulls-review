@@ -162,9 +162,10 @@ export function commitsBody(view, t, { height, icons = LU }) {
       .when(!items.length, el => el.child(div().id("scope-none").p(8).flex_none().text_center().text_color(t.dim).child(view.picks ? "No matches" : "Reading…")))];
 }
 
-/** Opening the menu: nothing lit until a key or the pointer gets there (T3's menus), and its counts read afresh. */
-export function openScope(view, cx) {
-  view.scopePage = null; view.scopeListAt = -1; view.scopeAt = -1;
+/** Opening the menu: its counts read afresh; `lit` the row lit (list.js openLit: the first opened by keys, else none until a key
+ *  or the pointer gets there). */
+export function openScope(view, cx, lit = -1) {
+  view.scopePage = null; view.scopeListAt = -1; view.scopeAt = lit;
   readScope(view, cx);
 }
 

@@ -72,6 +72,14 @@ export function scrollList(view, id, { count, row, at = -1, height, draw, wheele
     .children(rows);
 }
 
+// A menu's lit row as it opens (docs/internals/t3-tokens.md「菜单行」): opened by keys (Enter or Space on its button, →, a
+// shortcut; a button's opener sees no pointer press), its first row; by the pointer, none until the first arrow key. A menu
+// drawn in the view takes `openLit(keys)`; a popup menu's opener puts `litProp(keys)` in its props (popup-menu.js openPopup
+// and openBeside do it from their `keys`), and the popup reads it back with `propsLit()` as it starts.
+export const openLit = (keys) => (keys ? 0 : -1);
+export const litProp = (keys) => (keys ? { lit: 0 } : {});
+export const propsLit = () => props()?.lit ?? -1;
+
 /** A popup menu's keys, as T3's Base UI menus: ↑/↓, Home, End and typing move (menuJump); Enter or Space picks
  *  `choose(at, cx, true)` (true: keys picked it); Escape closes the popup. `labels` the rows' words; `view[at]` the lit row.
  *  `close(cx)`: what Escape does. `back`: ← closes too (a submenu). `sub(i)`: row `i` opens a submenu, so → picks it.

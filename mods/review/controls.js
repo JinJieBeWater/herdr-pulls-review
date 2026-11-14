@@ -30,10 +30,10 @@ function inSub(view, e) {
 
 export const subState = view => (view.subHover ??= {});
 
-export function subAt(view, row, [min, max], h) {
-  const side = subPlace(row, max, 0, view.width).side, room = side === "right" ? view.width - 8 - (row.x + row.width) : row.x - 8;
-  const w = Math.min(max, Math.max(min, room), view.width - 16), p = subPlace(row, w, 0, view.width);
-  const x = Math.max(8, Math.min(p.x, view.width - w - 8)), y = Math.max(8, Math.min(p.y, view.height - h - 8));
+/** A submenu `max` wide at most, `h` tall, beside `row` (in the pane) as submenu.js subPlace puts one, 8 short of the pane's
+ *  ends: narrower where there's less room, never over the row. Kept inside the pane's height. */
+export function subAt(view, row, max, h) {
+  const p = subPlace(row, max, 8, view.width - 8), w = p.width, x = p.x, y = Math.max(8, Math.min(p.y, view.height - h - 8));
   view.subRect = { x, y, width: w, height: h };
   Object.assign(subState(view), { sub: view.subRect, side: p.side });
   return { at: div().id("review-sub-at").absolute().left(x).top(y), w };
@@ -74,7 +74,7 @@ export function checkMark(t, state) {
 export function button(view, t, id, label, action, { color, icon, after, primary, note, pops, size = "xs", surface = "card" } = /** @type {{ color?: any, icon?: any, after?: any, primary?: boolean, note?: any, pops?: string, size?: "sm" | "xs", surface?: "chrome" | "card" }} */ ({})) {
   const el = drawButton(t, id, { variant: primary ? "primary" : "plain", text: label, icon, color, size, surface, hot: view.hot === id, on: Boolean(pops) && view.popup === pops })
     .on_hover(glow(view, id));
-  return (pops ? opener(view, { closed: popupClosed(pops), onOpen: (_b, cx) => action(cx) })(el)
+  return (pops ? opener(view, { closed: popupClosed(pops), onOpen: (b, cx) => action(cx, !b) })(el)
     : el.on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); action(cx); }))
     .when(Boolean(note), el => el.child(div().opacity(FADED).child(note)))
     .when(Boolean(after), el => el.child(svg(after).size(14).flex_none()));

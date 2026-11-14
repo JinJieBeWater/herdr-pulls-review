@@ -2,7 +2,7 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex, Switch } from "gpui-base";
 import { exec, window as appWindow } from "herdr";
 import { request } from "./daemon.js";
-import { scrollList } from "./list.js";
+import { scrollList, openLit } from "./list.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
 import { wrapLines, setWrapLines } from "./store.js";
 import { PANE, MODEL_ROW, SPLIT_MIN, pref, setPref, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
@@ -103,8 +103,8 @@ const navRow = (view, id) => ({ x: view.width - 40 - 320 + 5, y: 38 + 5 + 237 + 
 
 // A setting's submenu, beside its row (`row`, in the pane), which stays lit. A press on the panel stops there, so the
 // keyboard is sent where the submenu wants it: the model search, else the pane's keys.
-export function openPage(view, id, cx, row = null) {
-  if (view.settingsPage !== id) { view.modelInput.set_value(""); view.pageAt = -1; }
+export function openPage(view, id, cx, row = null, keys = false) {
+  if (view.settingsPage !== id) { view.modelInput.set_value(""); view.pageAt = openLit(keys); }
   view.settingsPage = id; view.subRow = row ?? navRow(view, id);
   subOpened(subState(view), id);
   (id === "model" ? view.modelInput : view.handle).focus();
@@ -208,8 +208,8 @@ export function settingsSub(view, t) {
   // Its border and padding, the search and its margins, and a note's 32 each.
   const chrome = 10 + (model ? 43 : 0) + notes.length * 32;
   const listHeight = Math.min(options.length * MODEL_ROW, Math.max(MODEL_ROW * 3, Math.min(model ? 368 : Infinity, view.height - 16) - chrome));
-  // 320 where there's room left of the panel, else narrower down to 240 rather than over its rows.
-  const { at: box, w } = subAt(view, row, [240, 320], chrome + listHeight);
+  // 320 where there's room beside the panel, else narrower, never over its row (subAt).
+  const { at: box, w } = subAt(view, row, 320, chrome + listHeight);
   // The pointer on it: nothing pending on the panel's rows opens or closes it.
   return box
     .child(popover(view, t, "review-settings-sub", false).w(w).p(4).on_hover((on) => { if (on) subLeft(subState(view)); })

@@ -97,7 +97,7 @@ const SPLIT = { sm: { h: 28, more: 20 }, row: { h: 32, more: 32 } };
  */
 export function split(t, { id, mainId, moreId, chevron, size = "sm", surface = "card", hot = null, on = false, disabled = false, locked = false, label, moreLabel }, main, more) {
   const s = SPLIT[size], row = size === "row", lit = !disabled && (on || hot === "more" || (hot === "main" && !locked));
-  // A details row's half under the pointer adds its own 7% on the group's, as T3's primary/secondary (t3-tokens: 详情 popup).
+  // A details row's half under the pointer adds its own 7% on the group's, as T3's primary/secondary (docs/internals/specs/details.md).
   const half = (hid, off, name, key) => h_flex().id(hid).h(s.h).items_center().role("button").accessibility_label(name)
     .when(off, (h) => h.opacity(DISABLED)).when(!off, (h) => h.cursor_pointer())
     .when(row && !off && hot === key, (h) => h.bg(tint(t, "card", false)));

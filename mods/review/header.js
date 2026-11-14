@@ -74,14 +74,14 @@ export function header(view, t, head) {
     .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11)
       .children(head.parts.map(p => div().text_color(t[p.color] ?? t.dim).child(p.text)))))
     .child(div().flex_1())
-    .children(words.map(b => button(view, t, b.id, b.text, b.pops ? (cx) => view.togglePopup(b.pops, cx) : b.run,
+    .children(words.map(b => button(view, t, b.id, b.text, b.pops ? (cx, keys) => view.togglePopup(b.pops, cx, keys) : b.run,
       { after: b.after, icon: b.lead, color: t[b.color], note: b.note, pops: b.pops, size: "sm", surface: "chrome" })))
     .child(h_flex().flex_none().items_center()
       .children(icons.map(b => {
-        const run = b.pops ? (cx) => view.togglePopup(b.pops, cx) : b.run;
+        const run = b.pops ? (cx, keys) => view.togglePopup(b.pops, cx, keys) : b.run;
         // An icon alone says what it does in its label (tooltip-audit R1).
         if (b.pops) return trigger(view, t, b.id, { icon: b.icon, label: b.label, color: t[b.color], disabled: b.disabled, below: true,
-          open: view.popup === b.pops, closed: popupClosed(b.pops), onOpen: (_b, cx) => run(cx) });
+          open: view.popup === b.pops, closed: popupClosed(b.pops), onOpen: (at, cx) => run(cx, !at) });
         return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });
       }))
       // Last, the file tree's switch, greyed with no files to list.
