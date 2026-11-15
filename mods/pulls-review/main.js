@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { props, run, settings, setShared, shared, theme } from "herdr";
-import { watchReview, reviewBar, reviewMenu, initReviewMenu, menuClosed } from "./bar.js";
+import { watchReview, stopReview, reviewBar, reviewMenu, initReviewMenu, menuClosed } from "./bar.js";
 import { launch } from "./open.js";
 import { stopsInit, stopsEnd, focusRoot } from "./focus.js";
 import { REVIEW_STATUS } from "./panel.js";
@@ -28,6 +28,7 @@ export default class PullsReview extends View {
   }
 
   close() {
+    stopReview(this);
     stopsEnd(this);
     if (/** @type {any} */ (this).search) menuClosed();
   }

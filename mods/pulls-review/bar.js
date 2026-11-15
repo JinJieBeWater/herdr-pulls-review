@@ -77,40 +77,63 @@ export function watchReview(view, cx) {
   view.reviews = new Map();
   view.reviewAt = new Map();
   view.reviewBusy = new Set();
-  view.reviewWatching = new Set();
+  view.reviewWatching = new Map(); // This run only: root -> the loop's own { wait } token
+  view.reviewClosed = false;
   if (checking()) return;
-  cx.timer.every(250, (cx) => {
+  view.reviewTimer = cx.timer.every(250, (cx) => {
+    if (view.reviewClosed) return;
     const where = reviewLocation(), key = JSON.stringify(where);
-    if (key !== view.reviewKey) { view.reviewKey = key; cx.notify(); }
-    if (onHome() || !window()?.active || view.reviewBusy.has(key) || Date.now() - (view.reviewAt.get(key) ?? 0) < 10000) return;
+    const moved = key !== view.reviewKey;
+    if (moved) { view.reviewKey = key; cx.notify(); }
+    const current = view.reviews.get(key)?.root;
+    for (const [root, token] of view.reviewWatching) if (root !== current) {
+      view.reviewWatching.delete(root);
+      token.wait?.cancel();
+    }
+    if (onHome() || !window()?.active || view.reviewBusy.has(key) || !moved && Date.now() - (view.reviewAt.get(key) ?? 0) < 10000) return;
     view.reviewBusy.add(key);
     view.reviewAt.set(key, Date.now());
     cx.spawn(async (cx) => {
       try {
         const review = where.cwd && !where.on ? await readReview(where.cwd) : null;
+        if (view.reviewClosed) return;
         view.reviews.set(key, review);
-        // One watch per repo: focus moving A → B → A before A changes keeps A's first watch.
         const root = review?.root;
-        if (root && !view.reviewWatching.has(root)) {
-          view.reviewWatching.add(root);
+        if (root && view.reviewKey === key && !view.reviewWatching.has(root)) {
+          const token = { wait: null };
+          view.reviewWatching.set(root, token);
           cx.spawn(async () => {
             try {
-              while (view.reviews.get(view.reviewKey)?.root === root) {
-                const paths = await watchFolder(root), soon = Date.now() - 9000;
+              while (view.reviewWatching.get(root) === token && view.reviews.get(view.reviewKey)?.root === root) {
+                token.wait = watchFolder(root);
+                const paths = await token.wait, soon = Date.now() - 9000;
+                token.wait = null;
+                if (view.reviewWatching.get(root) !== token) return;
                 // Only this repo's locations: another's late event leaves them be. Already due, nothing to ask git.
                 const mine = [...view.reviewAt].filter(([k, at]) => view.reviews.get(k)?.root === root && at > soon);
                 // Out of focus, no check-ignore per batch: the read on coming back settles it.
-                if (mine.length && (!window()?.active || await touchesDiff(root, paths))) for (const [k, at] of mine) view.reviewAt.set(k, Math.min(at, Date.now() - 9000));
+                if (mine.length && (!window()?.active || await touchesDiff(root, paths)) && view.reviewWatching.get(root) === token) {
+                  for (const [k, at] of mine) view.reviewAt.set(k, Math.min(at, Date.now() - 9000));
+                }
               }
             }
             catch {} // The next read watches it again.
-            finally { view.reviewWatching.delete(root); }
+            finally { if (view.reviewWatching.get(root) === token) view.reviewWatching.delete(root); }
           });
         }
       } catch { view.reviews.set(key, null); }
       finally { view.reviewBusy.delete(key); cx.notify(); }
     });
   });
+}
+
+export function stopReview(view) {
+  view.reviewClosed = true;
+  view.reviewTimer?.cancel();
+  for (const [root, token] of view.reviewWatching ?? []) {
+    view.reviewWatching.delete(root);
+    token.wait?.cancel();
+  }
 }
 
 const branchArgs = (b) => [`${props().baseRef}...${b.name}`];

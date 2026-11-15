@@ -82,7 +82,7 @@ export default class ReviewPanel extends View {
       }
     });
     // While a run goes the review follows it; otherwise a slow timer reads it while it's seen. Nothing watches the folder:
-    // the host can't end a watchFolder, and an unseen review keeps nothing going.
+    // event-driven refresh is a separate change, and an unseen review keeps nothing going.
     // Every space's: the tab bar's Review bar and the panel head show how each space's run goes.
     const each = (f) => { for (const s of this.bySpace.values()) f(s); };
     cx.timer.every(1500, (cx) => each(s => { if (s.analyzing()) s.poll(cx); }));
