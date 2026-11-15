@@ -5,6 +5,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { button as drawButton, radiusOf } from "./button.js";
 import { glow } from "./tip.js";
 import { stop } from "./focus.js";
+import { alpha } from "./color.js";
 
 // Herdr's own spinner, which every mod can draw.
 const SPINNER = "mods/workspace-chrome/spinner.svg";
@@ -31,7 +32,7 @@ export function errorBar(t, id, text, retry, view) {
 
 /** A bar under the toolbar in `color` on a wash of it, as T3's FileSurfaceNotice, and one action, `${id}-${key}`, a tab stop in a view that keeps them. */
 export function noticeBar(t, id, text, color, key, label, act, view) {
-  return h_flex().id(id).flex_none().px(12).py(6).gap(8).items_center().bg(color + "18").text_color(color).text_size(11)
+  return h_flex().id(id).flex_none().px(12).py(6).gap(8).items_center().bg(alpha(color, "18")).text_color(color).text_size(11)
     .child(div().id(`${id}-text`).flex_1().min_w(0).child(text))
     .child(drawButton(t, `${id}-${key}`, { variant: "plain", text: label, surface: "card", hot: view?.hot === `${id}-${key}` })
       .when(Boolean(view), el => el.on_hover(glow(view, `${id}-${key}`)))

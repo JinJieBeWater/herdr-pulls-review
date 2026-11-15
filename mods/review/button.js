@@ -4,6 +4,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { glow } from "./tip.js";
+import { alpha } from "./color.js";
 
 // T3's sm: sizes. An outlined button's 1px border is inside its padding, as T3's `px-[calc(--spacing(3)-1px)]`.
 const SIZES = {
@@ -30,7 +31,7 @@ export const radiusOf = (size = "xs") => SIZES[size].radius;
 // On a tab, `raised`, as T3's tab close (`bg-muted`).
 /** A ghost's fill on `surface`, hovered or `on`; null on a row. For what isn't a button but lights as one (a tab, a details row). */
 export const tint = (t, surface, on) => surface === "row" ? null : surface === "tab" ? t.raised
-  : t.foreground + (surface === "chrome" ? (on ? "12" : "0a") : (on ? "1f" : "12"));
+  : alpha(t.foreground, surface === "chrome" ? (on ? "12" : "0a") : (on ? "1f" : "12"));
 
 /**
  * @param {any} t the theme

@@ -6,6 +6,7 @@ import { glow } from "./tip.js";
 import { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField, popupClosed } from "./review-menu.js";
 import { subPlace } from "./submenu.js";
 import { opener } from "./trigger.js";
+import { alpha } from "./color.js";
 export { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField };
 
 // The toolbar, 32 high, not T3's 40: its row's centre falls on the work column's pane header's (40 of tabs, 2 of border, half
@@ -64,9 +65,8 @@ export const SPLIT_MIN = 640;
 // State "all", "some", "none", or "changed" (reviewed, then changed: the app's orange half mark).
 export function checkMark(t, state) {
   const fill = state === "changed" ? "#f97316" : state === "none" ? null : t.accent;
-  // `input` can already be translucent: dark:bg-input/32 scales that alpha instead of appending another one.
-  const input = t.input.replace(/^#(.)(.)(.)$/, "#$1$1$2$2$3$3");
-  const wash = input.slice(0, 7) + Math.round(parseInt(input.slice(7) || "ff", 16) * 0.32).toString(16).padStart(2, "0");
+  // dark:bg-input/32: 32% of `input`, which can already be translucent (color.js alpha scales its own).
+  const wash = alpha(t.input, "52");
   // Unchecked, as T3's Checkbox (border-input, dark:bg-input/32): `raised` would vanish on a `selected` row.
   return div().size(16).flex_none().rounded(4).border_1().border_color(fill ?? t.input).bg(fill ?? wash)
     .flex().items_center().justify_center().text_color(state === "changed" ? "#ffffff" : t.accent_foreground)

@@ -5,6 +5,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { scrollList } from "./list.js";
 import { pierreFileIcon } from "./pierre-icons.js";
+import { alpha } from "./color.js";
 
 // Pierre's compact density (factor 0.8): a 24 row, 6.4 in, a 16 icon and a 4.8 gap; a level is one icon and its gap, so a
 // folder's rows start under its name.
@@ -133,19 +134,19 @@ export function treeList(view, id, rows, draw) {
 /** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any }} options */
 export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon } = {}) {
   return h_flex().id(id).relative().h(TREE_ROW).mx(1.6).pl(PAD + row.depth * LEVEL).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12).cursor_pointer()
-    .when(selected, (el) => el.bg(t.foreground + "1f")).when(!selected, (el) => el.hover((s) => s.bg(t.foreground + "12")))
-    .when(context && !selected, el => el.bg(t.foreground + "12"))
+    .when(selected, (el) => el.bg(alpha(t.foreground, "1f"))).when(!selected, (el) => el.hover((s) => s.bg(alpha(t.foreground, "12"))))
+    .when(context && !selected, el => el.bg(alpha(t.foreground, "12")))
     .when(Boolean(leading), (el) => el.child(leading))
     .child((icon ?? (row.dir ? svg(`${mod}/icons/tree/folder${row.open ? "-open" : ""}.svg`).size(ICON).flex_none().text_color(t.dim) : pierreFileIcon(t, mod, row.path))).when(dim, (el) => el.opacity(0.5)))
     .child(div().flex_1().min_w(0).truncate().when(dim, (el) => el.text_color(t.dim)).when(struck, (el) => el.line_through()).child(row.label ?? row.name))
     .when(Boolean(status), (el) => el.child(statusBadge(status)))
     .when(Boolean(trailing), (el) => el.child(trailing))
     .when(focused, el => el.child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)))
-    .when(guides, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + level * LEVEL + ICON / 2 - 0.5).w(1).bg(t.foreground + "24"))));
+    .when(guides, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + level * LEVEL + ICON / 2 - 0.5).w(1).bg(alpha(t.foreground, "24")))));
 }
 
 // The letter in its status's color, on a tenth of it; T3's sm Badge.
 export function statusBadge(letter) {
   const color = STATUS[letter] ?? STATUS.M;
-  return div().h(16).min_w(16).px(3).flex_none().flex().items_center().justify_center().rounded(4).font_medium().text_size(10).text_color(color).bg(color + "1a").child(letter);
+  return div().h(16).min_w(16).px(3).flex_none().flex().items_center().justify_center().rounded(4).font_medium().text_size(10).text_color(color).bg(alpha(color, "1a")).child(letter);
 }

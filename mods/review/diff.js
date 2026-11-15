@@ -8,6 +8,7 @@ import { LU, mono, zoom, isLight, checkMark, diffStats, popover } from "./contro
 import { fileStatus } from "./files.js";
 import { emptyState } from "./panel-states.js";
 import { holdWidth } from "./nav-column.js";
+import { alpha } from "./color.js";
 
 // The runs measured for a character's width, and a wide one's: long enough that rounding the whole to a pixel doesn't matter.
 const MEASURED = "0".repeat(100), MEASURED_WIDE = "中".repeat(100);
@@ -204,7 +205,7 @@ export function hbars(view, t) {
     const thumb = Math.max(24, width * width / view.sideWidth[side]);
     return div().id(`hbar-${side}`).absolute().bottom(side === 2 && sides.length > 1 ? 8 : 1).left(side === 1 ? view.view / 2 : 0).w(width).h(6)
       .opacity(view.barsOn ? 1 : 0).transition("opacity", { duration: 150, easing: "ease-out" })
-      .child(div().absolute().left((width - thumb) * Math.min(view.shift[side], max) / max).w(thumb).h_full().rounded_full().bg(t.muted + "80"));
+      .child(div().absolute().left((width - thumb) * Math.min(view.shift[side], max) / max).w(thumb).h_full().rounded_full().bg(alpha(t.muted, "80")));
   });
 }
 
@@ -212,7 +213,7 @@ export function hbars(view, t) {
 // `wrapped`: the row's lines as rows.js's wrapRow cut them, each ROW tall, the numbers and sign beside the first.
 function drawCode(t, row, numbers, shift = 0, wrapped = null) {
   if (!row) return div().flex_1().min_w(0).h_full().bg(t.canvas);
-  const tint = row.kind === "+" ? t.ansi2 + "1c" : row.kind === "-" ? t.ansi1 + "1c" : null;
+  const tint = row.kind === "+" ? alpha(t.ansi2, "1c") : row.kind === "-" ? alpha(t.ansi1, "1c") : null;
   const code = (tokens) => spans(tokens).map(([text, color]) => div().flex_none().text_color(color ?? t.foreground).child(text));
   // Herdr ships JetBrains Mono; Geist Mono, a common terminal font here, draws `=>` over the space before it.
   return h_flex().flex_1().min_w(0).h_full().overflow_hidden().font_family(mono()).when(Boolean(tint), el => el.bg(tint))
@@ -256,7 +257,7 @@ function diffItem(view, t, item) {
     case "hunk":
       // Hunk headers on the text color at 5%, as Pierre's separator (the code's ground 95%, its text 5%), 11px; `@@` is code, so mono.
       // Cut inside the 12 on the right too: truncate on the padded row would clip the text at its border.
-      return div().w_full().h(item.size).px(12).flex().items_center().bg(t.foreground + "0d").font_family(mono()).text_size(11).text_color(t.dim)
+      return div().w_full().h(item.size).px(12).flex().items_center().bg(alpha(t.foreground, "0d")).font_family(mono()).text_size(11).text_color(t.dim)
         .child(div().min_w(0).truncate().child(item.text));
     case "note": {
       // As the app's AnalysisNoteCard: a sparkle, or a critical note's mark, then its Markdown in the UI font.
@@ -271,8 +272,8 @@ function diffItem(view, t, item) {
           .child(TextView.markdown(`note-${item.key}`, note.text).selectable(true).scrollable(false).text_size(12).text_color(t.foreground)));
       return item.anchored
         ? div().w_full().h(item.size).px(12).py(3)
-          .child(body.w_full().max_w(800).h_full().px(10).py(4).rounded(8).bg(critical ? t.blocked + "1a" : t.foreground + "0a"))
-        : body.w_full().h(item.size).px(12).py(6).when(critical, el => el.bg(t.blocked + "1a"));
+          .child(body.w_full().max_w(800).h_full().px(10).py(4).rounded(8).bg(critical ? alpha(t.blocked, "1a") : alpha(t.foreground, "0a")))
+        : body.w_full().h(item.size).px(12).py(6).when(critical, el => el.bg(alpha(t.blocked, "1a")));
     }
     case "empty":
       return div().w_full().h(item.size).pl(codeInset(view.splitShown())).pr(12).gap(8).flex().items_center().text_color(t.dim)

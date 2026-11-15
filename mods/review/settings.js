@@ -4,6 +4,7 @@ import { exec, window as appWindow } from "herdr";
 import { request } from "./daemon.js";
 import { scrollList, openLit } from "./list.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
+import { menuRow, menuHint } from "./menu-row.js";
 import { wrapLines, setWrapLines } from "./store.js";
 import { PANE, MODEL_ROW, SPLIT_MIN, BELOW, pref, setPref, pickMark, searchField, popover, toPane, subState, subAt } from "./controls.js";
 
@@ -196,12 +197,9 @@ export function settingsPanel(view, t) {
 export function settingsSub(view, t) {
   const page = view.settingsPage, model = page === "model", { matches, shown } = view.models(), typed = view.modelInput.value().trim();
   const row = view.subRow ?? navRow(view, page), options = view.pageRows();
-  const choice = (r, i) => h_flex().id(r.id).h(28).px(8).gap(8).flex_none().items_center().rounded(4)
-    .when(i === view.pageAt, el => el.bg(t.selected)).on_hover((on, cx) => { if (on && view.pageAt !== i) { view.pageAt = i; cx.notify(); } })
-    .role("radio_button").accessibility_label(r.name).on_click((_e, cx) => { settingsBack(view, cx); r.pick(cx); })
-    .child(pickMark(t, r.on))
-    .child(div().flex_1().min_w(0).truncate().child(r.name))
-    .when(Boolean(r.detail), el => el.child(div().flex_none().text_size(12).text_color(t.dim).child(r.detail)));
+  // Menu rows (t3-tokens「菜单行」): lit by the pointer or the keys, out when the pointer leaves.
+  const choice = (r, i) => menuRow(view, t, r.id, { at: [view, "pageAt", i], label: r.name, lead: pickMark(t, r.on),
+    trail: r.detail ? menuHint(t, r.detail) : null, pick: (cx) => { settingsBack(view, cx); r.pick(cx); } }).role("radio_button");
   // Pi lists hundreds: past LISTED the search finds the rest.
   const notes = [model && shown.length < matches.length && note(t, `${matches.length - LISTED} more: search to narrow`),
     model && Boolean(typed) && !matches.length && note(t, `Enter to use “${typed}”`)].filter(Boolean);

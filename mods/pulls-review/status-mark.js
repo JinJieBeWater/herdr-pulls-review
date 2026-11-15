@@ -4,6 +4,7 @@
 // has none: each place says idle its own way.
 // scripts/sync.sh copies this to the mods that use it.
 import { div, svg } from "gpui-kit";
+import { alpha } from "./color.js";
 
 export const STATUS_WORD = { working: "Working", blocked: "Needs you", error: "Failed", done: "Done", idle: "Idle" };
 
@@ -11,7 +12,7 @@ export function statusMark(t, st, size = 12) {
   if (st === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900);
   if (st === "blocked" || st === "error") {
     const c = st === "error" ? t.ansi1 : t.blocked;
-    return div().size(size).flex_none().rounded(4).bg(c + "26").text_size(size < 14 ? 10 : 11).font_bold().text_color(c)
+    return div().size(size).flex_none().rounded(4).bg(alpha(c, "26")).text_size(size < 14 ? 10 : 11).font_bold().text_color(c)
       .flex().items_center().justify_center().child("!");
   }
   return st === "done" ? div().size(6).flex_none().rounded_full().bg(t.done) : null;

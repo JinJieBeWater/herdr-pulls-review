@@ -54,7 +54,7 @@ const env = {
   // Herdr T3's layout: the space panel, its pages Files and Review.
   layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", hidden: true, children: [{ id: "panel-body", active: "files", children: [{ id: "files" }, { id: "review" }] }] }] }),
 };
-const source = ["button.js", "store.js", "details.js", "tip.js", "list.js", "menu-row.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
+const source = ["color.js", "button.js", "store.js", "details.js", "tip.js", "list.js", "menu-row.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
   .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
 // Timers fire at once: a card that waits 150ms is up by the next render.
 const cx = { notify() {}, stop_propagation() {}, spawn: (f) => f(cx), focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every() {}, after: (_ms, f) => (f(cx), { cancel() {} }) } };
@@ -618,6 +618,26 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual(plain(state["review.status"]), { b: "done", c: "blocked" }, "how a run ended is still news");
   const kept = state["review.status"]; load({ block: "review" });
   assert.equal(state["review.status"], kept, "nothing to drop, nothing written: every write redraws every mod");
+
+  // The logo's menu, opened from the bar (P6): its button stays on while the menu is up, and its label stays down.
+  {
+    const { mod: bar, scope } = load({ block: "review" });
+    const r = { root: "/repo", branch: "feat", base: "main", changed: 0, ahead: 0, behind: 0, unmerged: 0 };
+    bar.reviews.set(JSON.stringify(scope.reviewLocation()), r);
+    scope.exec = async (_cmd, args) => ({ code: 0, stdout: args.includes("log") ? ["abc123", "test commit", "1", "Tester"].join(String.fromCharCode(31)) + "\n" : "" });
+    let reading;
+    const run = { ...cx, spawn: (fn) => { reading = fn(run); } };
+    const button = () => find(bar.render(), "review-pick");
+    assert.equal(button().style.bg, undefined, "closed: no on fill");
+    fire(button(), "on_mouse_down:left", { bounds: { x: 300, y: 10, width: 24, height: 24 } }, run);
+    fire(button(), "on_click", {}, run); await reading;
+    const spec = overlays.at(-1);
+    assert.equal(spec.props.menu, "review", "git read, then the menu opens");
+    assert.equal(button().style.bg, theme.foreground + "12", "its button on while the menu is up: chrome's 7%");
+    fire(button(), "on_hover", true, run);
+    fire(find(bar.render(), "tip-over-review-pick"), "on_hover", true, run);
+    assert.deepEqual(strings(find(bar.render(), "tip-review-pick").style.content), [], "its label stays down while the menu is up");
+  }
 
   // Every icon on disk is drawn: what a change orphans goes with it.
   const code = ["bar.js", "details.js", "tip.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");

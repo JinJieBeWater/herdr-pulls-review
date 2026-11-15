@@ -14,7 +14,7 @@ const el = new Proxy({}, { get: (_target, key) => key === "when"
     return el;
   } });
 const scope = vm.createContext({ div: () => el, svg: () => el });
-vm.runInContext(["review-menu.js", "controls.js"].map(file => fs.readFileSync(`${__dirname}/${file}`, "utf8")).join("\n")
+vm.runInContext(["color.js", "review-menu.js", "controls.js"].map(file => fs.readFileSync(`${__dirname}/${file}`, "utf8")).join("\n")
   .replace(/^import .*;\r?\n/gm, "").replace(/^export \{[^}]+\};\r?\n/gm, "").replace(/^export /gm, ""), scope);
 const checkMark = vm.runInContext("checkMark", scope);
 for (const [input, background] of [["#ffffff24", "#ffffff0c"], ["#ffffff", "#ffffff52"], ["#fff", "#ffffff52"], ["#abcdef80", "#abcdef29"], ["#abcdef00", "#abcdef00"]]) {

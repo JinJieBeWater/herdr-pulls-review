@@ -125,6 +125,9 @@ export function stop(view, t, id, el, radius = 6, { enter: act, handle } = /** @
     // Runs before the press takes the keyboard. No walk in this copy: the mode's another's or left over, and a press ends it, as
     // focus-visible's does. Next frame this isn't a stop, and Herdr hands the keyboard back.
     .when(!s.modal, (e) => e.on_mouse_down("left", () => { if (!s.watch) setShared(MODE, null); }))
+    // Enter or Space here is the keys' click (the host clicks on its release): a press before it that came to nothing (released
+    // off the control, so no click) is over, so neither its box (trigger.js openFrom) nor its time (pressed) carries over.
+    .on_key_down((k) => { if (k.keystroke === "enter" || k.keystroke === "space") { view.pressAt = null; view.openFrom = null; } })
     .when(Boolean(act), (e) => e.on_key_down((k, cx) => {
       // A control inside it shares its focus path: that's the control's key.
       if ((k.keystroke !== "enter" && k.keystroke !== "space") || !h.is_focused()) return;

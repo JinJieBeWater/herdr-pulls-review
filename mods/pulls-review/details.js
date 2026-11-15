@@ -2,6 +2,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { POINTER_WATCH, pointerAt, pointerGone, pointerMoved } from "./tip.js";
+import { alpha } from "./color.js";
 
 // As T3's tooltip group: while a card is up, or was under 400ms ago, the next opens at once.
 export const detailsLive = (view) => Boolean(view.details) || Date.now() - (view.detailsClosed ?? 0) < 400;
@@ -74,7 +75,7 @@ export function detailsFor(view, key, cx) {
   });
 }
 
-export const detailsLine = (t, mark, text) => h_flex().gap(8).min_w(0).items_center().child(mark).child(div().min_w(0).truncate().text_color(t.foreground + "bf").child(text));
+export const detailsLine = (t, mark, text) => h_flex().gap(8).min_w(0).items_center().child(mark).child(div().min_w(0).truncate().text_color(alpha(t.foreground, "bf")).child(text));
 
 // The title, then its lines. The caller hangs it from a Popup and gives it its gap from what it describes.
 // `wrap`: the title runs on over lines, for one the row it describes can't show whole (a commit's subject). `hide`: fades out and stays up, to come back.

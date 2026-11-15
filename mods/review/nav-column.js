@@ -6,6 +6,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
 import { ghostButton } from "./button.js";
+import { alpha } from "./color.js";
+import { dragGone, pointerMoved, POINTER_WATCH } from "./tip.js";
 
 const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
 
@@ -44,10 +46,12 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
   if (!open) return div().id(`${id}-solo`).size_full().min_w(0).bg(t.background).child(content);
   const [least, most] = navRange(body), z = Number(settings()?.zoom) || 1, mine = drag?.id === id;
   const width = mine ? Math.min(most, Math.max(least, drag.width)) : navWidth(body);
-  // Written once, on release. A pointer leaving the page lets go there.
+  // Written once, on release. A pointer leaving the page lets go there, and so does a release outside the window, which brings
+  // neither a release nor a leave (tip.js dragGone, as the sidebar's drags).
   const end = (cx) => {
     if (drag?.id !== id) return;
-    const to = Math.round(width);
+    const to = Math.round(Math.min(most, Math.max(least, drag.width)));
+    drag.watch?.cancel();
     drag = null;
     if (to !== Math.round(navWidth(body))) localStorage.setItem("nav.width", String(to));
     cx.notify();
@@ -59,6 +63,7 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
     .when(mine, (el) => el.cursor_col_resize())
     .on_mouse_move((e, cx) => {
       if (drag?.id !== id) return;
+      pointerMoved(e.position); drag.box = e.bounds;
       const to = drag.from - (e.position.x - drag.x) / z;
       if (to !== drag.width) { drag.width = to; cx.notify(); }
     })
@@ -74,14 +79,19 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
       // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
         .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize file explorer")
-          .when(handle?.is_focused(), el => el.bg(t.accent + "40"))
+          .when(handle?.is_focused(), el => el.bg(alpha(t.accent, "40")))
           .on_key_down((e, cx) => {
             const next = e.key === "home" ? least : e.key === "end" ? most : e.key === "left" ? width + 16 : e.key === "right" ? width - 16 : null;
             if (next === null) return;
             localStorage.setItem("nav.width", String(Math.min(most, Math.max(least, next))));
             cx.stop_propagation(); cx.notify();
           }))
-        .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); drag = { id, x: e.position.x, from: width, width }; cx.notify(); })));
+        .on_mouse_down("left", (e, cx) => {
+          cx.stop_propagation();
+          const d = drag = { id, x: e.position.x, from: width, width, box: null, watch: null };
+          d.watch = cx.timer.every(POINTER_WATCH, (cx) => { if (drag !== d) d.watch.cancel(); else if (dragGone(d.box)) end(cx); });
+          cx.notify();
+        })));
 }
 
 /** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. As the 40 bar's others: sm, on chrome, a 14 icon. */

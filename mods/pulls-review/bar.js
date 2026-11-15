@@ -12,14 +12,15 @@ import { launch } from "./open.js";
 import { detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { glow, tip } from "./tip.js";
 import { step, scrollList } from "./list.js";
-import { stop, pressed, justClosed } from "./focus.js";
+import { stop } from "./focus.js";
 import { KEY, closedKey } from "./store.js";
 import { git, argPage, readReview, readPicks } from "./review-git.js";
 import { button, radiusOf, tint } from "./button.js";
 import { menuRow, MENU_ROW } from "./menu-row.js";
 import { statusMark } from "./status-mark.js";
-import { hang } from "./trigger.js";
+import { hang, trigger } from "./trigger.js";
 import { reviewShown, REVIEW_STATUS } from "./panel.js";
+import { alpha } from "./color.js";
 
 const MOD = "pulls-review";
 // A conventional commit's type and scope (`fix(t3-tabs): `), dimmed so the words after it lead.
@@ -171,7 +172,7 @@ export function reviewMenu(view) {
   const tabs = menuTabs(), tab = view.tab, scope = tab === "branches" ? `vs ${base}` : branch === "(detached)" ? "" : `on ${branch}`;
   // As T3's segmented ToggleGroup; the page shown on a popover's on fill (button.js tint), as a pressed button on a card.
   const segment = (id, label, n) => h_flex().id(`review-tab-${id}`).h(24).px(10).gap(8).flex_none().items_center().rounded(6).text_size(12).font_medium()
-    .when(id === tab, el => el.bg(tint(t, "card", true)).text_color(t.foreground)).when(id !== tab, el => el.text_color(t.dim).hover(s => s.bg(t.foreground + "0a")))
+    .when(id === tab, el => el.bg(tint(t, "card", true)).text_color(t.foreground)).when(id !== tab, el => el.text_color(t.dim).hover(s => s.bg(alpha(t.foreground, "0a"))))
     .role("button").accessibility_label(`${label}, ${n}${id === tab ? ", shown" : ""}`).on_click((_e, cx) => setTab(view, id, cx))
     .child(label).child(div().text_color(t.dim).child(String(n)));
   // menu-row.js's row, lit by the pointer or ↑/↓ (list `i` is pick `i`); its hover also opens the row's card, its last child.
@@ -205,7 +206,7 @@ export function reviewMenu(view) {
       .child(Input.new(view.search).flex_1().h_full().text_size(14).text_color(t.foreground)))
     // Outside the list, so the pages' switch stays put.
     .when(tabs, el => el.child(h_flex().h(28).mx(8).mb(4).gap(8).flex_none().items_center()
-      .child(h_flex().p(2).gap(2).flex_none().rounded(8).bg(t.foreground + "0f")
+      .child(h_flex().p(2).gap(2).flex_none().rounded(8).bg(alpha(t.foreground, "0f"))
         .child(segment("commits", "Commits", commits.length)).child(segment("branches", "Branches", branches.length)))
       .child(div().flex_1()).child(div().min_w(0).truncate().text_size(12).text_color(t.dim).child(scope))))
     .when(!tabs, el => el.child(title(tab === "branches" ? `Branches vs ${base}` : branch === "(detached)" ? "Commits" : `Commits on ${branch}`)))
@@ -268,15 +269,14 @@ function branchCard(view, t, id, b, base, now) {
 }
 
 // What else to review in r's repository, a commit or another branch, in the logo's menu at `at`. `still` says the bar still
-// shows that repository when git is done.
+// shows that repository when git is done. The button's second click, which closes it, is trigger.js's.
 function openPicks(view, r, at, still = () => true) {
-  // The button toggles: the press that brought this click closed the menu, so the click leaves it closed.
-  if (justClosed(view, MENU_CLOSED) || view.readingPicks) return;
+  if (view.readingPicks) return;
   view.readingPicks = true;
   return (async () => { try {
     const { commits, branches, unpushed } = await readPicks(r);
-    // Focus moved on while git read: this repo's menu would hang over another's.
-    if (!still() || !commits.length && !branches.length) return;
+    // Focus moved on while git read: this repo's menu would hang over another's. Nothing opened: the button isn't on.
+    if (!still() || !commits.length && !branches.length) { view.opened = null; return; }
     // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
     const tabs = branches.length > 0 && commits.length > 0;
     const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);
@@ -320,24 +320,21 @@ export function reviewBar(view, t, stopPress) {
     r.ahead > 0 && ["review-ahead", String(r.ahead), null, "arrow-up", `Review ${r.branch} → ${r.upstream}: ${n(r.ahead, "commit")} to push, on ${r.branch}, not on ${r.upstream}`, [`${r.upstream}...${r.branch}`], "↑"],
     r.behind > 0 && ["review-behind", String(r.behind), null, "arrow-down", `Review ${r.upstream} → ${r.branch}: ${n(r.behind, "commit")} to pull, on ${r.upstream} as of your last fetch, not on ${r.branch}`, [`${r.branch}...${r.upstream}`], "↓"],
   ].filter(Boolean);
-  const press = (e, cx) => { view.reviewPress = e.bounds; pressed(view); stopPress(e, cx); };
-  const openMenu = (_e, cx) => {
-    view.hot = null; cx.notify();
-    // Under this click's press, if it came with one; read now, as a press while git reads is another click's.
-    const at = view.pressAt == null ? undefined : hang(view.reviewPress, MENU_W).at;
+  // Under this click's press, if it came with one (from the keys, the app's place). Started here, so a second click while git
+  // reads finds it reading.
+  const openMenu = (b, cx) => {
     const from = JSON.stringify(reviewLocation());
-    // Started here, so a second click while git reads finds it reading.
-    const reading = openPicks(view, r, at, () => JSON.stringify(reviewLocation()) === from);
-    if (reading) cx.spawn(() => reading);
+    const reading = openPicks(view, r, hang(b, MENU_W).at, () => JSON.stringify(reviewLocation()) === from);
+    if (!reading) return false;
+    cx.spawn(() => reading);
   };
   // No outline: ghost buttons in a row, as the tab bar's own. The last button ends where the bar does, so it stays put as the counts come and go.
   return h_flex().id("pulls-review").h(24).flex_none().items_center().gap(4).on_mouse_down("left", stopPress)
     .children(segments.map(s => item(/** @type {any} */ (s))))
     // Stays with no counts: on a clean default branch it's the only way in.
     // With the analysis's mark after the logo, it grows to hold both.
-    .child(tip(view, t, "review-pick", "Change what to review", stop(view, t, "review-pick", button(t, "review-pick", { label: pickLabel, hot: view.hot === "review-pick", wide: Boolean(mark) })
-      .on_hover(glow(view, "review-pick"))
-      .on_mouse_down("left", press).on_click(openMenu)
+    // A popup's button as every one (t3-tokens P6): on while its menu is up, its label down meanwhile, a second click closes it.
+    .child(trigger(view, t, "review-pick", { label: "Change what to review", below: true, closed: MENU_CLOSED, onOpen: openMenu, size: "xs", wide: Boolean(mark) },
       // As T3's icon-xs. image, not svg: svg would draw the logo in one tint.
-      .child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()).when(Boolean(mark), el => el.child(mark)), radiusOf("xs")), { below: true }));
+      (el) => el.accessibility_label(pickLabel).child(image(`mods/${MOD}/icons/logo.svg`).w(14).h(14).flex_none()).when(Boolean(mark), el => el.child(mark))));
 }
