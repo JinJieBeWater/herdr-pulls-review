@@ -131,9 +131,10 @@ export function treeList(view, id, rows, draw) {
  * its icon), so it never crosses a child's box. `mod` is the mod's
  * folder, whose icons/ hold icons/tree and icons/pierre.
  */
-/** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any }} options */
-export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon } = {}) {
+/** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any, drag?: { path: string, on: string } }} options */
+export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon, drag } = {}) {
   return h_flex().id(id).relative().h(TREE_ROW).mx(1.6).pl(PAD + row.depth * LEVEL).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12).cursor_pointer()
+    .when(Boolean(drag), el => el.drag_paths([drag.path], { on: drag.on }))
     .when(selected, (el) => el.bg(alpha(t.foreground, "1f"))).when(!selected, (el) => el.hover((s) => s.bg(alpha(t.foreground, "12"))))
     .when(context && !selected, el => el.bg(alpha(t.foreground, "12")))
     .when(Boolean(leading), (el) => el.child(leading))
