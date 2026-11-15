@@ -40,6 +40,15 @@ let drag = null;
  * The page's `content`, and right of it, while `open`, the column: `head` in its 36 head, `list` under it. `id` names it;
  * `body` is the page's width. Its left edge drags, and the width it lands at stays on this page.
  */
+/**
+ * The tree's head, the navigation column's and generic Files' (docs/internals/specs/files.md#tree-header): 32 high, the page
+ * headers' height, not T3's 36, so generic Files' search row, its page's first, has its centre on the work column's pane header's
+ * (40 + 16 = 56), and a column's head shares a centre with Review's file header beside it; 8 under it, so the tree still starts
+ * 40 under the head's top. 12 in (t3-tokens「规则」R1); no rule under it, as T3's subheaders in the panel.
+ * @param {string} id @param {any} head
+ */
+export const treeHead = (id, head) => h_flex().id(id).h(32).mb(8).flex_none().px(12).gap(8).items_center().child(head);
+
 /** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, handle?: any }} parts */
 export function withNav(t, id, body, { content, head, list, open, handle }) {
   // The content on the theme's `background`, as T3's code surface (`--code-background`); the column stays on the page's chrome.
@@ -73,8 +82,7 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
     .child(v_flex().id(`${id}-nav`).relative().w(width).flex_none().h_full().pl(1)
       // As T3's FileExplorerPane, `border-border/60`; an element's opacity, as a theme's border may carry its own alpha.
       .child(div().id(`${id}-nav-rule`).absolute().top(0).bottom(0).left(0).w(1).bg(t.border).opacity(0.6))
-      // 12 in, the panel head's and the page header's edge (t3-tokens「规则」R1); no rule under it, as T3's subheaders in the panel.
-      .child(h_flex().id(`${id}-nav-head`).h(36).mb(4).flex_none().px(12).gap(8).items_center().child(head))
+      .child(treeHead(`${id}-nav-head`, head))
       .child(div().flex_1().min_h(0).child(list))
       // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
