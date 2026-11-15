@@ -7,7 +7,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popup } from "gpui-base";
-import { spaces, panes, focused, watchFolder, window, openOverlay, props, setShared, shared, theme, home } from "herdr";
+import { checking, spaces, panes, focused, watchFolder, window, openOverlay, props, setShared, shared, theme, home } from "herdr";
 import { launch } from "./open.js";
 import { detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { glow, tip } from "./tip.js";
@@ -78,6 +78,7 @@ export function watchReview(view, cx) {
   view.reviewAt = new Map();
   view.reviewBusy = new Set();
   view.reviewWatching = new Set();
+  if (checking()) return;
   cx.timer.every(250, (cx) => {
     const where = reviewLocation(), key = JSON.stringify(where);
     if (key !== view.reviewKey) { view.reviewKey = key; cx.notify(); }

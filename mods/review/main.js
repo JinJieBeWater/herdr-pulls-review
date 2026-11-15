@@ -6,7 +6,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
-import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
+import { checking, exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
 import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown, REVIEW_SHOWN, REVIEW_STATUS } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, HEADER, BELOW, pref, setPref, zoom, subState } from "./controls.js";
@@ -178,6 +178,7 @@ export default class ReviewPanel extends View {
   // Nothing shown in this space yet: the repository where its tab works (panel.js reviewRepo), on its branch's Changes as T3's
   // diff panel opens, against the base picked for the space; a detached HEAD, with no branch, on its uncommitted changes.
   start(space, cx) {
+    if (checking()) return;
     // Evicted or closed meanwhile (evict bumps loadId): a late answer sets nothing and reads no further.
     const id = this.loadId, live = () => !this.evicted && id === this.loadId;
     cx.spawn(async (cx) => {

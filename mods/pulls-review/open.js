@@ -1,7 +1,7 @@
 // Where a review opens, and opening it: `open` in this folder's config.json picks the fork's daemon (in a Herdr pane, the
 // installed app or the browser) or the official CLI.
 
-import { spaces, exec, hc, window, notify, closeOverlay, appHome, readTextFile } from "herdr";
+import { checking, spaces, exec, hc, window, notify, closeOverlay, appHome, readTextFile } from "herdr";
 import { reviewLocation } from "./bar.js";
 import { argPage, changedFiles, git } from "./review-git.js";
 import { showPage, reviewRequest } from "./panel.js";
@@ -84,6 +84,7 @@ function herdr(root, page, analyze, space) {
 const activeSpace = () => spaces().find(s => s.active)?.id;
 
 export async function launch(input) {
+  if (checking()) return;
   const fail = (body) => notify({ title: "pulls.review", body, level: "error" }), space = activeSpace();
   try {
     let { root } = input;

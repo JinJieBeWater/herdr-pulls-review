@@ -15,7 +15,7 @@ const source = (file) => kit.bundle((f) => fs.readFileSync(path.join(__dirname, 
 
 const load = (file, env) => {
   const src = source(file);
-  const context = vm.createContext(env);
+  const context = vm.createContext({ checking: () => false, ...env });
   vm.runInContext(src, context, { filename: file });
   // A virtual list draws its rows once the frame is laid out, after the whole render: what reads where it is scrolled
   // while rendering - the aside left of it before, right of it now - sees the last frame's range.

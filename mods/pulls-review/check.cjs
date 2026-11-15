@@ -14,6 +14,7 @@ const commands = [];
 const zoom = 1.1, calls = [], overlays = [], closed = [], notes = [], launched = [], state = {}, shown = { pane: "p1", tab: "b" };
 const theme = new Proxy({ foreground: "#f4f4f6", dim: "#77777f", border: "#2a2a30", hover: "#202024" }, { get: (t, k) => t[k] ?? "#a9a9b4" });
 const env = {
+  checking: () => false,
   View: class {}, div: () => element(), h_flex: () => element("h"), v_flex: () => element("v"),
   svg: (source) => element("svg", source), image: (source) => element("image", source), Input: { new: () => element("input") }, HoverCard: { new: (id) => element("hovercard").id(id) }, Popup: { new: (id, trigger) => element("popup").id(id).child(trigger) },
   InputState: { new: () => ({ on() {}, value: () => "", focus() {} }) },
