@@ -38,10 +38,11 @@ export function panelState() {
 }
 
 /** The tab bar's window part (t3-tabs' `window-end` block) as it draws with the panel `open` or not, logical px: closed, the
- *  panel's 28 toggle a group's gap after Details, then the window's own buttons 8 on, three of 28; open, nothing, the panel
- *  head has them. */
+ *  panel's 28 toggle a group's gap after Details (none at Home, as t3-tabs draws it), then the window's own buttons 8 on,
+ *  three of 28; open, nothing, the panel head has them. */
 export function windowEndPx(open) {
-  return open ? 0 : (panelSlots().length ? GROUP_GAP + 28 : 0) + (window()?.buttons ? 8 + 3 * 28 : 0);
+  const home = shared(KEY.home), atHome = Boolean(home) && activeSpaceId() === home;
+  return open ? 0 : (panelSlots().length && !atHome ? GROUP_GAP + 28 : 0) + (window()?.buttons ? 8 + 3 * 28 : 0);
 }
 
 // The panel shown or put away, the window part sized for it in the same go: the frame that shows the change has Details and
