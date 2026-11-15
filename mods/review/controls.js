@@ -8,6 +8,10 @@ import { subPlace } from "./submenu.js";
 import { opener } from "./trigger.js";
 export { PANE, LU, COMPACT, MODEL_ROW, zoom, pickMark, searchField };
 
+// The toolbar, 32 high, not T3's 40: its row's centre falls on the work column's pane header's (40 of tabs, 2 of border, half
+// of 28), so the two read as one line (docs/internals/specs/review.md). Its menus hang 4 under its 28 buttons, centred in it.
+export const HEADER = 32, BELOW = HEADER / 2 + 28 / 2 + 4;
+
 // The page's popovers (settings, status, the scope menu and its submenu): drawn inside the pane, not popups. A press outside
 // one closes it, unless it's on its submenu (`subRect`, subAt).
 export function popover(view, t, id, closes = true) {

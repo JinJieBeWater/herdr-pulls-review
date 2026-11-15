@@ -1,6 +1,6 @@
 // What the review compares, as T3's DiffPanel header names it, and the scope menu the Review page's header and Details' Quick
 // Review both open: its counts, commits and bases read afresh at each opening (review-git.js, read-only, as the Review bar's;
-// a read for a menu since closed or moved on is dropped), its rows, its Commits submenu's body and their keys. A view drawing
+// a read for a menu since closed or moved on is dropped), the last read drawn meanwhile (`scopeCache`), its rows, its Commits submenu's body and their keys. A view drawing
 // the menu supplies two methods: `pick(page, { analyze, base, stays }, cx)` asks for that range (the Review page and Details
 // each ask their own way, panel.js reviewRequest), and `openCommits(cx, lit)` opens Commits where that view puts it. The
 // Review page's header, base picker and in-page menus are its own (extras/mods/review/scope-header.js).
@@ -61,16 +61,26 @@ export function scopeOf(view) {
 
 /** Drops a read still out, before the menu closes or its review moves on. */
 export function releaseScope(view) {
-  view.scopeRead = null;
+  view.scopeRead = null; view.scopeWaiting = null; view.scopeSlow = false;
   delete view.scopeFiltered; delete view.scopeBases;
 }
 
-// Counts, commits and refs, read afresh; what comes back for a menu since closed or moved on is dropped.
+// The last read of each repository against each base, for this mod's run only (docs/internals/storage.md): a menu opened anew
+// (Details' is a new popup each time) draws it at once while it reads afresh. shortcut: never evicted, a few small reads per
+// repository and base visited; bound it if a run visits hundreds.
+const scopeCache = new Map();
+
+// Counts, commits and refs, read afresh; what comes back for a menu since closed or moved on is dropped. Until it lands, the
+// last read of this repository and base shows (`scopeCached`); with none, the rows' counts stay blank, `…` past 150ms.
 export function readScope(view, cx) {
   releaseScope(view);
-  const { root, space } = view, base = chosenBase(view), token = {};
+  const { root, space } = view, base = chosenBase(view), token = {}, key = `${root}\n${base ?? ""}`;
   view.scopeRead = token;
   const live = () => view.scopeRead === token && !view.evicted && root === view.root && space === view.space && base === chosenBase(view);
+  const kept = !repo(view) && scopeCache.get(key);
+  if (kept) Object.assign(view, kept);
+  view.scopeCached = Boolean(repo(view));
+  if (!view.scopeCached) cx.timer.after(150, (cx) => { if (live() && !repo(view)) { view.scopeSlow = true; cx.notify(); } });
   cx.spawn(async (cx) => {
     const r = await readReview(root).catch(() => null);
     if (!live()) return;
@@ -79,7 +89,13 @@ export function readScope(view, cx) {
     if (ab?.code === 0) r.chosen = { ref: base, unmerged: parseInt(ab.stdout.trim().split(/\s+/)[1], 10) || 0 };
     const [picks, refs] = r ? await Promise.all([readPicks(r.chosen ? { ...r, baseRef: r.chosen.ref, unmerged: r.chosen.unmerged } : r).catch(() => null), readRefs(root).catch(() => [])]) : [null, []];
     if (!live()) return;
-    Object.assign(view, { scopeGit: r, picks, refs, scopeRoot: root, scopeBase: base });
+    const read = { scopeGit: r, picks, refs, scopeRoot: root, scopeBase: base };
+    if (r) scopeCache.set(key, read);
+    Object.assign(view, read, { scopeRead: null, scopeCached: false, scopeSlow: false });
+    // A pick made on the last read goes now, if the fresh one still offers that row (docs/internals/specs/details.md).
+    const waiting = view.scopeWaiting && scopeRows(view).find(row => row.id === view.scopeWaiting);
+    view.scopeWaiting = null;
+    if (waiting) pickScopeRow(view, waiting, cx);
     cx.notify();
   });
 }
@@ -88,7 +104,8 @@ export function readScope(view, cx) {
  *  checked only for the range shown (`view.page`; none before a first review). An empty one is greyed, unless it's shown. */
 export function scopeRows(view) {
   const r = repo(view), p = repo(view) && view.picks, { kind } = scopeOf(view), c = r?.chosen;
-  const radio = (id, k, label, count, detail, page) => ({ id, kind: k, label, count, detail: r ? detail : "", page, on: kind === k });
+  // Not read yet: no count, the number's place blank (or `…` while slow), and not greyed as empty.
+  const radio = (id, k, label, count, detail, page) => ({ id, kind: k, label, count, detail: r ? detail : view.scopeSlow ? "…" : "", page, on: kind === k, known: Boolean(r) });
   const ahead = c ? c.unmerged : r?.unmerged, commits = (n) => plural(n ?? 0, "commit");
   return [
     radio("scope-changes", "changes", "Changes", ahead, c || r?.base ? commits(ahead) : "", r && (c || r.base) && changesPage(c?.ref, r.branch)),
@@ -98,7 +115,7 @@ export function scopeRows(view) {
       radio("scope-push", "push", "Outgoing", r.ahead, commits(r.ahead), argPage([`${r.upstream}...${r.branch}`])),
       radio("scope-pull", "pull", "Incoming", r.behind, commits(r.behind), argPage([`${r.branch}...${r.upstream}`])),
     ] : [],
-    { id: "scope-commits", label: "Commits", count: p?.commits.length, sub: "commits" },
+    { id: "scope-commits", label: "Commits", count: p?.commits.length, sub: "commits", known: Boolean(p) },
   ];
 }
 
@@ -118,6 +135,8 @@ export function openReviewPage(view, page, cx) { view.pick(page, { base: view.ba
 // A radio asks as a count's click, the analysis included; Commits opens its submenu (`lit`: its row lit). The range shown
 // stays pickable at nothing, to read it again.
 export function pickScopeRow(view, row, cx, lit = -1) {
+  // Drawn from the last read, or not read yet: the fresh read decides (readScope).
+  if (view.scopeRead && (view.scopeCached || !repo(view)) && !row.sub) { view.scopeWaiting = row.id; return; }
   if (!row.count && !row.on) return;
   if (row.sub) return view.openCommits(cx, lit);
   view.pick(row.page, { analyze: true }, cx);
@@ -173,8 +192,8 @@ export function openScope(view, cx, lit = -1) {
  *  mark's slot kept on every row so the words line up; Commits' row stays lit while its submenu is open (`open`). `icons`: the
  *  mod's own folder, for the check. `also(row)`: the menu's own handlers (resting on Commits opens it, submenu.js). */
 export function scopeRow(view, t, r, i, { icons = LU, open = false, also = undefined } = {}) {
-  return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(t, Boolean(r.on), icons), sub: Boolean(r.sub),
-    disabled: !r.count && !r.on, pick: (cx) => pickScopeRow(view, r, cx),
+  return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(t, Boolean(r.on), icons), sub: Boolean(r.sub) && icons,
+    disabled: r.known && !r.count && !r.on, pick: (cx) => pickScopeRow(view, r, cx),
     trail: r.detail ? div().id(`${r.id}-detail`).flex_none().ml(16).text_size(12).text_color(t.dim).child(r.detail) : null, also })
     .role(r.sub ? "button" : "radio_button").accessibility_label(`${r.label}${r.detail ? `, ${r.detail}` : ""}${r.on ? ", shown" : ""}`);
 }

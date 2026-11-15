@@ -10,15 +10,15 @@ export const MENU_ROW = 28;
 
 /**
  * `at`: [state, key, i], the row's place, lit while `state[key] === i` (list.js litOnHover); `open`: its submenu is open,
- * lit too, with a chevron when `sub`. `icon`: an svg path (drawn muted) or an element, 2px into the padding and gap; `lead`:
+ * lit too, with a chevron when `sub`: the mod's icons folder, holding its own chevron-right.svg (scripts/sync.sh copies it). `icon`: an svg path (drawn muted) or an element, 2px into the padding and gap; `lead`:
  * an element before it that isn't an icon (a radio's check slot). `trail`: what ends the row (menuHint, a check). `color`:
  * the words' (T3's destructive). Disabled: faded, never lit or picked; its `hint` says why in tip()'s tooltip, so `view`
  * is the one whose `hot` tips follow. `also(row)` adds the menu's own handlers (a submenu's on_mouse_move) to the row.
  * @param {any} view @param {any} t @param {string} id
- * @param {{ at: [any, string, number], label: any, open?: boolean, icon?: any, lead?: any, trail?: any, color?: string, sub?: boolean,
+ * @param {{ at: [any, string, number], label: any, open?: boolean, icon?: any, lead?: any, trail?: any, color?: string, sub?: string | false,
  *   disabled?: boolean, hint?: string, pick?: (cx: any) => void, also?: (row: any) => any }} o
  */
-export function menuRow(view, t, id, { at: [state, key, i], label, open = false, icon, lead, trail, color, sub = false, disabled = false, hint, pick, also }) {
+export function menuRow(view, t, id, { at: [state, key, i], label, open = false, icon, lead, trail, color, sub, disabled = false, hint, pick, also }) {
   const row = h_flex().id(id).h(MENU_ROW).px(8).gap(8).flex_none().items_center().rounded(4).text_size(14).text_color(color ?? t.foreground)
     // A label that isn't words (an element) names itself: the caller sets accessibility_label.
     .role("button").when(typeof label === "string", (el) => el.accessibility_label(label))
@@ -29,8 +29,8 @@ export function menuRow(view, t, id, { at: [state, key, i], label, open = false,
     .when(Boolean(icon), (el) => el.child(div().flex_none().mx(-2).child(typeof icon === "string" ? svg(icon).size(16).text_color(t.muted) : icon)))
     .child(div().flex_1().min_w(0).truncate().child(label))
     .when(Boolean(trail), (el) => el.child(trail))
-    // T3's MenuSubTrigger ends in its chevron, 80% opaque, 2px into the padding. Herdr ships it, so every mod can name it.
-    .when(sub, (el) => el.child(svg("mods/workspace-chrome/chevron-right.svg").size(16).mr(-2).flex_none().text_color(t.muted).opacity(0.8)));
+    // T3's MenuSubTrigger ends in its chevron, 80% opaque, 2px into the padding.
+    .when(Boolean(sub), (el) => el.child(svg(`${sub}/chevron-right.svg`).size(16).mr(-2).flex_none().text_color(t.muted).opacity(0.8)));
   const done = also ? also(row) : row;
   return disabled && hint ? tip(view, t, id, hint, done.on_hover(glow(view, id))) : done;
 }

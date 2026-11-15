@@ -2,8 +2,9 @@
 // on both. Each paints no background: the panel's shows through. scripts/sync.sh copies this to both mods.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { button as drawButton } from "./button.js";
+import { button as drawButton, radiusOf } from "./button.js";
 import { glow } from "./tip.js";
+import { stop } from "./focus.js";
 
 // Herdr's own spinner, which every mod can draw.
 const SPINNER = "mods/workspace-chrome/spinner.svg";
@@ -25,10 +26,16 @@ export function emptyState(t, id, icon, title, hint) {
 
 /** Failed: a red bar under the toolbar, `ansi1` on a wash of it (its 0x18 alpha, Review's before), and Retry, T3's xs ghost button. */
 export function errorBar(t, id, text, retry, view) {
-  return h_flex().id(id).flex_none().px(12).py(6).gap(8).items_center().bg(t.ansi1 + "18").text_color(t.ansi1).text_size(11)
+  return noticeBar(t, id, text, t.ansi1, "retry", "Retry", retry, view);
+}
+
+/** A bar under the toolbar in `color` on a wash of it, as T3's FileSurfaceNotice, and one action, `${id}-${key}`, a tab stop in a view that keeps them. */
+export function noticeBar(t, id, text, color, key, label, act, view) {
+  return h_flex().id(id).flex_none().px(12).py(6).gap(8).items_center().bg(color + "18").text_color(color).text_size(11)
     .child(div().id(`${id}-text`).flex_1().min_w(0).child(text))
-    .child(drawButton(t, `${id}-retry`, { variant: "plain", text: "Retry", surface: "card", hot: view?.hot === `${id}-retry` })
-      .when(Boolean(view), el => el.on_hover(glow(view, `${id}-retry`)))
+    .child(drawButton(t, `${id}-${key}`, { variant: "plain", text: label, surface: "card", hot: view?.hot === `${id}-${key}` })
+      .when(Boolean(view), el => el.on_hover(glow(view, `${id}-${key}`)))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click((_e, cx) => { cx.stop_propagation(); retry(cx); }));
+      .on_click((_e, cx) => { cx.stop_propagation(); act(cx); })
+      .map(el => view?.fs ? stop(view, t, `${id}-${key}`, el, radiusOf()) : el));
 }

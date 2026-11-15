@@ -7,7 +7,7 @@ import { shared, setShared } from "herdr";
 import { scrollList, step } from "./list.js";
 import { hoverRow, subOpened, subLeft } from "./submenu.js";
 import { LU, COMPACT, MODEL_ROW, pickMark, searchField, popupClosed } from "./review-menu.js";
-import { popover, toPane, subState, subAt } from "./controls.js";
+import { popover, toPane, subState, subAt, HEADER, BELOW } from "./controls.js";
 import { BASES, chosenBase, changesPage, diffCommits, repo, scopeOf, scopeRows, scopeList, scopeRow, scopeItems, readScope, releaseScope, openReviewPage, menuKey, commitsKey, commitsBody } from "./review-scope.js";
 import { opener } from "./trigger.js";
 import { button as drawButton, ghostButton, GROUP_GAP } from "./button.js";
@@ -59,10 +59,10 @@ export function scopeKey(view, e, cx) {
 
 
 // As the toolbar's xs ghost buttons (docs/adr/0013), its words truncating, a chevron at 70%: no fill of its own over the
-// toolbar's, only hovered or while its menu is open. It leads the row with no fill at rest, so its words line up as Files' first
-// crumb's, 14 in, its box at 12 (t3-tokens「规则」R1): padding 2 on the left, as a crumb's.
+// toolbar's, only hovered or while its menu is open. Its box at 12, under the panel head's first tab's (t3-tokens「规则」R1), with
+// a sm button's own padding both sides: its words 22 in, where Files' first crumb has its words.
 function scopeButton(view, t, s) {
-  return opener(view, { closed: popupClosed("scope"), onOpen: (b, cx) => view.togglePopup("scope", cx, !b) })(drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, size: "sm", surface: "chrome", on: view.popup === "scope", hot: view.hot === "review-scope" }).pl(2).min_w(0).flex_shrink(1)
+  return opener(view, { closed: popupClosed("scope"), onOpen: (b, cx) => view.togglePopup("scope", cx, !b) })(drawButton(t, "review-scope", { variant: "plain", wide: true, label: `Diff scope: ${s.label}`, size: "sm", surface: "chrome", on: view.popup === "scope", hot: view.hot === "review-scope" }).min_w(0).flex_shrink(1)
     .on_hover(glow(view, "review-scope")))
     .child(div().id("review-scope-label").min_w(0).truncate().child(s.label))
     .child(svg(`${LU}/chevron-down.svg`).size(14).flex_none().opacity(0.7));
@@ -168,7 +168,8 @@ export function baseMenu(view, t) {
       .role("radio_button").accessibility_label(`${item.label}${on ? ", picked" : ""}`);
   };
   const x = Math.max(8, Math.min(view.baseX ?? 16, view.width - BASE_W - 8));
-  return div().absolute().top(36).left(x).child(popover(view, t, "review-base-menu").w(Math.min(BASE_W, view.width - 16)).p(4)
+  // 4 under its 24 button, centred in the header.
+  return div().absolute().top(HEADER / 2 + 24 / 2 + 4).left(x).child(popover(view, t, "review-base-menu").w(Math.min(BASE_W, view.width - 16)).p(4)
     .child(searchField(t, view.refSearch).mx(8).mt(5))
     // As T3's: 10px, uppercase, the check's column kept.
     .child(h_flex().h(24).pl(30).pr(8).flex_none().items_center().border_b_1().border_color(t.border).text_size(10).font_medium().text_color(t.dim)
@@ -188,14 +189,14 @@ export function scopeMenu(view, t) {
 }
 
 /** The open submenu of commits in the Review page, as T3's: its search on top, its list at most 320 tall, beside its row
- *  in the menu (main.js draws the menu at top 38, left 12; its rows start past its border and padding: rows of 28, a rule of 9). */
+ *  in the menu (main.js draws the menu at top BELOW, left 12; its rows start past its border and padding: rows of 28, a rule of 9). */
 export function scopeSub(view, t) {
   const page = view.scopePage, rows = scopeRows(view), radios = rows.filter(r => !r.sub).length;
   const at = rows.findIndex(r => r.sub === page);
   const items = scopeList(view), most = Math.max(MODEL_ROW * 3, Math.min(320, view.height - 180));
   // Its border and padding, the search and its margins, then the list or its 36 note.
   const h = 10 + 43 + (items.length ? Math.min(items.length * MODEL_ROW, most) : 36);
-  const anchor = { x: 17, y: 43 + at * MODEL_ROW + (at >= radios ? 9 : 0), width: menuWidth(view) - 10, height: MODEL_ROW };
+  const anchor = { x: 17, y: BELOW + 5 + at * MODEL_ROW + (at >= radios ? 9 : 0), width: menuWidth(view) - 10, height: MODEL_ROW };
   // 384 where there's room beside the menu, else narrower (its subjects truncate), never over its row (subAt).
   const { at: box, w } = subAt(view, anchor, 384, h);
   // The pointer on it: nothing pending on the menu's rows opens or closes it.

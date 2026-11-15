@@ -2,6 +2,17 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+// Where the work column's pane header has its centre, from the layout: the tab row, the pane's border, half its header. The
+// space panel's page headers put their row there too (docs/internals/specs/files.md), so the two read as one line.
+const paneHeadCentre = (() => {
+  const root = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../layouts/herdr-t3.json"), "utf8"));
+  const node = (n, id) => n?.id === id ? n : (n?.children ?? []).map(c => node(c, id)).find(Boolean);
+  const pane = node(root, "main").content.pane;
+  // The panel head's first tab's box: the panel's padding and the head's (t3-chrome check-surfaces holds that the head draws none).
+  const panelNode = node(root, "panel"), side = (n) => [].concat(n?.padding ?? 0).at(-1);
+  return { left: node(root, "tabs-row").size.px + pane.border.width + pane.header.height / 2, head: node(root, "panel-head").size.px,
+    tabEdge: side(panelNode) + side(node(root, "panel-head")) };
+})();
 
 // rows.js runs as is; main.js runs on inert elements, to reach every render path with a review in hand.
 // Follow a pane's imports once, before what needs them; rows, daemon and tips are supplied by its fake env.
@@ -503,6 +514,8 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(texts.get("review-nav-head"), undefined);
   assert.ok(styles["review-pane"] && styles["review-pane"].bg === undefined && styles["review-header"].bg === undefined, "no background of its own: the panel's shows");
   assert.equal(styles["review-header"].border_b, undefined, "no rule under the toolbar, as T3's subheaders in the panel");
+  assert.equal(paneHeadCentre.head + styles["review-header"].h / 2, paneHeadCentre.left, "the toolbar's centre on the work column's pane header's");
+  assert.equal(styles["review-header"].h, 32, "Files' 32 bar: Tree stays put between the pages");
   assert.equal(styles["review-tools"].gap, 4, "the toolbar's icon buttons 4 apart (P3), as T3's DiffPanel");
   // One column: a lone group lists no groups; the tree is the group shown, its files first, its subgroups after them as
   // rows; its summary heads its diff.
@@ -525,6 +538,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     pane.closePopup(cx); drawn.clear(); pane.render(cx);
     press("settings");
     assert.equal(styles["settings-anchor"].right, fromRight(["review-nav-toggle"]), "the settings menu's right edge on its button's");
+    assert.equal(styles["settings-anchor"].top, styles["review-header"].h / 2 + 28 / 2 + 4, "4 under its 28 button, centred in the toolbar");
     pane.closePopup(cx); drawn.clear(); pane.render(cx);
   }
   press("settings");
@@ -951,6 +965,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(drawn.has("review-note") && texts.get("review-empty-title") === "Not on this computer" && !panel.bySpace.has("r1"), "the empty state: icon, title, hint");
     // With no review, the toolbar stays: the page's name, and the tree's switch greyed.
     assert.ok(drawn.has("review-header") && texts.get("review-title") === "Review" && styles["review-nav-toggle"].opacity === 0.64);
+    assert.equal(styles["review-header"].h, 32, "the same bar with no review, so nothing moves as one loads");
     activeSpace = "s1"; panel.bySpace.set("s1", pane); sharedStore.set("review.shown", was); mainScope.exec = env.exec;
     sharedStore.set("review", { space: "s1", root: "/repo", page: firstPage, n: pane.handled });
     drawn.clear(); panel.render(cx);
@@ -1063,7 +1078,15 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(styles["review-scope"].h === 28 && styles["review-scope"].min_w === 0 && styles["review-scope"].flex_shrink === 1 && styles["review-scope-label"].truncate);
   // A ghost button, as the toolbar's others (docs/adr/0013): no fill of its own over the toolbar's, only hovered or open.
   assert.equal(styles["review-scope"].bg, undefined);
-  assert.equal(styles["review-scope"].pl, 2, "its words 14 in, as Files' first crumb (R1, a row-leading word)");
+  // Its box at 12, under the panel head's first tab's box; its padding a sm button's own 10 on both sides, so its words are 22
+  // in, where Files' first crumb has its words (check-files.cjs).
+  {
+    const box = styles["review-header"].px + (styles["review-scope-row"].ml ?? 0) + (styles["review-scope"].ml ?? 0);
+    assert.equal(box, paneHeadCentre.tabEdge, "the scope button's box on the panel head's first tab's");
+    assert.equal(box, 12);
+    assert.equal(styles["review-scope"].pl, undefined, "no left padding of its own: the button's");
+    assert.equal(box + styles["review-scope"].px, 12 + 10, "its words 10 in, the hover fill as wide on both sides");
+  }
   assert.equal(styles["review-scope"].text_color, "#eeeeee", "what it shows, in foreground: a plain button, as T3's ghost");
   handlers.get("review-scope.on_hover")(true, cx); draw();
   assert.equal(styles["review-scope"].text_color, "#eeeeee", "hover brightens the scope and its icon");
@@ -1093,7 +1116,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   press("scope-commits");
   assert.ok(pane.scopePage === "commits" && keyboard === "scope" && !drawn.has("scope-back") && drawn.has("review-scope-sub") && drawn.has("scope-changes"));
   assert.ok(styles["review-scope-menu"].w === 320 && styles["review-scope-sub"].w === 384 && styles["scope-commits"].bg);
-  assert.deepEqual([styles["review-sub-at"].left, styles["review-sub-at"].top], [12 + 320 - 5, 38 + 5 + 4 * 28 + 9 - 5]);
+  assert.deepEqual([styles["review-sub-at"].left, styles["review-sub-at"].top], [12 + 320 - 5, 32 / 2 + 28 / 2 + 4 + 5 + 4 * 28 + 9 - 5]);
   // A press in the submenu isn't outside the menu; one past both closes them.
   handlers.get("review-scope-menu.on_mouse_down_out")({ position: { x: 500, y: 200 } }, cx);
   assert.equal(pane.popup, "scope");

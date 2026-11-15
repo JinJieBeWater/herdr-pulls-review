@@ -126,12 +126,12 @@ export function treeList(view, id, rows, draw) {
  * before the icon (Review's reviewed box), the icon, the name, then a change's letter and the page's own `trailing`. No
  * chevron: a folder's icon opens with it. A file's icon is its Pierre one, `icon` stands in for either (a Review group's).
  * Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed; `dim` (ignored, reviewed) greys the name
- * and halves the icon. `guides`, while the tree is hovered: a line down each open folder, under its icon. `mod` is the mod's
+ * and halves the icon. `guides`, while the tree is hovered: a line down each open folder, under its first box (`leading`, else
+ * its icon), so it never crosses a child's box. `mod` is the mod's
  * folder, whose icons/ hold icons/tree and icons/pierre.
  */
 /** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any }} options */
 export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon } = {}) {
-  const lane = leading ? ICON + GAP : 0;
   return h_flex().id(id).relative().h(TREE_ROW).mx(1.6).pl(PAD + row.depth * LEVEL).pr(PAD).gap(GAP).items_center().rounded(6).text_size(12).cursor_pointer()
     .when(selected, (el) => el.bg(t.foreground + "1f")).when(!selected, (el) => el.hover((s) => s.bg(t.foreground + "12")))
     .when(context && !selected, el => el.bg(t.foreground + "12"))
@@ -141,7 +141,7 @@ export function treeRow(t, mod, row, id, { selected = false, focused = false, co
     .when(Boolean(status), (el) => el.child(statusBadge(status)))
     .when(Boolean(trailing), (el) => el.child(trailing))
     .when(focused, el => el.child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)))
-    .when(guides, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + level * LEVEL + lane + ICON / 2 - 0.5).w(1).bg(t.foreground + "24"))));
+    .when(guides, el => el.children(Array.from({ length: row.depth }, (_, level) => div().absolute().top(0).bottom(0).left(PAD + level * LEVEL + ICON / 2 - 0.5).w(1).bg(t.foreground + "24"))));
 }
 
 // The letter in its status's color, on a tenth of it; T3's sm Badge.

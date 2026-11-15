@@ -121,8 +121,10 @@ export const glow = (view, id) => (on, cx) => {
 };
 
 // A hover kept in view[key], for what has no label or card to go with the pointer: it goes even when its leave never comes.
-export function hoverKept(view, key, id, el) {
-  return el.on_hover((on, cx) => {
+export const hoverKept = (view, key, id, el) => { const kept = keptHover(view, key, id); return el.on_hover(kept.hover).on_mouse_move(kept.move); };
+/** hoverKept's two handlers, for an element whose hover does more (shared/tab.js). */
+export function keptHover(view, key, id) {
+  return { hover: (on, cx) => {
     if (on) {
       view[key] = id;
       view.keptBox = null;
@@ -135,7 +137,7 @@ export function hoverKept(view, key, id, el) {
       });
     } else if (view[key] === id) view[key] = null;
     cx.notify();
-  }).on_mouse_move((e) => { pointerMoved(e.position); if (view[key] === id) view.keptBox = e.bounds; });
+  }, move: (e) => { pointerMoved(e.position); if (view[key] === id) view.keptBox = e.bounds; } };
 }
 
 // A mark with no words of its own says what it is on hover, unless the row's details already do.

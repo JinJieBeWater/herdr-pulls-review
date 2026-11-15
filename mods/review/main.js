@@ -9,7 +9,7 @@ import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "g
 import { exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
 import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown, REVIEW_SHOWN, REVIEW_STATUS } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
-import { PANE, LU, SPLIT_MIN, DISABLED, pref, setPref, zoom, subState } from "./controls.js";
+import { PANE, LU, SPLIT_MIN, DISABLED, HEADER, BELOW, pref, setPref, zoom, subState } from "./controls.js";
 import { GROUP_GAP } from "./button.js";
 import { popupClosed } from "./review-menu.js";
 import { subOpened } from "./submenu.js";
@@ -436,7 +436,7 @@ export default class ReviewPanel extends View {
     if (this.panel.front && this.panel.front.space !== space?.id) releaseScope(this.panel.front);
     // With no review to show, the toolbar names the page alone and keeps the column's switch, greyed.
     const note = (body) => v_flex().id("review-pane").size_full().text_color(t.foreground).text_size(12)
-      .child(h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center()
+      .child(h_flex().id("review-header").h(HEADER).flex_none().px(12).gap(8).items_center()
         .child(div().id("review-title").flex_1().pl(8).font_medium().child("Review"))
         .child(navToggle(this, t, "mods/review", "review-nav-toggle", this.navOpen, () => {}, true)))
       .child(div().id("review-note").flex_1().min_h(0).child(body));
@@ -505,10 +505,10 @@ export default class ReviewPanel extends View {
     if (this.popup === "status" && (!this.review || this.switching || !(running || error))) this.popup = null;
     // Set again by the submenu drawn, if one is.
     this.subRect = null;
-    // The settings and fold menus hang 4 under their 28 buttons (38 down the 40 header), right-aligned with them: the
+    // The settings and fold menus hang 4 under their 28 buttons (controls.js BELOW), right-aligned with them: the
     // settings' right edge past the 12 inset, the tree's switch and the group's gap (header.js), the fold's a button and a gap on.
     // Keys open them too, with no press to place them by.
-    const right = 12 + 28 + GROUP_GAP, below = 38;
+    const right = 12 + 28 + GROUP_GAP, below = BELOW;
     return v_flex().id("review-pane").relative().size_full().min_h(0).text_color(t.foreground).text_size(12)
       // cmd-w and cmd-t are keys.json's (mod:review): review.close, t3-chrome.surface-menu.
       .track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
@@ -536,7 +536,7 @@ export default class ReviewPanel extends View {
               .child(TextView.markdown(`summary-${group.key}`, group.summary).selectable(true).scrollable(false).text_size(12).text_color(t.muted))))
             .child(div().flex_1().min_h(0).child(diffView(this, t))) }))).when(Boolean(this.switching), el => el.opacity(DISABLED)))
       // Built only while open: render runs on every live change, and a catalog runs to hundreds of rows.
-      // Each 4 under its button (T3's sideOffset) in the 40 header.
+      // Each 4 under its button (T3's sideOffset) in the header.
       .when(this.popup === "settings", el => el.child(div().id("settings-anchor").absolute().top(below).right(right).child(settingsPanel(this, t))))
       .when(this.popup === "settings" && Boolean(this.settingsPage), el => el.child(settingsSub(this, t)))
       // Under its button, the one left of the gear.

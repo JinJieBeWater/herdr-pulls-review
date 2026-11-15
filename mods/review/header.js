@@ -1,6 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { LU, COMPACT, button, popover } from "./controls.js";
+import { LU, COMPACT, HEADER, button, popover } from "./controls.js";
 import { ghostButton, GROUP_GAP } from "./button.js";
 import { trigger } from "./trigger.js";
 import { tip } from "./tip.js";
@@ -66,10 +66,10 @@ export function head(view) {
 export function header(view, t, head) {
   // As T3's DiffPanel header: the scope and what it compares, the counts as its DiffStatLabel, then the tools. Narrow, the
   // words give way and the buttons never.
-  // 12 in, as the panel head above it (t3-tokens「规则」R1); the 40 bar's buttons sm on chrome, their icons 14 (T3's diff toolbar),
+  // 12 in, as the panel head above it (t3-tokens「规则」R1); the bar's buttons sm on chrome, their icons 14 (T3's diff toolbar),
   // the icons a group's gap apart (P3). No rule under it, as T3's subheaders in the panel.
   const icons = head.buttons.filter(b => !b.text), words = head.buttons.filter(b => b.text);
-  return h_flex().id("review-header").h(40).flex_none().px(12).gap(8).items_center().overflow_hidden()
+  return h_flex().id("review-header").h(HEADER).flex_none().px(12).gap(8).items_center().overflow_hidden()
     .child(scopeHeader(view, t))
     // The counts hold, as T3's stats beside its tools: a long commit subject truncates instead.
     .when(head.parts.length > 0, el => el.child(h_flex().id("review-counts").flex_none().gap(4).items_center().text_size(11)
