@@ -6,7 +6,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
-import { checking, exec, nextCommand, setShared, shared, spaces, theme, window as appWindow } from "herdr";
+import { checking, exec, nextCommand, setShared, shared, spaces, theme, props, window as appWindow } from "herdr";
 import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown, REVIEW_SHOWN, REVIEW_STATUS } from "./panel.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, HEADER, BELOW, pref, setPref, zoom, subState } from "./controls.js";
@@ -27,6 +27,8 @@ import { setReviewed, toggleFull, headerPress, diffView, hbars, foldMenu } from 
 import { analysisStatus, statusPanel, head, header } from "./header.js";
 import { reviewKey } from "./keys.js";
 import { wrapLines } from "./store.js";
+import { initMenu, closeMenu, menuView, closeMenus } from "./menus.js";
+import { installedTargets } from "./open-in.js";
 
 // A request this young when its space's review starts is the click that opened the panel; an older one was already shown.
 const FRESH = 10000;
@@ -37,6 +39,8 @@ const KEEP = 3;
 
 export default class ReviewPanel extends View {
   init(_props, cx) {
+    if (props()?.files) return initMenu(this, cx);
+    if (appWindow()?.platform === "macos") cx.spawn(async cx => { await installedTargets(); cx.notify(); });
     // Each space's review, by space id, for this run; what each shows is kept in review.shown.
     this.panel = this; this.bySpace = new Map();
     // The one popup open over the diff, if any: "settings", "status", "fold" or "scope".
@@ -73,7 +77,7 @@ export default class ReviewPanel extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const [name, page] = (await nextCommand()).split(":"), s = this.shown();
-        if (name === "close") { if (s?.popup) s.closePopup(cx); else closeSurface(); }
+        if (name === "close" && !closeMenus(PANE)) { if (s?.popup) s.closePopup(cx); else closeSurface(); }
         if ((name !== "scope" && name !== "settings" && name !== "base") || !s?.page) continue;
         if (!page || s.popup !== name) s.togglePopup(name, cx, true);
         if (name === "scope" && page === "commits") openScopePage(s, page, cx, 0);
@@ -424,6 +428,7 @@ export default class ReviewPanel extends View {
 
   // The active space's review; a sentence where there is none to show.
   render(cx) {
+    if (props()?.files) return menuView(this);
     const t = theme(), space = spaces().find(s => s.active);
     if (this.panel.front && this.panel.front.space !== space?.id) releaseScope(this.panel.front);
     // With no review to show, the toolbar names the page alone and keeps the column's switch, greyed.
@@ -442,6 +447,8 @@ export default class ReviewPanel extends View {
     if (!s.page) return s.noRepo ? note(emptyState(t, "review-empty", `${LU}/file-diff.svg`, "Not a git repository", "The folder this tab works in isn't in a git repository.")) : starting();
     return s.draw(cx);
   }
+
+  close() { if (props()?.files) closeMenu(this); }
 
   // What others ask of this space's review, and what it tells them.
   follow(cx) {

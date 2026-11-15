@@ -19,7 +19,7 @@ Review 栏只显示有的内容：`4 ahead of main`（当前分支上默认分�
 
 用 `"pwa"` 或 `"browser"` 时，点击计数还会开始这份 diff 的 AI 分析；已有分析在跑就直接接上。从 logo 菜单里选的不会。`"herdr"` 模式下由评审自己的设置决定，见上文。
 
-`"herdr"` 模式下，当前 space 的分析状态显示在独立 Review 栏 logo 旁；Herdr T3 改为显示在唯一 Review 标签上。切换／隐藏保留范围、组、文件和阅读位置，关闭标签释放，重新添加从默认范围开始。Review 树保留已看框，不提供右键菜单。它不是 agent，不进 Inbox。
+`"herdr"` 模式下，当前 space 的分析状态显示在独立 Review 栏 logo 旁；Herdr T3 改为显示在唯一 Review 标签上。切换／隐藏保留范围、组、文件和阅读位置，关闭标签释放，重新添加从默认范围开始。Review 树保留已看框，并与 Files 共用拖进终端及右键菜单（Open、Reveal、Open with、Copy path 和 Insert）；右键不改当前文件、目录折叠和已看状态。已删除文件只能 Copy path、不能拖动；子组行两者都没有。它不是 agent，不进 Inbox。
 
 ## 安装
 

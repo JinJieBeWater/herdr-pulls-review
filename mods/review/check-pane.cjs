@@ -11,6 +11,8 @@ const paneHeadCentre = kit.paneHeadCentre(fs.readFileSync(path.join(__dirname, "
 const source = (file) => kit.bundle((f) => fs.readFileSync(path.join(__dirname, f), "utf8"), file, (f, src, needs) =>
   f === "button.js" ? "const { drawButton, ghostButton, tint, GROUP_GAP } = (() => {\n" + kit.strip(src) + "\nreturn { drawButton: button, ghostButton, tint, GROUP_GAP };\n})();"
   : f === "trigger.js" ? needs() + "\nconst { trigger, opener, popupOpen } = (() => { const button = drawButton;\n" + kit.strip(src) + "\nreturn { trigger, opener, popupOpen };\n})();"
+  : f === "menus.js" ? needs() + "\nconst { initMenu, closeMenu, menuView, closeMenus, openMenu, rowItems } = (() => { const window = appWindow;\n" + kit.strip(src) + "\nreturn { initMenu, closeMenu, menuView, closeMenus, openMenu, rowItems };\n})();"
+  : f === "popup-menu.js" ? needs() + "\nconst { openPopup, openBeside, closeSub, subGone, closeChain, closeTops, menuClosed } = (() => {\n" + kit.strip(src) + "\nreturn { openPopup, openBeside, closeSub, subGone, closeChain, closeTops, menuClosed };\n})();"
   : null, new Set(file === "main.js" ? ["rows.js", "daemon.js", "tip.js"] : []));
 
 const load = (file, env) => {
@@ -240,6 +242,8 @@ const element = (named = null) => {
 };
 const press = (id) => { assert.ok(handlers.get(`${id}.on_click`), id); handlers.get(`${id}.on_click`)({}, cx); drawn.clear(); pane.render(cx); };
 const sharedStore = new Map();
+let menuProps = null;
+const overlays = [], closedOverlays = [];
 const pref = (key) => sharedStore.get("review.prefs")?.[key], setPref = (key, value) => sharedStore.set("review.prefs", { ...sharedStore.get("review.prefs"), [key]: value });
 // The page the panel shows, and the space that is active: s1 and s2 here, r1 on another machine.
 let pageShown = "review", windowActive = true, activeSpace = "s1", barIn = false, workHidden = false;
@@ -258,6 +262,8 @@ const refField = { ...field, events: {}, focus() { keyboard = "refs"; } };
 // The page's own localStorage: whether its file tree's column is open.
 const local = new Map();
 const env = {
+  props: () => menuProps,
+  openOverlay: spec => { overlays.push(spec); return `menu-${overlays.length}`; }, closeOverlay: id => closedOverlays.push(id),
   agents: () => [], focused: () => null, panes: () => [],
   localStorage: { getItem: (k) => local.get(k) ?? null, setItem: (k, v) => local.set(k, String(v)), removeItem: (k) => local.delete(k) },
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element, h_resizable: element, resizable_panel: element, Scrollbar: { vertical: element },
@@ -268,7 +274,9 @@ const env = {
   tip: (_view, _t, _id, _label, el) => el,
   // Paths build into nothing here; painting one is an element like any other.
   PathBuilder: (() => { const chain = new Proxy({}, { get: () => () => chain }); return { stroke: () => chain, fill: () => chain }; })(),
-  window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }), exec: (...args) => { browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search" ? scopeField : options.placeholder === "Search refs" ? refField : field },
+  window: { paint_path: () => element() }, appWindow: () => ({ platform: "macos", active: windowActive }),
+  // LaunchServices probes are not link navigation; shared/check-open-in.cjs checks those separately.
+  exec: (...args) => { if (!(args[0] === "open" && args[1][0] === "-Ra")) browsed.push(args); return Promise.resolve({ code: 0 }); }, Input: { new: () => element() }, InputState: { new: (options) => options.placeholder === "Search" ? scopeField : options.placeholder === "Search refs" ? refField : field },
   v_virtual_list: (_id, count, sizes, _key, render) => { assert.equal(sizes.length, count); lists.push(() => render({ start: 0, end: count }).forEach(Boolean)); return element(); },
   VirtualListScrollHandle: { new: () => ({ scroll_to_item: (i) => calls.push(["scroll", i]) }) },
   TextView: { markdown: element },
@@ -592,12 +600,22 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(drawn.has("tree-f-c.ts"));
   pane.focusPath = null;
   // The reviewed box leads the row, before the icon, in Files' row (asserted in shared/check-file-tree.cjs).
-  // Review's diff tree has no context menu (ADR 0017); reviewed boxes remain the direct action.
-  handlers.get("tree-g-k.on_mouse_down")?.();
-  assert.equal(pane.menuFor ?? null, null, "a group's row has no menu");
-  assert.equal(handlers.get("tree-f-a.ts.on_mouse_down"), undefined);
-  assert.ok(!drawn.has("file-menu"));
-  // Nor does the toolbar, though the panel has Files and a file is in front.
+  assert.equal(handlers.get("tree-g-k.on_mouse_down"), undefined, "a subgroup has no path menu");
+  {
+    const current = pane.current, marked = pane.fileAt("a.ts").reviewed;
+    handlers.get("tree-f-a.ts.on_mouse_down")({}, cx);
+    assert.equal(pane.current, current); assert.equal(pane.fileAt("a.ts").reviewed, marked);
+    assert.equal(overlays.at(-1).mod, "review");
+    menuProps = { ...overlays.at(-1).props, overlay: `menu-${overlays.length}` };
+    const menu = new mainScope.Mod(); menu.init({}, cx); drawn.clear(); menu.render(cx);
+    assert.equal(menu.bySpace, undefined, "a popup never starts another review");
+    assert.ok(drawn.has("files-menu-copy-path") && drawn.has("files-menu-open"), "the shared path menu renders in Review itself");
+    assert.equal(vm.runInContext('closeMenus("review")', mainScope), true, "close keys can close the menu before the tab");
+    assert.equal(closedOverlays.at(-1), menuProps.overlay);
+    menu.close(); assert.ok(sharedStore.has("review.menuClosed"));
+    menuProps = null; drawn.clear(); pane.render(cx);
+  }
+  // No cross-page toolbar action, though the panel has Files and a file is in front.
   assert.ok(pane.current && drawn.has("review-nav-toggle") && !drawn.has("review-open-files"));
   pane.setReviewed(pane.fileAt("a.ts"), false, cx);
   // A file in a folded folder or group, shown from elsewhere, opens what holds it.
@@ -2232,5 +2250,5 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(!p.analyzing() && word() === "done" && !p.review);
     sharedStore.set("review.shown", wasShown); sharedStore.set("review.status", wasStatus);
   }
-  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; Review tree has no context menu; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, nothing asked of it by Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
+  console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; Review uses Files' shared native path menu; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, nothing asked of it by Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
 })();

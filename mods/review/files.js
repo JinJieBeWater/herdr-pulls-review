@@ -6,6 +6,14 @@ import { foldAllButton } from "./nav-column.js";
 import { PANE, checkMark } from "./controls.js";
 import { groupFiles } from "./rows.js";
 import { categoryIcon, criticalMark } from "./groups.js";
+import { spaces, window as appWindow } from "herdr";
+import { terminalFor } from "./terminal-context.js";
+import { knownTargets } from "./open-in.js";
+import { openMenu, rowItems } from "./menus.js";
+import { join } from "./file-listing.js";
+import { closedKey } from "./store.js";
+import { popupOpen } from "./trigger.js";
+import { MENU_ROW } from "./menu-row.js";
 
 export const TREE = "review-files";
 
@@ -33,6 +41,22 @@ export function navHead(view, t) {
  */
 export function fileTree(view, t) {
   const mod = `mods/${PANE}`;
+  const space = spaces().find(s => s.id === view.space), on = space?.machine ?? null;
+  const pathRow = (row, id, options, deleted = false) => treeRow(t, mod, row, id, { ...options,
+    context: popupOpen(view, id, closedKey(PANE, "menu")),
+    // A compact folder's top has the same synthetic subgroup prefix as its last path; trim only that prefix.
+    drag: deleted ? undefined : { path: join(view.root, row.dir ? row.top.slice(row.path.length - row.real.length) : row.path), on } })
+    .on_mouse_down("right", (_e, cx) => {
+      cx.stop_propagation();
+      const agent = terminalFor(view.space), editors = (knownTargets() ?? []).filter(name => name !== "Finder");
+      const count = rowItems({ remote: Boolean(on), platform: appWindow()?.platform, agent, editors, deleted }).length;
+      openMenu("row", { height: 8 + count * MENU_ROW }, { menuMod: PANE,
+        source: { space: view.space, tab: space?.tabs.find(tab => tab.active)?.id, root: view.root, on },
+        path: row.real ?? row.path, deleted, agent: agent ? { terminal: agent.terminal } : null, editors });
+      // The open row is remembered only for this run, as Files' context highlight is.
+      view.opened = { id, at: Date.now() };
+      cx.notify();
+    });
   const checkbox = (id, files, label) => {
     const done = files.filter(f => f.reviewed).length, state = !done ? "none" : done === files.length ? "all" : "some";
     return checkMark(t, state).id(id).role("check_box").accessibility_label(`${label}: ${done} of ${files.length} reviewed`)
@@ -55,17 +79,17 @@ export function fileTree(view, t) {
     }
     if (row.dir) {
       const files = (underFolders(view, row.owner).get(row.real) ?? []).map(path => view.fileAt(path)).filter(Boolean);
-      return treeRow(t, mod, row, `tree-d-${row.path}`, { focused, guides, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
+      return pathRow(row, `tree-d-${row.path}`, { focused, guides, leading: checkbox(`tree-dcheck-${row.path}`, files, row.name) })
         .on_click((_e, cx) => { view.focusPath = null; toggleDir(view, row.path, cx); });
     }
     // A removed file has no box: its slot stays, so the icons line up.
-    if (row.missing) return treeRow(t, mod, row, `tree-m-${row.path}`, { focused, guides, dim: true, struck: true, leading: div().size(16).flex_none() });
+    if (row.missing) return pathRow(row, `tree-m-${row.path}`, { focused, guides, dim: true, struck: true, leading: div().size(16).flex_none() }, true);
     const f = view.fileAt(row.path);
     if (!f) return div().id(`tree-f-${row.path}`);
-    return treeRow(t, mod, row, `tree-f-${row.path}`, { selected: view.current === row.path, focused, guides, status: LETTER[f.status] ?? "M", dim: f.reviewed, struck: f.reviewed,
+    return pathRow(row, `tree-f-${row.path}`, { selected: view.current === row.path, focused, guides, status: LETTER[f.status] ?? "M", dim: f.reviewed, struck: f.reviewed,
       leading: checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none").id(`tree-check-${row.path}`).role("check_box")
         .accessibility_label(f.reviewed ? `${row.path}: reviewed` : `${row.path}: not reviewed`)
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(f, !f.reviewed, cx); }) })
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(f, !f.reviewed, cx); }) }, f.status === "removed")
       .on_click((_e, cx) => { view.focusPath = null; view.select(row.path, cx); });
   };
   // The indent guides show while the pointer is on the tree, as Files'.

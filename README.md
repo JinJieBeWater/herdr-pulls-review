@@ -19,7 +19,7 @@ Where a review opens is `open` in `mods/pulls-review/config.json`, a file you cr
 
 With `"pwa"` or `"browser"`, a click on a count also starts the diff's AI analysis, or follows the one already running. A pick from the logo's menu doesn't. In `"herdr"` the review's own setting decides, as above.
 
-In `"herdr"` mode the current space's analysis is marked beside the standalone Review bar's logo. Herdr T3 instead shows it on the unique Review surface tab. Switching or hiding retains the range/group/file/reading position; closing that tab releases them and re-adding starts from the default range. The Review tree has reviewed boxes but no right-click menu. It is not an agent and has no Inbox card.
+In `"herdr"` mode the current space's analysis is marked beside the standalone Review bar's logo. Herdr T3 instead shows it on the unique Review surface tab. Switching or hiding retains the range/group/file/reading position; closing that tab releases them and re-adding starts from the default range. The Review tree keeps reviewed boxes and shares Files' drag-to-terminal and right-click menu (Open, Reveal, Open with, Copy path and Insert). Right-click preserves the current file, folder folds and reviewed state. Deleted files only offer Copy path and cannot drag; subgroup rows have neither action. It is not an agent and has no Inbox card.
 
 ## Install
 
