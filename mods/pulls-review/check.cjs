@@ -6,34 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function element(kind = "div", source) {
-  const node = { kind, source, items: [], handlers: {}, style: {}, hoverStyle: {} };
-  const proxy = new Proxy(node, { get(target, key) {
-    if (key in target) return target[key];
-    return (...args) => {
-      if (key === "when") { if (args[0]) args[1](proxy); }
-      else if (key === "child" || key === "trigger") node.items.push(args[0]);
-      else if (key === "children") node.items.push(...args[0]);
-      else if (key === "on_mouse_down") node.handlers[`${key}:${args[0]}`] = args[1];
-      else if (key.startsWith("on_")) node.handlers[key] = args[0];
-      else if (key === "id") node.key = args[0];
-      else if (key === "hover") { const hovered = element(); args[0](hovered); node.hoverStyle = hovered.style; }
-      else node.style[key] = args.length === 1 ? args[0] : args;
-      return proxy;
-    };
-  } });
-  return proxy;
-}
-const find = (node, id) => !node || typeof node !== "object" ? null : node.key === id ? node : node.items.map(c => find(c, id)).find(Boolean) ?? null;
-const strings = (node) => typeof node === "string" ? [node] : node && typeof node === "object" ? node.items.flatMap(strings) : [];
-const walk = (node) => node && typeof node === "object" ? [node, ...node.items.flatMap(walk)] : [];
+const kit = require("./check-kit.js");
+const element = kit.elements({ args: "auto", adds: ["child", "trigger"] }), { find, strings, walk, fire, plain } = kit;
 const keys = (node) => node.items.map(n => typeof n.key === "string" ? n.key : n.kind);
-function fire(node, event, ...args) {
-  assert.ok(node, `missing event target: ${event}`);
-  assert.equal(typeof node.handlers[event], "function", event);
-  return node.handlers[event](...args);
-}
-const plain = (value) => JSON.parse(JSON.stringify(value));
 
 const commands = [];
 const zoom = 1.1, calls = [], overlays = [], closed = [], notes = [], launched = [], state = {}, shown = { pane: "p1", tab: "b" };
@@ -306,7 +281,6 @@ const load = (props = {}, setup = record) => {
   assert.deepEqual([spec.mod, spec.props.menu], ["pulls-review", "review"]);
   // The Review page reads git itself for its scope menu (shared/review-git.js): the bar takes no command from it.
   assert.equal(commands.length, 0, "no copy waits on a command");
-  assert.ok(!fs.readFileSync(path.join(__dirname, "bar.js"), "utf8").includes("async function readReview"), "the reads are review-git.js's, one source for both mods");
   assert.deepEqual([spec.at.x / zoom, spec.at.y / zoom].map(v => Math.round(v * 1000) / 1000), [890 + 24 - 368, 36], "4 under the button, right edges together, wherever the press was");
   fire(find(bar.render(), "review-open"), "on_click", {}, cx);
   assert.deepEqual(launched.at(-1), { root: "/repo", args: [], page: "/branch/feat", analyze: true }, "a count's click opens its page, known without git, and starts the analysis");

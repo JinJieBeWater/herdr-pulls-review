@@ -11,7 +11,7 @@ export const zoom = () => Number(settings()?.zoom) || 1;
 export const popupClosed = (name) => closedKey(PANE, name);
 
 // `icons`: the drawing mod's own folder, as a mod draws only its own icons.
-export function pickMark(t, on, icons = LU) {
+export function pickMark(on, icons = LU) {
   // The row's own colour, as T3's MenuRadioItemIndicator.
   return div().w(14).flex_none().when(on, el => el.child(svg(`${icons}/check.svg`).size(14)));
 }

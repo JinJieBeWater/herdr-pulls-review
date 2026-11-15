@@ -156,7 +156,7 @@ export function baseMenu(view, t) {
   const items = baseList(view), picked = chosenBase(view), height = Math.min(items.length * MODEL_ROW, 256);
   const draw = (i) => {
     const item = items[i], on = item.value === picked, remote = Boolean(item.remote) && item.value === item.remote;
-    return menuRow(view, t, item.id, { at: [view, "baseAt", i], label: item.label, lead: pickMark(t, on), pick: (cx) => pickBase(view, item.value, cx),
+    return menuRow(view, t, item.id, { at: [view, "baseAt", i], label: item.label, lead: pickMark(on), pick: (cx) => pickBase(view, item.value, cx),
       trail: div().w(32).flex_none().flex().justify_end()
         .when(Boolean(item.local && item.remote), el => el.child(div().id(`${item.id}-remote`).w(22).h(14).p(1).flex().rounded_full()
           .bg(remote ? t.accent : t.input).when(remote, el => el.justify_end())

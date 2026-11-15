@@ -138,7 +138,8 @@ export function wrapRow(row, cols, wide = 2) {
 
 // A group's rows run past the 8 MB one read carries: a read asks for at most ROW_BUDGET changed lines, from the files in view
 // and the LOOKAHEAD after them, so the rest come as the list reaches them. As the daemon's FIRST_ROWS for an open.
-export const ROW_BUDGET = 3000, LOOKAHEAD = 10;
+const ROW_BUDGET = 3000;
+export const LOOKAHEAD = 10;
 
 /** The paths of a read's rows: in view or just after, without rows and not folded, while they fit (the first always). */
 export function rowsToAsk(paths, fileAt, inView, collapsed) {

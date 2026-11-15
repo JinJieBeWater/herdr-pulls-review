@@ -192,7 +192,7 @@ export function openScope(view, cx, lit = -1) {
  *  mark's slot kept on every row so the words line up; Commits' row stays lit while its submenu is open (`open`). `icons`: the
  *  mod's own folder, for the check. `also(row)`: the menu's own handlers (resting on Commits opens it, submenu.js). */
 export function scopeRow(view, t, r, i, { icons = LU, open = false, also = undefined } = {}) {
-  return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(t, Boolean(r.on), icons), sub: Boolean(r.sub) && icons,
+  return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(Boolean(r.on), icons), sub: Boolean(r.sub) && icons,
     disabled: r.known && !r.count && !r.on, pick: (cx) => pickScopeRow(view, r, cx),
     trail: r.detail ? div().id(`${r.id}-detail`).flex_none().ml(16).text_size(12).text_color(t.dim).child(r.detail) : null, also })
     .role(r.sub ? "button" : "radio_button").accessibility_label(`${r.label}${r.detail ? `, ${r.detail}` : ""}${r.on ? ", shown" : ""}`);
@@ -214,7 +214,7 @@ export function commitRow(view, t, items, i, icons = LU) {
   const trail = (out || c.time) ? h_flex().flex_none().gap(8).items_center()
     .when(out, el => el.child(div().flex_none().text_size(12).text_color(t.ansi2).child("↑")))
     .when(Boolean(c.time), el => el.child(div().id(`${item.id}-time`).flex_none().text_size(12).text_color(t.dim).child(ago(c.time, now)))) : null;
-  return menuRow(view, t, item.id, { at: [view, "scopeListAt", i], label, lead: pickMark(t, on, icons), trail, pick: (cx) => pickListed(view, item, cx) })
+  return menuRow(view, t, item.id, { at: [view, "scopeListAt", i], label, lead: pickMark(on, icons), trail, pick: (cx) => pickListed(view, item, cx) })
     .accessibility_label(`Review commit ${c.subject}${on ? ", shown" : ""}${out ? ", not pushed" : ""}`);
 }
 

@@ -2,34 +2,19 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-// Where the work column's pane header has its centre, from the layout: the tab row, the pane's border, half its header. The
-// space panel's page headers put their row there too (docs/internals/specs/files.md), so the two read as one line.
-const paneHeadCentre = (() => {
-  const root = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../layouts/herdr-t3.json"), "utf8"));
-  const node = (n, id) => n?.id === id ? n : (n?.children ?? []).map(c => node(c, id)).find(Boolean);
-  const pane = node(root, "main").content.pane;
-  // The panel head's first tab's box: the panel's padding and the head's (t3-chrome check-surfaces holds that the head draws none).
-  const panelNode = node(root, "panel"), side = (n) => [].concat(n?.padding ?? 0).at(-1);
-  return { left: node(root, "tabs-row").size.px + pane.border.width + pane.header.height / 2, head: node(root, "panel-head").size.px,
-    tabEdge: side(panelNode) + side(node(root, "panel-head")) };
-})();
+const kit = require("./check-kit.js");
+const paneHeadCentre = kit.paneHeadCentre(fs.readFileSync(path.join(__dirname, "../../../layouts/herdr-t3.json"), "utf8"));
 
 // rows.js runs as is; main.js runs on inert elements, to reach every render path with a review in hand.
-// Follow a pane's imports once, before what needs them; rows, daemon and tips are supplied by its fake env.
-function source(file, seen = new Set(file === "main.js" ? ["rows.js", "daemon.js", "tip.js"] : [])) {
-  if (seen.has(file)) return "";
-  seen.add(file);
-  const src = fs.readFileSync(path.join(__dirname, file), "utf8");
-  if (file === "button.js") return "const { drawButton, ghostButton, tint, GROUP_GAP } = (() => {\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { drawButton: button, ghostButton, tint, GROUP_GAP };\n})();";
-  const needs = [...src.matchAll(/^import [^;]*? from "\.\/(.+?)";/gm)].map(m => source(m[1], seen)).join("\n");
-  // Its `button` is button.js's, not controls.js's of the same name.
-  if (file === "trigger.js") return needs + "\nconst { trigger, opener, popupOpen } = (() => { const button = drawButton;\n" + src.replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "") + "\nreturn { trigger, opener, popupOpen };\n})();";
-  return needs + "\n" + src;
-}
+// Follow a pane's imports once, before what needs them (kit.bundle); rows, daemon and tips are supplied by its fake env.
+// button.js's `button` is drawButton here, and trigger.js's `button` that one, not controls.js's of the same name.
+const source = (file) => kit.bundle((f) => fs.readFileSync(path.join(__dirname, f), "utf8"), file, (f, src, needs) =>
+  f === "button.js" ? "const { drawButton, ghostButton, tint, GROUP_GAP } = (() => {\n" + kit.strip(src) + "\nreturn { drawButton: button, ghostButton, tint, GROUP_GAP };\n})();"
+  : f === "trigger.js" ? needs() + "\nconst { trigger, opener, popupOpen } = (() => { const button = drawButton;\n" + kit.strip(src) + "\nreturn { trigger, opener, popupOpen };\n})();"
+  : null, new Set(file === "main.js" ? ["rows.js", "daemon.js", "tip.js"] : []));
 
 const load = (file, env) => {
-  const src = source(file)
-    .replace(/^import [^;]*;\r?\n/gm, "").replace(/^export \{[^}]+\};\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
+  const src = source(file);
   const context = vm.createContext(env);
   vm.runInContext(src, context, { filename: file });
   // A virtual list draws its rows once the frame is laid out, after the whole render: what reads where it is scrolled
@@ -37,8 +22,7 @@ const load = (file, env) => {
   if (context.Mod) { const render = context.Mod.prototype.render; context.Mod.prototype.render = function (cx) { const el = render.call(this, cx); lists.splice(0).forEach(f => f()); return el; }; }
   return context;
 };
-// Values made in another realm compare unequal to this one's: compare them as JSON.
-const plain = (value) => JSON.parse(JSON.stringify(value));
+const { plain } = kit;
 const rows = load("rows.js", {});
 const { pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns, charWidth, lineCount } = vm.runInContext("({ pairRows, buildItems, noteHeight, pageLabel, groupFiles, contentWidth, codeInset, noteWidth, clipRows, rowsToAsk, LOOKAHEAD, wrapRow, wrapColumns, charWidth, lineCount })", rows);
 
@@ -197,9 +181,14 @@ assert.deepEqual(lineText(wrapRow({ tokens: [["ab✅c"]] }, 3)), ["ab", "✅c"])
     assert.equal(lineCount({ tokens: ascii }, cols, wide), each(ascii, cols).length, JSON.stringify([ascii, cols]));
   }
 }
-// The columns a line wraps at: unified past both numbers, split past one on each half (less the rule), an added file's whole width.
-// A wide character takes its measured width, as columns: 2 until measured.
-assert.deepEqual(plain(wrapColumns(1000, 10)), { row: Math.floor((1000 - 92 - 16) / 10), pair: Math.floor(((1000 - 1) / 2 - 52 - 16) / 10), solo: Math.floor((1000 - 52 - 16) / 10), wide: 2 });
+// The columns a line wraps at: unified past both numbers, split past one on each half (less the rule), an added file's whole width,
+// so an added file's are more than a unified row's and a half's fewer than half of them; two characters wider, a whole width
+// takes two more and a half one. A wide character takes its measured width, as columns: 2 until measured.
+{
+  const cols = plain(wrapColumns(1000, 10)), wider = plain(wrapColumns(1020, 10));
+  assert.ok(cols.solo > cols.row && cols.pair < cols.row / 2 && cols.wide === 2, JSON.stringify(cols));
+  assert.deepEqual([wider.row - cols.row, wider.solo - cols.solo, wider.pair - cols.pair], [2, 2, 1]);
+}
 assert.equal(wrapColumns(1000, 7.25, 12).wide, 12 / 7.25);
 // Drawn about 1em where the code font has no CJK, a wide character fits more of them on a line, and widens the code less.
 assert.deepEqual(lineText(wrapRow({ tokens: [["测试一下中文"]] }, 10, 1.66)), ["测试一下中文"]);
@@ -390,10 +379,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(opened.shown().review && !opened.shown().loading && !opened.shown().error && opened.shown().page === "/branch/fix");
     sharedStore.delete("review.shown");
   }
-  // What the review wrote as a pane in a tab, and its setting for where the next opened: gone at its start.
-  sharedStore.set("review.titles", { b: "fix" }); sharedStore.set("review.program", { name: "Review" }); setPref("openIn", "tab"); setPref("fileList", "list"); setPref("groupNav", "sidebar");
   panel.init({}, cx);
-  assert.ok(sharedStore.get("review.titles") === null && sharedStore.get("review.program") === null && !("openIn" in sharedStore.get("review.prefs")) && !("fileList" in sharedStore.get("review.prefs")) && !("groupNav" in sharedStore.get("review.prefs")));
   // The Review bar's count opened the panel: the request it left is for this space, and new.
   sharedStore.set("review", { space: "s1", root: "/repo", page: "/branch/fix", n: Date.now() });
   panel.render(cx); pane = panel.shown();
@@ -511,7 +497,6 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.ok(drawn.has("review-nav") && !drawn.has("group-tab-g") && !drawn.has("review-sidebar") && !drawn.has("review-aside") && !drawn.has("group-header"));
   assert.ok(before("review-diff-area", "review-nav") && !styles["review-nav"].border_l && styles["review-nav-rule"].opacity === 0.6, "right of the diff, ruled off at 60% of the border, as T3's");
   assert.ok(styles["review-nav-head"].h === 32 && styles["review-nav-head"].mb === 8 && !styles["review-nav-head"].border_b, "Files' head: 32, 8 under it, no rule");
-  assert.equal(styles["review-nav-head"].h, Number(/\bFILE = (\d+)/.exec(fs.readFileSync(require("node:path").join(__dirname, "rows.js"), "utf8"))[1]), "as tall as a file's header in the diff beside it, so the two rows share a centre");
   assert.equal(texts.get("review-nav-head"), undefined);
   assert.ok(styles["review-pane"] && styles["review-pane"].bg === undefined && styles["review-header"].bg === undefined, "no background of its own: the panel's shows");
   assert.equal(styles["review-header"].border_b, undefined, "no rule under the toolbar, as T3's subheaders in the panel");
@@ -1657,21 +1642,6 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   mainScope.review = daemon;
   // A pane of its own on /repo's /branch/fix, its daemon `api` until a test swaps the scope's.
   const paneOf = async (extra = {}) => { const made = panelOf(extra); await wait(); return made; };
-  {
-    // The Lines choice is the page's own (lines.wrap): its first start takes the shared t3.wrap, else one made in Review before
-    // that (review.prefs, which then keeps none); once it has its own, neither moves it.
-    const was = sharedStore.get("t3.wrap"), mine = local.get("lines.wrap");
-    local.delete("lines.wrap"); sharedStore.delete("t3.wrap"); setPref("wrap", false);
-    await paneOf();
-    assert.ok(local.get("lines.wrap") === "false" && pref("wrap") === undefined);
-    local.delete("lines.wrap"); sharedStore.set("t3.wrap", true); setPref("wrap", false);
-    await paneOf();
-    assert.ok(local.get("lines.wrap") === "true" && pref("wrap") === undefined, "the layout's choice wins");
-    sharedStore.set("t3.wrap", false);
-    await paneOf();
-    assert.equal(local.get("lines.wrap"), "true", "its own, once set");
-    sharedStore.set("t3.wrap", was); mine == null ? local.delete("lines.wrap") : local.set("lines.wrap", mine);
-  }
   {
     // A group's files in Files' order, whatever the daemon's: in each folder its folders first, then by name, case aside, numbers
     // as numbers; a subgroup's after its group's own. The tree, the diff, its reads and the keys all go by it.

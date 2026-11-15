@@ -77,7 +77,7 @@ export function fileTree(view, t) {
  * subgroup's path `group:<key>`, never joined to a folder), each with its files. A subgroup's folder's path is the subgroup's
  * and its own (`group:<key>/src`), as a folder can be in two; `real` is its own, `owner` the group whose files it holds.
  */
-export function reviewEntries(top) {
+function reviewEntries(top) {
   const kids = new Map([["", []]]);
   if (!top) return kids;
   const files = (at, g) => {

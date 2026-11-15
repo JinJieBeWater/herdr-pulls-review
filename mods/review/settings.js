@@ -198,7 +198,7 @@ export function settingsSub(view, t) {
   const page = view.settingsPage, model = page === "model", { matches, shown } = view.models(), typed = view.modelInput.value().trim();
   const row = view.subRow ?? navRow(view, page), options = view.pageRows();
   // Menu rows (t3-tokens「菜单行」): lit by the pointer or the keys, out when the pointer leaves.
-  const choice = (r, i) => menuRow(view, t, r.id, { at: [view, "pageAt", i], label: r.name, lead: pickMark(t, r.on),
+  const choice = (r, i) => menuRow(view, t, r.id, { at: [view, "pageAt", i], label: r.name, lead: pickMark(r.on),
     trail: r.detail ? menuHint(t, r.detail) : null, pick: (cx) => { settingsBack(view, cx); r.pick(cx); } }).role("radio_button");
   // Pi lists hundreds: past LISTED the search finds the rest.
   const notes = [model && shown.length < matches.length && note(t, `${matches.length - LISTED} more: search to narrow`),

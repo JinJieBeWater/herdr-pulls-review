@@ -6,31 +6,11 @@ const path = require("node:path");
 
 
 // ---- fake kit: keeps handlers, children, style, id ------------------------------------------------
-const all = [];
-function element(kind = "div") {
-  const node = { kind, ids: [], kids: [], handlers: {}, style: {}, text: null };
-  all.push(node);
-  const proxy = new Proxy(node, { get(target, key) {
-    if (key in target) return target[key];
-    return (...args) => {
-      if (key === "when") { if (args[0]) args[1](proxy); }
-      else if (key === "id") target.ids.push(args[0]);
-      else if (key === "children") target.kids.push(...args[0].filter(Boolean));
-      else if (key === "child") target.kids.push(args[0]);
-      else if (key === "content") target.kids.push(args[0]);
-      else if (typeof args[0] === "function" && /^on_/.test(key)) target.handlers[key] = args[0];
-      else if (/^(bg|opacity|text_color|h|w)$/.test(key)) target.style[key] = args[0];
-      return proxy;
-    };
-  } });
-  return proxy;
-}
-const draw = (kind) => () => element(kind);
-const byId = (node, id) => node?.ids?.includes(id) ? node : node?.kids?.map((k) => byId(k, id)).find(Boolean);
+const kit = require("./check-kit.js");
+const element = kit.elements(), draw = (kind) => () => element(kind);
 
 // ---- real modules, imports stripped --------------------------------------------------------------
-const load = (...files) => files.map((f) => fs.readFileSync(path.join(__dirname, f), "utf8"))
-  .join("\n").replace(/^import [^;]*;\r?\n/gm, "").replace(/^export /gm, "");
+const load = (...files) => kit.strip(files.map((f) => fs.readFileSync(path.join(__dirname, f), "utf8")).join("\n"));
 
 const state = {};
 let listDraw = null, notified = 0;
@@ -45,7 +25,7 @@ const context = {
   PANE: "review", MODEL_ROW: 28, SPLIT_MIN: 400, BELOW: 32 / 2 + 28 / 2 + 4, LU: 1, COMPACT: 1, zoom: () => 1,
   pref: () => undefined, setPref: () => {},
   pickMark: () => element(), searchField: () => element(),
-  popover: (_view, _t, id) => { const el = element("popover"); el.ids.push(id); return el; },
+  popover: (_view, _t, id) => element("popover").id(id),
   toPane: (_view, e) => ({ position: e.position, bounds: e.bounds }),
   subState: (view) => (view.subHover ??= {}), subLeft: () => {}, subOpened: () => {},
   subAt: (_view, _row, _max, _h) => ({ at: element(), w: 320 }),

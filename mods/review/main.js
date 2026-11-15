@@ -26,14 +26,10 @@ import { withNav, navOpen } from "./nav-column.js";
 import { setReviewed, toggleFull, headerPress, diffView, hbars, foldMenu } from "./diff.js";
 import { analysisStatus, statusPanel, head, header } from "./header.js";
 import { reviewKey } from "./keys.js";
-import { wrapLines, migratePagePrefs } from "./store.js";
+import { wrapLines } from "./store.js";
 
 // A request this young when its space's review starts is the click that opened the panel; an older one was already shown.
 const FRESH = 10000;
-// Its own writes, until mods/review was a pane in a tab: nothing reads them now.
-const RETIRED = [`${PANE}.titles`, `${PANE}.program`];
-// `wrap` is the page's own lines.wrap now: migratePagePrefs takes a choice made here along before it goes.
-const GONE = ["openIn", "fileList", "groupNav", "wrap"];
 // After a click or a key picks a file, the list is still scrolling to it this long: the file at its top isn't the one in front yet.
 const PICKED = 600;
 // The spaces shown last whose reviews stay whole; an older one's is read again when it shows (evict).
@@ -41,11 +37,6 @@ const KEEP = 3;
 
 export default class ReviewPanel extends View {
   init(_props, cx) {
-    migratePagePrefs();
-    for (const key of RETIRED) if (shared(key) != null) setShared(key, null);
-    // Settings gone since (where a review opened; the files as a list): dropped from what's kept.
-    const prefs = shared(`${PANE}.prefs`);
-    if (prefs && GONE.some(k => k in prefs)) setShared(`${PANE}.prefs`, Object.fromEntries(Object.entries(prefs).filter(([k]) => !GONE.includes(k))));
     // Each space's review, by space id, for this run; what each shows is kept in review.shown.
     this.panel = this; this.bySpace = new Map();
     // The one popup open over the diff, if any: "settings", "status", "fold" or "scope".
