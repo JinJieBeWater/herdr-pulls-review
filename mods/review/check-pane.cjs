@@ -1721,6 +1721,40 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // A pane of its own on /repo's /branch/fix, its daemon `api` until a test swaps the scope's.
   const paneOf = async (extra = {}) => { const made = panelOf(extra); await wait(); return made; };
   {
+    // In Herdr's own stack, a file-header click can be followed by a hide before the lifecycle timer sees it.
+    const { p, scope } = await paneOf(), wake = every[1000].at(-1), requests = [], replies = [];
+    scope.review = (root, route, body) => {
+      requests.push([route, body.file ?? null]);
+      return route === "/api/review/file" ? new Promise(resolve => replies.push(text => resolve({ rows: [{ kind: " ", old: 1, new: 1, tokens: [[text]] }] }))) : daemon(root, route, body);
+    };
+    for (const path of ["a.ts", "c.ts"]) p.collapsed.add(path);
+    p.version++; p.render(cx);
+    for (const path of ["a.ts", "c.ts"]) {
+      handlers.get("review-diff-area.on_mouse_down")({ local_position: { x: p.view - 50, y: 0 } }, cx);
+      handlers.get("null.on_item_click")(`f:${path}`, cx);
+    }
+    await wait();
+    const fileReads = [["/api/review/file", "a.ts"], ["/api/review/file", "c.ts"]];
+    assert.deepEqual(requests.splice(0), fileReads);
+    const version = p.version, list = p.items();
+    pageShown = "files";
+    replies[0]("old a"); await wait();
+    assert.deepEqual(requests, [], "the hidden whole-file response sends no more reads");
+    assert.ok(!p.full.get("a.ts") && p.collapsed.has("a.ts") && p.version === version && p.items() === list,
+      "a whole-file response arriving before the hide timer does not open the file or rebuild the diff");
+
+    pageShown = "review";
+    wake(cx); await wait(); wake(cx); await wait();
+    assert.deepEqual(requests.splice(0), [["/api/review", null], ...fileReads], "one catch-up page, then both opens, without waiting for old c");
+    replies[1]("old c"); await wait();
+    assert.ok(!p.full.get("c.ts") && p.collapsed.has("c.ts"), "the old visible period cannot fill the new request's slot");
+    replies[3]("fresh c"); replies[2]("fresh a"); await wait();
+    for (const [path, name] of [["a.ts", "a"], ["c.ts", "c"]]) {
+      assert.equal(p.full.get(path)?.rows[0].tokens[0][0], `fresh ${name}`);
+      assert.ok(!p.collapsed.has(path));
+    }
+  }
+  {
     // A group's files in Files' order, whatever the daemon's: in each folder its folders first, then by name, case aside, numbers
     // as numbers; a subgroup's after its group's own. The tree, the diff, its reads and the keys all go by it.
     const own = ["c.ts", "src/z.ts", "a10.ts", "B.ts", "src/lib/x.ts", "a9.ts"], sub = ["t/b.ts", "t/a.ts"];
@@ -2195,11 +2229,15 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     // Close while a read is out, before the hidden-view timer runs: no stale diff or range may return.
     const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown");
     const sp = { id: "release-test", active: true, folder: "/repo", machine: null, tabs: [] };
-    let hold = false, release;
+    let hold = false, release, fullReply;
     const gate = new Promise(r => { release = r; });
     const scope = load("main.js", { ...env, spaces: () => [sp],
       layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "review", "panel-empty"].map(id => ({ id })) }] }] }),
-      review: async (_root, route) => { if (hold && route === "/api/review") await gate; return structuredClone(review); },
+      review: async (_root, route) => {
+        if (route === "/api/review/file") return new Promise(resolve => { fullReply = resolve; });
+        if (hold && route === "/api/review") await gate;
+        return structuredClone(review);
+      },
       exec: async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "main\n" }),
     });
     sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: "first" }], active: "review" } });
@@ -2207,16 +2245,19 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     const view = new scope.Mod(); view.init({}, cx);
     const draw = async () => { view.render(cx); await wait(); view.render(cx); await wait(); };
     await draw(); const old = view.bySpace.get(sp.id);
-    assert.ok(old.review); hold = true; old.load(cx); await wait();
+    assert.ok(old.review); hold = true; old.load(cx);
+    old.headerPress(old.fileAt("a.ts"), old.view - 50, cx); await wait();
     vm.runInContext("closeSurface()", scope); view.render(cx); await wait();
-    release(); await wait();
+    fullReply({ rows: [row(" ", 1, 1)] }); await wait();
     assert.equal(old.review, null, "late data is released before the lifecycle timer");
     assert.equal(old.scroll, null);
+    release(); await wait();
     const kept = JSON.stringify(sharedStore.get("review.shown"));
     old.publish(); assert.equal(JSON.stringify(sharedStore.get("review.shown")), kept, "a closed range cannot be republished");
     hold = false; vm.runInContext("showPage('review')", scope); await draw();
     assert.notEqual(view.bySpace.get(sp.id), old);
     assert.notEqual(view.bySpace.get(sp.id).page, "/commit/closed-range", "re-add uses the default range");
+    assert.ok(!view.bySpace.get(sp.id).full.size, "re-add does not resume a closed tab's open");
     if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
     sharedStore.set("review.shown", wasShown);
   }

@@ -19,7 +19,7 @@ function startRead(view, cx) {
   const id = ++view.loadId;
   view.loading = { root: view.root, page: view.page }; view.again = false; view.dirty = false;
   cx.timer.after(LOAD_TIMEOUT, (cx) => {
-    if (!view.loading || !canRead(view, id)) return;
+    if (!view.loading || !canRead(view, () => id === view.loadId)) return;
     view.loading = null; view.error = `jin.review didn't answer in ${LOAD_TIMEOUT / 1000} s`;
     // Not under the new page's title.
     if (view.switching) view.forget();
@@ -28,16 +28,29 @@ function startRead(view, cx) {
   return id;
 }
 
-// Check the live layout as well as the read's identity. A response can arrive before the visibility timer observes a hide.
-function canRead(view, id = view.loadId) {
-  if (id !== view.loadId) return false;
+function canRead(view, current = () => true) {
+  if (!current()) return false;
   if (!view.surfaceAlive()) { view.evict(); return false; }
   if (view.evicted || !view.onScreen()) { view.deferRead(); return false; }
   return true;
 }
 
-function endRead(view, cx, id) {
-  if (!canRead(view, id)) return;
+// A task can start or answer before the visibility timer observes a hide. Each kind of read has its own identity;
+// ending the visible period invalidates them all, without a new read in one kind invalidating a different kind.
+function readVisible(view, cx, { current, request, commit, fail = null, done = null }) {
+  const period = view.hiddenId;
+  const live = () => canRead(view, () => period === view.hiddenId && current());
+  cx.spawn(async (cx) => {
+    if (!live()) return;
+    try {
+      const result = await request();
+      if (live()) commit(result, cx);
+    } catch (e) { if (live()) fail?.(e, cx); }
+    finally { if (done && live()) done(cx); }
+  });
+}
+
+function endRead(view, cx) {
   view.loading = null;
   view.report();
   cx.notify();
@@ -58,11 +71,10 @@ export function loadReview(view, cx, poll = false) {
   // Rows only for the files in view or just after that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
   const rows = poll || !group ? [] : view.rowsWanted();
   const key = JSON.stringify(colors(t));
-  cx.spawn(async (cx) => {
-    try {
-      if (!canRead(view, id)) return;
-      const r = await review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group });
-      if (!canRead(view, id)) return;
+  readVisible(view, cx, {
+    current: () => id === view.loadId,
+    request: () => review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group }),
+    commit: (r, cx) => {
       // The theme changed meanwhile: these rows have the old colors, and later reads ask only for files without rows.
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       // Read before a reviewed mark landed, it would undo the mark on screen: the mark's own read follows.
@@ -72,6 +84,7 @@ export function loadReview(view, cx, poll = false) {
       // the ~50ms Herdr gives a render, past which it's interrupted, and a task has ~500.
       view.items();
       view.error = null; view.stale = false;
+      readFulls(view, cx, { afterPage: true });
       // Back from eviction, on the file it was reading.
       if (view.restoreTo) { const path = view.restoreTo; view.restoreTo = null; if (view.fileAt(path)) view.select(path, cx); }
       // A rows read changes no commit, and the base's whole read can outweigh it. Nor does stepping to another page of the
@@ -84,16 +97,15 @@ export function loadReview(view, cx, poll = false) {
         const a = r.analysis;
         if (pref("autoAnalyze") === true && a.agent && !a.error && a.state === "none") view.analyze(cx, false);
       }
-    } catch (e) {
-      if (canRead(view, id)) {
-        view.error = e?.message ?? String(e);
-        if (view.switching) view.forget();
-        // No daemon to ask: a run shown as going would poll, and each poll try to start the daemon, until it answers.
-        else if (view.review?.analysis.state === "running") view.review.analysis = { ...view.review.analysis, state: "none", error: view.error };
-      }
-    }
+    },
+    fail: (e) => {
+      view.error = e?.message ?? String(e);
+      if (view.switching) view.forget();
+      // No daemon to ask: a run shown as going would poll, and each poll try to start the daemon, until it answers.
+      else if (view.review?.analysis.state === "running") view.review.analysis = { ...view.review.analysis, state: "none", error: view.error };
+    },
     // A file can come back without rows, past the bytes one read carries: it's left for the next.
-    finally { endRead(view, cx, id); }
+    done: (cx) => endRead(view, cx),
   });
 }
 
@@ -110,13 +122,12 @@ export function loadRows(view, cx) {
   if (view.stale || view.loading) return view.load(cx);
   const { root, page, review: shown } = view, t = theme(), key = JSON.stringify(colors(t)), id = startRead(view, cx);
   const whole = more && view.full.get(more);
-  cx.spawn(async (cx) => {
-    try {
-      if (!canRead(view, id)) return;
-      const r = whole
-        ? await review(root, "/api/review/file", { page, file: more, colors: colors(t), from: whole.rows.length })
-        : await review(root, "/api/review/rows", { page, colors: colors(t), files: more ? [more] : rows, base: shown.base?.sha ?? "", head: shown.head?.sha ?? "", ...more ? { from: rowCount(view.fileAt(more).hunks) } : {} });
-      if (!canRead(view, id)) return;
+  readVisible(view, cx, {
+    current: () => id === view.loadId,
+    request: () => whole
+      ? review(root, "/api/review/file", { page, file: more, colors: colors(t), from: whole.rows.length })
+      : review(root, "/api/review/rows", { page, colors: colors(t), files: more ? [more] : rows, base: shown.base?.sha ?? "", head: shown.head?.sha ?? "", ...more ? { from: rowCount(view.fileAt(more).hunks) } : {} }),
+    commit: (r) => {
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       if (r.stale) { view.stale = view.again = true; return; }
       // shortcut: a whole file changed between its pages goes on from the new text until the read that drops it, a second at most; the answer could name its sha.
@@ -140,12 +151,74 @@ export function loadRows(view, cx) {
       }
       view.version++;
       view.items();
-    } catch (e) {
-      // A batch a daemon without the route (an older one) or a failed read didn't bring: the whole page brings it, or says why.
-      if (canRead(view, id)) { if (more) view.error = e?.message ?? String(e); else view.stale = view.again = true; }
-    } finally { endRead(view, cx, id); }
+    },
+    // A batch a daemon without the route (an older one) or a failed read didn't bring: the whole page brings it, or says why.
+    fail: (e) => { if (more) view.error = e?.message ?? String(e); else view.stale = view.again = true; },
+    done: (cx) => endRead(view, cx),
   });
 }
+
+// A removed or binary file has no new side to show whole; one too large for its diff is larger whole.
+export function canFull(file) { return file && file.status !== "removed" && !file.isBinary && !file.truncated; }
+
+function queueFull(view, file) {
+  // Recoloring a deferred open does not make it current before the catch-up page.
+  const period = view.fullReads.get(file.path)?.period ?? view.hiddenId;
+  view.full.set(file.path, null);
+  view.fullReads.set(file.path, { sha: file.sha, period, attempt: null });
+}
+
+export function toggleFull(view, file, cx) {
+  if (view.switching || !canFull(file) || !canRead(view)) return;
+  // Disabled while loading, including while waiting to resume. An old reply cannot occupy another attempt's slot.
+  if (view.full.has(file.path) && !view.full.get(file.path)) return;
+  if (view.full.delete(file.path)) view.version++;
+  else {
+    queueFull(view, file);
+    readFulls(view, cx);
+  }
+  cx.notify();
+}
+
+export function recolorFulls(view, cx) {
+  if (!view.full.size || view.switching) return;
+  for (const path of view.full.keys()) {
+    const file = view.fileAt(path);
+    if (canFull(file)) queueFull(view, file); else dropFull(view, path);
+  }
+  // Called in render; the visible-read gate runs after the frame.
+  cx.timer.after(0, (cx) => readFulls(view, cx));
+}
+
+// Resume unfinished whole-file opens after the catch-up page checks their file identities. There is no dependency
+// on when the old attempt answers or on the page/row lane's read id.
+function readFulls(view, cx, { afterPage = false } = {}) {
+  if (!view.fullReads.size || view.switching || !canRead(view) || view.dirty) return;
+  const { root, page } = view, palette = colors(theme()), key = JSON.stringify(palette);
+  for (const [path, intent] of view.fullReads) {
+    if (intent.period !== view.hiddenId && !afterPage) continue;
+    const sameFile = () => { const file = view.fileAt(path); return canFull(file) && file.sha === intent.sha; };
+    if (!sameFile()) { dropFull(view, path); view.version++; continue; }
+    if (intent.period === view.hiddenId && intent.attempt?.key === key) continue;
+    const attempt = intent.attempt = { key };
+    intent.period = view.hiddenId;
+    readVisible(view, cx, {
+      current: () => view.fullReads.get(path) === intent && intent.attempt === attempt && sameFile() && JSON.stringify(colors(theme())) === key,
+      request: () => review(root, "/api/review/file", { page, file: path, colors: palette }),
+      commit: (result, cx) => {
+        clipRows(result.rows);
+        view.fullReads.delete(path); view.full.set(path, result); view.collapsed.delete(path);
+        view.version++; cx.notify();
+      },
+      fail: (e, cx) => {
+        dropFull(view, path); view.error = e?.message ?? String(e);
+        view.version++; cx.notify();
+      },
+    });
+  }
+}
+
+function dropFull(view, path) { view.full.delete(path); view.fullReads.delete(path); }
 
 // Poll a run without reading the diff. When it ends, report its outcome and refresh the diff only when shown.
 export function pollReview(view, cx) {
@@ -206,7 +279,7 @@ export function applyReview(view, r) {
   const said = (x) => JSON.stringify([x.key, x.title, x.base, x.head, x.commits, x.source, x.groups, x.analysis,
     x.files.map(f => [f.path, f.sha, f.reviewed, f.changed, Boolean(f.hunks)])]);
   if (view.review && !view.switching && said(r) === said(view.review)) return;
-  for (const path of view.full.keys()) if (old.get(path)?.sha !== r.files.find(file => file.path === path)?.sha) view.full.delete(path);
+  for (const path of view.full.keys()) if (old.get(path)?.sha !== r.files.find(file => file.path === path)?.sha) dropFull(view, path);
   const switched = view.switching;
   if (switched) { view.forget(); view.settling = null; }
   view.review = r;
@@ -222,13 +295,12 @@ export function applyReview(view, r) {
 // One commit's page lists only itself: the diff's commits come from its base, read without rows after each read of none, so a new
 // commit reaches the header's list. A failed read leaves the list as it was.
 function loadBaseCommits(view, cx) {
-  const { root, base, hiddenId } = view;
+  const { root, base } = view;
   if (view.page === base) return;
-  const live = () => hiddenId === view.hiddenId && root === view.root && base === view.base && canRead(view);
-  cx.spawn(async (cx) => {
-    if (!live()) return;
-    const r = await review(root, "/api/review", { page: base, colors: colors(theme()), rows: [] }).catch(() => null);
-    if (live() && r) { view.baseCommits = r.commits; cx.notify(); }
+  readVisible(view, cx, {
+    current: () => root === view.root && base === view.base,
+    request: () => review(root, "/api/review", { page: base, colors: colors(theme()), rows: [] }),
+    commit: (r, cx) => { view.baseCommits = r.commits; cx.notify(); },
   });
 }
 

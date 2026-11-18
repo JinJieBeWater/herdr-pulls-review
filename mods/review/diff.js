@@ -1,9 +1,9 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, TextView } from "gpui-base";
-import { notify, theme } from "herdr";
+import { notify } from "herdr";
 import { review } from "./daemon.js";
-import { clipRows, codeInset, FILE, noteWidth, ROW, wrapRow } from "./rows.js";
-import { colors } from "./review-load.js";
+import { codeInset, FILE, noteWidth, ROW, wrapRow } from "./rows.js";
+import { canFull } from "./review-load.js";
 import { LU, mono, zoom, isLight, checkMark, diffStats, popover } from "./controls.js";
 import { fileStatus } from "./files.js";
 import { emptyState } from "./panel-states.js";
@@ -88,30 +88,6 @@ export function setReviewed(view, files, reviewed, cx) {
     // Read back what the daemon keeps, the marks of a failed press included.
     view.marking--;
     view.load(cx);
-  });
-  cx.notify();
-}
-
-// A removed or binary file has no new side to show whole; one too large for its diff is larger whole.
-function canFull(file) { return file.status !== "removed" && !file.isBinary && !file.truncated; }
-
-export function toggleFull(view, file, cx) {
-  if (view.switching || !canFull(file)) return;
-  // As the app's button, disabled while the file loads: a click would cancel it, and its answer would open it again.
-  if (view.full.has(file.path) && !view.full.get(file.path)) return;
-  if (view.full.has(file.path)) { view.full.delete(file.path); view.version++; cx.notify(); return; }
-  view.full.set(file.path, null);
-  const { root, page } = view, key = JSON.stringify(colors(theme()));
-  cx.spawn(async (cx) => {
-    // The answer as it comes, `{ rows, truncated }`: past the bytes a read carries, the rows stop short of the file's end.
-    let whole = null, error = null;
-    try { const r = await review(root, "/api/review/file", { page, file: file.path, colors: colors(theme()) }); clipRows(r.rows); whole = r; }
-    catch (e) { error = e?.message ?? String(e); }
-    // Another diff opened meanwhile, this file changed (which dropped the ask), or the theme did (which asked again): these rows are the old one's.
-    if (root !== view.root || page !== view.page || view.full.get(file.path) !== null || view.fileAt(file.path)?.sha !== file.sha || JSON.stringify(colors(theme())) !== key) return;
-    if (whole) { view.full.set(file.path, whole); view.collapsed.delete(file.path); } else { view.full.delete(file.path); view.error = error; }
-    view.version++;
-    cx.notify();
   });
   cx.notify();
 }

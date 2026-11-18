@@ -30,7 +30,7 @@ const env = {
   // Herdr T3's layout: the space panel, its pages Files and Review.
   layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", hidden: true, children: [{ id: "panel-body", active: "files", children: [{ id: "files" }, { id: "review" }] }] }] }),
 };
-const source = ["color.js", "button.js", "store.js", "details.js", "tip.js", "list.js", "menu-row.js", "focus.js", "trigger.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
+const source = ["color.js", "button.js", "store.js", "details.js", "tip.js", "list.js", "menu-row.js", "focus.js", "trigger.js", "terminal-context.js", "surfaces.js", "panel.js", "review-git.js", "status-mark.js", "bar.js", "open.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n")
   .replace(/^import [^;]*;\r?\n/gm, "").replace("export default class", "globalThis.Mod = class").replace(/^export /gm, "");
 // Timers fire at once: a card that waits 150ms is up by the next render.
 const cx = { notify() {}, stop_propagation() {}, spawn: (f) => f(cx), focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every() {}, after: (_ms, f) => (f(cx), { cancel() {} }) } };
@@ -44,6 +44,8 @@ const load = (props = {}, setup = record) => {
   mod.init?.(props, cx);
   return { mod, scope };
 };
+const location = scope => vm.runInContext("locationKey(reviewLocation())", scope);
+const launch = (scope, input) => scope.launch({ source: scope.reviewLocation(), ...input });
 
 (async () => {
   // The counts: a line per file (renamed and untracked too), the arrows from the branch headers, and the commits the
@@ -59,7 +61,7 @@ const load = (props = {}, setup = record) => {
     : _command === "sh" ? { code: 1, stdout: "" } // No net diff to read: status's count, as without sh. A real repo's is below.
     : (assert.ok(args.includes("--untracked-files=all"), "a new folder counts its files, as the page it opens"), { code: 0, stdout: status });
   const review = await scope.readReview("/repo/src");
-  const show = r => bar.reviews.set(JSON.stringify(scope.reviewLocation()), r);
+  const show = r => bar.reviews.set(location(scope), r);
   assert.deepEqual(plain(review), { root: "/repo", branch: "feat", upstream: "origin/feat", base: "main", baseRef: "main", changed: 3, ahead: 2, behind: 1, unmerged: 4, newer: 0, gone: false });
   show(review);
   const drawn = bar.render();
@@ -114,7 +116,7 @@ const load = (props = {}, setup = record) => {
   const allPanes = scope.panes;
   scope.panes = () => [{ pane: "p7", mod: "notes", tab: "b", cwd: null }, ...allPanes()];
   Object.assign(shown, { pane: "p7" });
-  assert.deepEqual(plain(scope.reviewLocation()), { cwd: "/repo/src", on: null });
+  assert.deepEqual(plain(scope.reviewLocation()), { space: "s", cwd: "/repo/src", on: null });
   scope.panes = allPanes; Object.assign(shown, { pane: "p1" });
   show({ ...review, unmerged: 0, changed: 0, ahead: 0, behind: 0 });
   assert.deepEqual(keys(find(bar.render(), "pulls-review")), ["tip-review-pick"], "no counts: the icon stays, the way in on a clean default branch");
@@ -284,11 +286,11 @@ const load = (props = {}, setup = record) => {
   assert.equal(commands.length, 0, "no copy waits on a command");
   assert.deepEqual([spec.at.x / zoom, spec.at.y / zoom].map(v => Math.round(v * 1000) / 1000), [890 + 24 - 368, 36], "4 under the button, right edges together, wherever the press was");
   fire(find(bar.render(), "review-open"), "on_click", {}, cx);
-  assert.deepEqual(launched.at(-1), { root: "/repo", args: [], page: "/branch/feat", analyze: true }, "a count's click opens its page, known without git, and starts the analysis");
+  assert.deepEqual(launched.at(-1), { source: plain(scope.reviewLocation()), root: "/repo", args: [], page: "/branch/feat", analyze: true }, "a count's click opens its page, known without git, and starts the analysis");
   const { mod: menu } = load({ ...spec.props, overlay: "m1" });
   const shut = closed.length;
   fire(find(menu.render(), "review-commit-abcdef123456"), "on_click", {}, cx);
-  assert.deepEqual(launched.at(-1), { root: "/repo", args: ["abcdef123456"], page: "/commit/abcdef123456", overlay: "m1" }, "a menu pick doesn't analyze");
+  assert.deepEqual(launched.at(-1), { source: plain(spec.props.source), root: "/repo", args: ["abcdef123456"], page: "/commit/abcdef123456", overlay: "m1" }, "a menu pick doesn't analyze");
   assert.equal(closed.length, shut, "launch closes the menu when done: closing first would stop its task");
   assert.equal(find(menu.render(), "review-branch-Other"), null, "commits first, the branches on a page of their own");
   fire(find(menu.render(), "review-tab-branches"), "on_click", {}, cx);
@@ -362,7 +364,7 @@ const load = (props = {}, setup = record) => {
   fire(find(inMenu.render(), "review-commit-c3"), "on_hover", true, cx);
   assert.deepEqual(highlighted(), ["review-commit-c3"], "the pointer moves it too");
   fire(find(inMenu.render(), "review-commit-c1"), "on_click", {}, cx);
-  assert.deepEqual(launched.at(-1), { root: "/repo", args: ["c1"], page: "/commit/c1" }, "a pick opens it as its own diff, unanalyzed");
+  assert.deepEqual(launched.at(-1), { source: plain(spec.props.source), root: "/repo", args: ["c1"], page: "/commit/c1" }, "a pick opens it as its own diff, unanalyzed");
   // Tab turns to the branches' page, and back.
   key("tab");
   assert.deepEqual(rowsOf(inMenu), ["review-branch-Other"], "no commit among the branches");
@@ -534,17 +536,17 @@ const load = (props = {}, setup = record) => {
     const { scope: shortcut } = load({}, null);
     shortcut.panes = () => [{ pane: "p1", tab: "b", cwd: netRepo }];
     shortcut.exec = async (command, args, { cwd }) => { const r = spawnSync(command, args, { cwd, encoding: "utf8" }); return { code: r.status, stdout: r.stdout }; };
-    await shortcut.launch({});
+    await launch(shortcut, {});
     assert.equal(state.review.page, "/branch/feat", "staged then edited back: the branch, not an empty worktree");
     sh("echo edited > a.txt"); calls.length = 0;
-    await shortcut.launch({});
+    await launch(shortcut, {});
     assert.equal(state.review.page, "/worktree", "a real change: the worktree");
   } finally { fs.rmSync(netRepo, { recursive: true, force: true }); }
   // From the bar, what it already knows: no git, no overlay to close.
   calls.length = 0;
   const shutBefore = closed.length;
   opener.exec = async (_command, args) => assert.fail(`git ${args.join(" ")}`);
-  await opener.launch({ root: "/repo", args: ["origin/feat...feat"], page: "/compare/origin/feat...feat", analyze: true });
+  await launch(opener, { root: "/repo", args: ["origin/feat...feat"], page: "/compare/origin/feat...feat", analyze: true });
   assert.deepEqual([calls, state.review.page, state.review.analyze], [panelShown, "/compare/origin/feat...feat", true], "the request carries the ask");
   assert.equal(closed.length, shutBefore);
   assert.deepEqual(plain(notes), []);
@@ -552,7 +554,7 @@ const load = (props = {}, setup = record) => {
   // A layout whose panel has no review page says so.
   const noPage = opener.layout;
   opener.layout = () => ({ id: "root", children: [{ id: "panel", children: [{ id: "panel-body", children: [{ id: "files" }] }] }] });
-  calls.length = 0; await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  calls.length = 0; await launch(opener, { root: "/repo", args: [], page: "/branch/feat" });
   assert.deepEqual([calls, notes.splice(0).map(n => n.body)], [[], ["This layout's panel has no review page: add the review block to its panel-body stack."]]);
   opener.layout = noPage;
   // The review takes only a number past the last it handled, and its own switch sends the last one + 1: each request's is
@@ -560,21 +562,86 @@ const load = (props = {}, setup = record) => {
   const OpenerDate = vm.runInContext("Date", opener), clock = OpenerDate.now;
   OpenerDate.now = () => 100000;
   state.review = { space: "s", root: "/repo", page: "/commit/previous", base: "/branch/feat", n: 101000 };
-  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  await launch(opener, { root: "/repo", args: [], page: "/branch/feat" });
   assert.ok(state.review.n > 101000, "the clock set back");
   const first = state.review.n;
-  await opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  await launch(opener, { root: "/repo", args: [], page: "/branch/feat" });
   assert.ok(state.review.n > first, "two in the same millisecond");
   OpenerDate.now = clock; delete state.review;
   // Switching space while it reads: the review stays out of the new space's.
   let config;
   opener.readTextFile = () => new Promise(done => { config = done; });
   calls.length = 0;
-  const late = opener.launch({ root: "/repo", args: [], page: "/branch/feat" });
+  const late = launch(opener, { root: "/repo", args: [], page: "/branch/feat" });
   opener.spaces = () => [{ id: "s", active: false, folder: "/space", tabs: [] }, { id: "o", active: true, folder: "/o", tabs: [] }];
   config('{ "open": "herdr" }'); await late;
   assert.deepEqual([plain(calls), state.review], [[], undefined], "started in one space, nothing done in another");
   opener.readTextFile = env.readTextFile; opener.spaces = env.spaces;
+
+  // The independent external modes still launch their own programs, not the panel. Their root is the captured one.
+  for (const mode of ["browser", "pwa", "official"]) {
+    const external = [], { scope } = load({}, null);
+    scope.readTextFile = async () => JSON.stringify({ open: mode });
+    scope.exec = async (command, args, options) => { external.push([command, plain(args), options?.cwd]); return { code: 0 }; };
+    scope.hc = async args => { external.push(["hc", plain(args)]); return { code: 0, stdout: '{"terminals":[]}' }; };
+    await launch(scope, { root: "/repo", args: ["--worktree"], page: "/worktree", analyze: true });
+    if (mode === "official") {
+      assert.deepEqual(external, [["hc", ["ls", "--json", "--label", "pulls-review.root=/repo"]], ["pulls.review", ["--help"], undefined],
+        ["hc", ["run", "--json", "--bg", "--no-parent", "--rm", "--cwd", "/repo", "--label", "pulls-review.root=/repo", "--", "pulls.review", "--worktree"]]]);
+    } else assert.deepEqual(external, [["jin.review", ["-d", ...(mode === "pwa" ? ["--pwa"] : []), "--analyze", "--worktree"], "/repo"]]);
+    assert.deepEqual([calls, state.review, plain(notes)], [[], undefined, []], mode);
+  }
+
+  // Both spaces have the same cwd. Exercise the rendered count, the logo/menu and mod.open with real launch and panel code.
+  {
+    let active = "a", read, release;
+    const seen = [], queued = [], pane = "/repo/src", { mod: bar, scope } = load({ block: "review" }, null);
+    const r = { root: "/repo", branch: "feat", base: "main", changed: 1, unmerged: 0 };
+    const barProps = () => ({ block: "review" });
+    scope.spaces = () => ["a", "b"].map(id => ({ id, active: id === active, folder: pane, tabs: [{ id: "b", active: true }] }));
+    scope.layout = () => ({ id: "panel", children: [{ id: "panel-body", children: ["review", "files", "panel-empty"].map(id => ({ id })) }] });
+    scope.run = (name, args) => seen.push([name, plain(args)]);
+    scope.setShared = (key, value) => { state[key] = value; if (key === "review") seen.push([key, value]); };
+    scope.closeOverlay = id => seen.push(["close", id]);
+    scope.readPicks = () => new Promise(done => { release = () => done({ commits: [{ sha: "a123", subject: "from A" }], branches: [], unpushed: [] }); });
+    scope.exec = async (_cmd, args) => ({ code: 0, stdout: args.includes("--show-toplevel") ? "/repo\n" : "" });
+    const barReady = () => { scope.props = barProps; bar.reviews.set(location(scope), r); return bar.render(); };
+    const menuCx = { ...cx, spawn: fn => { read = fn(menuCx); } }, jobCx = { ...cx, spawn: fn => queued.push(fn) };
+    const logo = () => fire(find(barReady(), "review-pick"), "on_click", {}, menuCx);
+    const count = () => fire(find(barReady(), "review-changes"), "on_click", {}, jobCx);
+    const mount = (p, cx) => { scope.props = () => p; const v = new scope.Mod(); v.init(p, cx); return v; };
+    const menu = () => mount({ ...overlays.at(-1).props, overlay: "same-cwd-menu" }, cx);
+    const pick = v => fire(find(v.render(), "review-commit-a123"), "on_click", {}, jobCx);
+    const runJob = async () => { await queued.shift()(jobCx); };
+    const writes = () => seen.filter(([action]) => action !== "close").map(([action]) => action);
+    const popupCount = overlays.length;
+    logo(); active = "b"; release(); await read;
+    const lateMenu = overlays.length - popupCount;
+
+    active = "a"; logo(); release(); await read;
+    const fromA = menu();
+    active = "b"; pick(fromA); await runJob();
+    const latePick = writes(); seen.length = 0;
+
+    active = "a"; count(); active = "b"; await runJob();
+    const lateCount = writes(); seen.length = 0;
+
+    active = "a"; mount({ overlay: "same-cwd-shortcut", page: "/worktree", args: ["--worktree"] }, jobCx);
+    active = "b"; await runJob();
+    const lateShortcut = writes(); seen.length = 0;
+    assert.deepEqual([lateMenu, latePick, lateCount, lateShortcut], [0, [], [], []], "no late menu, or panel handoff to another space with the same cwd");
+
+    active = "a"; count(); await runJob();
+    const countRequest = state.review, born = state["t3.panels"].a.tabs.find(t => t.id === "review").born;
+    assert.deepEqual([writes().slice(-3), countRequest.space, countRequest.root, countRequest.page, countRequest.analyze, countRequest.born],
+      [["layout.show", "t3-actions.dismiss-details", "review"], "a", "/repo", "/worktree", true, born]);
+    seen.length = 0;
+    logo(); release(); await read;
+    pick(menu()); await runJob();
+    assert.deepEqual([seen.slice(-2).map(([action]) => action), state.review.page, state.review.analyze, state.review.born],
+      [["review", "close"], "/commit/a123", false, born], "menu asks for its commit, then closes; browsing does not ask for analysis");
+    delete state["t3.panels"]; delete state.review;
+  }
 
   // Herdr T3 owns its layout controls; an older installed Review bar collapses to nothing, without Git reads.
   const { mod: merged, scope: mergedScope } = load({ block: "review-bar", toggle: true });
@@ -598,7 +665,7 @@ const load = (props = {}, setup = record) => {
   {
     const { mod: bar, scope } = load({ block: "review" });
     const r = { root: "/repo", branch: "feat", base: "main", changed: 0, ahead: 0, behind: 0, unmerged: 0 };
-    bar.reviews.set(JSON.stringify(scope.reviewLocation()), r);
+    bar.reviews.set(location(scope), r);
     scope.exec = async (_cmd, args) => ({ code: 0, stdout: args.includes("log") ? ["abc123", "test commit", "1", "Tester"].join(String.fromCharCode(31)) + "\n" : "" });
     let reading;
     const run = { ...cx, spawn: (fn) => { reading = fn(run); } };

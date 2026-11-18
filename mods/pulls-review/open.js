@@ -1,10 +1,9 @@
 // Where a review opens, and opening it: `open` in this folder's config.json picks the fork's daemon (in a Herdr pane, the
 // installed app or the browser) or the official CLI.
 
-import { checking, spaces, exec, hc, window, notify, closeOverlay, appHome, readTextFile } from "herdr";
-import { reviewLocation } from "./bar.js";
+import { checking, exec, hc, window, notify, closeOverlay, appHome, readTextFile } from "herdr";
 import { argPage, changedFiles, git } from "./review-git.js";
-import { showPage, reviewRequest } from "./panel.js";
+import { openReview } from "./panel.js";
 
 // `open` in this folder's config.json, which the person creates; none means "herdr" (see mods/README.md):
 // "herdr":    the fork's daemon, drawn in the review page of the window's panel (the review mod).
@@ -13,7 +12,6 @@ import { showPage, reviewRequest } from "./panel.js";
 // "official": the `pulls.review` CLI. Each worktree gets its own server, kept running by herdr-core.
 const MODES = ["herdr", "pwa", "browser", "official"];
 const LABEL = "pulls-review.root";
-const PANE = "review";
 
 async function readMode() {
   const text = await readTextFile(`${appHome()}/mods/pulls-review/config.json`).catch(() => null);
@@ -70,26 +68,21 @@ async function official(root, args, page) {
 // A space's review is the `review` page of the window's one panel (docs/adr/0011): the request names the space, and the
 // panel shows that page. `analyze` reaches the review with the request.
 function herdr(root, page, analyze, space) {
-  // The space changed while this read: its review would land in the new space's.
-  if (activeSpace() !== space) return;
   if (page === "/") throw new Error("Nothing to review on the default branch: pick a diff in the Review bar.");
-  // The review takes only a number past the last it handled: past the last sent, as its own switch's, though the clock go back.
-  if (!showPage(PANE)) throw new Error("This layout's panel has no review page: add the review block to its panel-body stack.");
-  reviewRequest(space, root, page, { analyze });
+  if (openReview({ space, root, page, analyze }) === "unavailable") {
+    throw new Error("This layout's panel has no review page: add the review block to its panel-body stack.");
+  }
 }
 
-// Opens a review: `{ root, args, page, analyze }` from the Review bar for one diff (analyzed by AI in the fork), its menu's
-// `overlay` closed when done; else the focused pane's worktree: its uncommitted changes when there are any, else what
-// pulls.review opens by default.
-const activeSpace = () => spaces().find(s => s.active)?.id;
-
+// Opens a review in the captured `source`: `{ root, args, page, analyze }` from the bar for one diff; else that pane's
+// uncommitted changes when there are any, else what pulls.review opens by default. Closes any `overlay` when done.
 export async function launch(input) {
   if (checking()) return;
-  const fail = (body) => notify({ title: "pulls.review", body, level: "error" }), space = activeSpace();
+  const fail = (body) => notify({ title: "pulls.review", body, level: "error" }), { source } = input;
   try {
     let { root } = input;
     if (!root) {
-      const { cwd, on } = reviewLocation();
+      const { cwd, on } = source;
       // The servers listen on this machine's loopback only.
       if (on) return fail(`Only local folders, not ${on}.`);
       if (!cwd) return fail("No folder for the focused pane.");
@@ -102,7 +95,7 @@ export async function launch(input) {
     const mode = await readMode();
     if (mode === "official") return await official(root, args, input.page);
     // The pane starts the analysis itself, and only with its Analyze automatically setting on, as the app never does unasked.
-    if (mode === "herdr") return herdr(root, input.page ?? await pageFor(root, args), input.analyze, space);
+    if (mode === "herdr") return herdr(root, input.page ?? await pageFor(root, args), input.analyze, source.space);
     // `--analyze` starts the AI analysis, or follows the one running; the official CLI has no such flag.
     const r = await cli("jin.review", ["-d", ...(mode === "pwa" ? ["--pwa"] : []), ...(input.analyze ? ["--analyze"] : []), ...args], { cwd: root });
     if (r.code !== 0) fail((r.stderr || r.stdout).trim() || `exit ${r.code}`);

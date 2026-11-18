@@ -149,12 +149,20 @@ export function reviewShown(space) {
 
 /**
  * Asks `space`'s Review for `page` of `root` (the `review` key, docs/internals/storage.md): past the last request's number, and
- * naming the Review tab it's for (`born`), so a tab closed meanwhile doesn't take it up. Show the page first (showPage), so the
- * tab it names is there.
+ * naming the already shown Review tab (`born`), so a tab closed meanwhile doesn't take it up. For an outside pick use openReview.
  */
 export function reviewRequest(space, root, page, { base = undefined, analyze = false } = {}) {
   const born = surfaceBorn("review", space);
   setShared("review", { space, root, page, ...(base ? { base } : {}), n: Math.max(Date.now(), Number(shared("review")?.n ?? 0) + 1), analyze: Boolean(analyze), ...(born != null && { born }) });
+}
+
+/** Shows a source space's selected Review range, then sends it to the tab just shown. The caller owns repository validation
+ * and any popup it needs to close afterwards (`keepDetails` defers Details' dismissal to the caller). */
+export function openReview({ space, root, page, base = undefined, analyze = false }, keepDetails = false) {
+  if (!space || space !== activeSpaceId()) return "stale";
+  if (!showPage("review", keepDetails)) return "unavailable";
+  reviewRequest(space, root, page, { base, analyze });
+  return "opened";
 }
 
 /**

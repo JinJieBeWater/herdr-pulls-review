@@ -13,7 +13,7 @@ import { PANE, LU, SPLIT_MIN, DISABLED, HEADER, BELOW, pref, setPref, zoom, subS
 import { GROUP_GAP } from "./button.js";
 import { popupClosed } from "./review-menu.js";
 import { subOpened } from "./submenu.js";
-import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview } from "./review-load.js";
+import { colors, loadReview, loadRows, pollReview, applyReview, analyzeReview, toggleFull, recolorFulls } from "./review-load.js";
 import { loadSettings, models, submitModel, pageRows, locale, settingsPanel, settingsSub, openPage } from "./settings.js";
 import { scopeOf, diffCommits, scopeList, pickListed, openScope, chosenBase, changesPage, releaseScope } from "./review-scope.js";
 import { openLit } from "./list.js";
@@ -23,7 +23,7 @@ import { groupTabs } from "./groups.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
 import { navToggle } from "./nav-column.js";
 import { withNav, navOpen } from "./nav-column.js";
-import { setReviewed, toggleFull, headerPress, diffView, hbars, foldMenu } from "./diff.js";
+import { setReviewed, headerPress, diffView, hbars, foldMenu } from "./diff.js";
 import { analysisStatus, statusPanel, head, header } from "./header.js";
 import { reviewKey } from "./keys.js";
 import { wrapLines } from "./store.js";
@@ -156,7 +156,7 @@ export default class ReviewPanel extends View {
     this.awayAnalysis = this.analyzing() ? { state: a?.state ?? "none", error: a?.error ?? null } : null;
     this.evicted = true; this.dirty = true; this.restoreTo = this.current;
     this.loadId++; this.hiddenId++; this.loading = null; this.again = false; this.stale = false; this.error = null;
-    this.review = null; this.switching = false; this.baseCommits = null; this.full.clear(); this.parts.clear();
+    this.review = null; this.switching = false; this.baseCommits = null; this.full.clear(); this.fullReads.clear(); this.parts.clear();
     this.scroll = null; this.wrapHold = {};
     // Back to the panel's own, none, as at begin.
     for (const key of ["itemList", "itemsId", "sizes", "visible", "paths", "pathsOf", "treeOf", "tabStats", "settling", "lastSpied", "revealedCurrent", "scopeGit", "picks", "refs"]) delete this[key];
@@ -176,7 +176,7 @@ export default class ReviewPanel extends View {
     this.review = null; this.error = null; this.version = 0; this.sideWidth = [0, 0, 0]; this.shift = [0, 0, 0];
     this.startingUntil = 0; this.loading = null; this.loadId = 0; this.hiddenId = 0; this.marks = 0; this.marking = 0;
     this.flipped = new Set(); this.focusPath = null; this.pickedAt = 0;
-    this.collapsed = new Set(); this.full = new Map(); this.parts = new Map(); this.seen = new Set();
+    this.collapsed = new Set(); this.full = new Map(); this.fullReads = new Map(); this.parts = new Map(); this.seen = new Set();
     this.scroll = null; this.barsOn = false; this.barsRun = 0;
   }
 
@@ -203,6 +203,7 @@ export default class ReviewPanel extends View {
     if (page === this.page) return;
     releaseScope(this);
     // The old page stays on screen, dimmed and inert, until the new one's read replaces it: apply() then resets what belonged to it.
+    this.fullReads.clear();
     this.page = page; this.switching = Boolean(this.review); this.error = null; this.analyzeError = null; this.startingUntil = 0; this.awayAnalysis = null;
     this.wasRunning = false; this.news = null;
     this.version++;
@@ -210,7 +211,7 @@ export default class ReviewPanel extends View {
   }
 
   // No review shown, or none yet: what belonged to the last one goes with it.
-  forget() { this.restoreTo = null; this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); this.parts.clear(); this.shift = [0, 0, 0]; }
+  forget() { this.restoreTo = null; this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); this.fullReads.clear(); this.parts.clear(); this.shift = [0, 0, 0]; }
 
   // The window active, this review's space the active one, and the panel open on its review page.
   surfaceAlive() {
@@ -491,11 +492,7 @@ export default class ReviewPanel extends View {
       this.colorsKey = JSON.stringify(colors(t));
       if (this.review) {
         for (const file of this.review.files) delete file.hunks;
-        // A whole file shown has them too: it's read again, still shown.
-        const whole = [...this.full.keys()];
-        this.full.clear();
-        // Just after this draw: asking for one, as each does, isn't allowed while drawing.
-        if (whole.length) cx.timer.after(0, (cx) => { for (const path of whole) { const file = this.fileAt(path); if (file) this.toggleFull(file, cx); } });
+        recolorFulls(this, cx);
         this.version++;
         this.load(cx);
       }

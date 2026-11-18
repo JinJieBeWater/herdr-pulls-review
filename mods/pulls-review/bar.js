@@ -39,8 +39,11 @@ export function reviewLocation() {
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
   // A mod pane has no folder: its tab's terminals stand in.
   const beside = pane && !pane.cwd ? ps.find(p => p.tab === pane.tab && p.cwd)?.cwd : null;
-  return { cwd: pane?.cwd || beside || f?.cwd || space?.folder, on };
+  return { space: space?.id, cwd: pane?.cwd || beside || f?.cwd || space?.folder, on };
 }
+// Git counts are reusable across spaces with the same folder; open intents aren't.
+const locationKey = ({ cwd, on }) => JSON.stringify({ cwd, on });
+const sameSource = (a, b) => a.space === b.space && a.cwd === b.cwd && a.on === b.on;
 // A commit's age as the Inbox's settled rows read (t3-inbox's ago), but "now" for "just now": the column is narrow.
 function ago(ms, now) {
   const m = Math.floor((now - ms) / 60000);
@@ -82,7 +85,7 @@ export function watchReview(view, cx) {
   if (checking()) return;
   view.reviewTimer = cx.timer.every(250, (cx) => {
     if (view.reviewClosed) return;
-    const where = reviewLocation(), key = JSON.stringify(where);
+    const where = reviewLocation(), key = locationKey(where);
     const moved = key !== view.reviewKey;
     if (moved) { view.reviewKey = key; cx.notify(); }
     const current = view.reviews.get(key)?.root;
@@ -139,7 +142,10 @@ export function stopReview(view) {
 const branchArgs = (b) => [`${props().baseRef}...${b.name}`];
 // No analysis here: browsing the menu's commits mustn't start and bill one per click. The menu closes once it's open:
 // closing it first would stop this task.
-const openPick = (args, cx) => cx.spawn(() => launch({ root: props().root, args, page: argPage(args), overlay: props().overlay }));
+const openPick = (args, cx) => {
+  const { source, root, overlay } = props();
+  cx.spawn(() => launch({ source, root, args, page: argPage(args), overlay }));
+};
 
 function reviewMatches(view) {
   const query = view.search.value().trim().toLowerCase(), { commits, branches } = props();
@@ -292,29 +298,29 @@ function branchCard(view, t, id, b, base, now) {
     ], { wrap: true, from: 4 }).mr(4)));
 }
 
-// What else to review in r's repository, a commit or another branch, in the logo's menu at `at`. `still` says the bar still
-// shows that repository when git is done. The button's second click, which closes it, is trigger.js's.
-function openPicks(view, r, at, still = () => true) {
-  if (view.readingPicks) return;
+// What else to review in r's repository, a commit or another branch, in the logo's menu at `at`.
+// The menu belongs to the source of the logo that opened it. The second click that closes it is trigger.js's.
+function openPicks(view, r, at, source) {
+  if (view.readingPicks || !sameSource(source, reviewLocation())) return;
   view.readingPicks = true;
   return (async () => { try {
     const { commits, branches, unpushed } = await readPicks(r);
     // Focus moved on while git read: this repo's menu would hang over another's. Nothing opened: the button isn't on.
-    if (!still() || !commits.length && !branches.length) { view.opened = null; return; }
+    if (view.reviewClosed || !sameSource(source, reviewLocation()) || !commits.length && !branches.length) { view.opened = null; return; }
     // Tall enough for the longer page, so turning pages doesn't resize it; one page alone has a title instead of the switch.
     const tabs = branches.length > 0 && commits.length > 0;
     const height = Math.min(368, menuChrome(tabs) + (tabs ? Math.max(commits.length, branches.length) : commits.length + branches.length) * MENU_ROW);
-    openOverlay({ mod: MOD, kind: "popup", at, width: MENU_W, height, props: { menu: "review", root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
+    openOverlay({ mod: MOD, kind: "popup", at, width: MENU_W, height, props: { menu: "review", source, root: r.root, branch: r.branch, base: r.base, baseRef: r.baseRef, upstream: r.gone ? null : r.upstream, commits, branches, unpushed, height } });
   } finally { view.readingPicks = false; } })();
 }
 
 export function reviewBar(view, t, stopPress) {
   // How the space's analysis goes: the panel head's mark, here too (docs/adr/0011).
-  const space = spaces().find(s => s.active)?.id, word = shared(REVIEW_STATUS)?.[space], mark = statusMark(t, word, 14);
   // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
   if (props()?.toggle) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017).
+  const source = reviewLocation(), { space } = source, word = shared(REVIEW_STATUS)?.[space], mark = statusMark(t, word, 14);
   // Looked up on each render, so the frame that shows another space already shows its own counts.
-  const r = onHome() ? null : view.reviews?.get(JSON.stringify(reviewLocation()));
+  const r = onHome() ? null : view.reviews?.get(locationKey(source));
   if (!r) return null;
   const n = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
   // A narrow bar's layout sets it (Herdr T3's bar-measure): each count with an icon for what it counts. Unset, the words.
@@ -334,7 +340,7 @@ export function reviewBar(view, t, stopPress) {
     label: isShown(args) ? `${name}, shown` : name, hot: view.hot === id, on: isShown(args),
   })
     .on_hover(glow(view, id))
-    .on_click((_e, cx) => cx.spawn(() => launch({ root: r.root, args, page: argPage(args, r.branch), analyze: true })))
+    .on_click((_e, cx) => cx.spawn(() => launch({ source, root: r.root, args, page: argPage(args, r.branch), analyze: true })))
     .when(Boolean(noun) && !compact, el => el.child(noun)), radiusOf("xs")), { below: true });
   const segments = [
     r.changed > 0 && ["review-changes", String(r.changed), "uncommitted", "file-diff", `Review ${n(r.changed, "uncommitted file")}: staged, unstaged and new`, ["--worktree"]],
@@ -347,8 +353,7 @@ export function reviewBar(view, t, stopPress) {
   // Under this click's press, if it came with one (from the keys, the app's place). Started here, so a second click while git
   // reads finds it reading.
   const openMenu = (b, cx) => {
-    const from = JSON.stringify(reviewLocation());
-    const reading = openPicks(view, r, hang(b, MENU_W).at, () => JSON.stringify(reviewLocation()) === from);
+    const reading = openPicks(view, r, hang(b, MENU_W).at, source);
     if (!reading) return false;
     cx.spawn(() => reading);
   };
