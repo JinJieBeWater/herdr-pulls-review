@@ -317,11 +317,11 @@ function openPicks(view, r, at, source) {
 export function reviewBar(view, t, stopPress) {
   // How the space's analysis goes: the panel head's mark, here too (docs/adr/0011).
   // Herdr T3: the panel's toggle alone, the counts left to the panel's scope menu.
-  if (props()?.toggle) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017).
-  const source = reviewLocation(), { space } = source, word = shared(REVIEW_STATUS)?.[space], mark = statusMark(t, word, 14);
+  if (props()?.toggle || onHome()) return null; // The layout's rightmost header owns its only panel toggle (ADR 0017); Home has no counts.
   // Looked up on each render, so the frame that shows another space already shows its own counts.
-  const r = onHome() ? null : view.reviews?.get(locationKey(source));
+  const source = reviewLocation(), r = view.reviews?.get(locationKey(source));
   if (!r) return null;
+  const { space } = source, word = shared(REVIEW_STATUS)?.[space], mark = statusMark(t, word, 14);
   const n = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
   // A narrow bar's layout sets it (Herdr T3's bar-measure): each count with an icon for what it counts. Unset, the words.
   const compact = shared(KEY.compact);

@@ -8,6 +8,12 @@ import { alpha } from "./color.js";
 
 export const STATUS_WORD = { working: "Working", blocked: "Needs you", error: "Failed", done: "Done", idle: "Idle" };
 
+// How long it's been working, as T3's Working pill, the sub-agent menus too: 9s, 4m, 1h 5m.
+export function took(ms, now) {
+  const s = Math.max(0, Math.floor((now - ms) / 1000)), m = Math.floor(s / 60);
+  return s < 60 ? `${s}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 export function statusMark(t, st, size = 12) {
   if (st === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900);
   if (st === "blocked" || st === "error") {
