@@ -41,8 +41,8 @@ export function pointerMoved(p) {
   if (track.at) track.step = { x: p.x - track.at.x, y: p.y - track.at.y };
   track.at = p;
 }
-export function pointerGone(box, from) {
-  const p = pointerAt(), size = globalThis.window.viewport_size?.();
+export function pointerGone(box, from, predictExit = true) {
+  const p = pointerAt(), size = predictExit && globalThis.window.viewport_size?.();
   if (p && size && track.at?.x === p.x && track.at.y === p.y) {
     const x = p.x + 2 * track.step.x, y = p.y + 2 * track.step.y;
     if (x < 0 || y < 0 || x >= size.width || y >= size.height) return true;
@@ -123,7 +123,7 @@ export const glow = (view, id) => (on, cx) => {
 // A hover kept in view[key], for what has no label or card to go with the pointer: it goes even when its leave never comes.
 export const hoverKept = (view, key, id, el) => { const kept = keptHover(view, key, id); return el.on_hover(kept.hover).on_mouse_move(kept.move); };
 /** hoverKept's two handlers, for an element whose hover does more (shared/tab.js). */
-export function keptHover(view, key, id) {
+export function keptHover(view, key, id, { predictExit = true } = {}) {
   return { hover: (on, cx) => {
     if (on) {
       view[key] = id;
@@ -131,7 +131,7 @@ export function keptHover(view, key, id) {
       view.keptWatch?.cancel();
       const from = pointerAt();
       view.keptWatch = cx.timer.every(POINTER_WATCH, (cx) => {
-        if (view[key] === id && !pointerGone(view.keptBox, from)) return;
+        if (view[key] === id && !pointerGone(view.keptBox, from, predictExit)) return;
         view.keptWatch.cancel();
         if (view[key] === id) { view[key] = null; cx.notify(); }
       });
