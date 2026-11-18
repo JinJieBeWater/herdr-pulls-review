@@ -17,9 +17,9 @@ export function colors(t) {
 // A read of the page shown. Only the latest counts: one that doesn't answer in LOAD_TIMEOUT says so and offers Retry.
 function startRead(view, cx) {
   const id = ++view.loadId;
-  view.loading = { root: view.root, page: view.page }; view.again = false;
+  view.loading = { root: view.root, page: view.page }; view.again = false; view.dirty = false;
   cx.timer.after(LOAD_TIMEOUT, (cx) => {
-    if (id !== view.loadId || !view.loading) return;
+    if (!view.loading || !canRead(view, id)) return;
     view.loading = null; view.error = `jin.review didn't answer in ${LOAD_TIMEOUT / 1000} s`;
     // Not under the new page's title.
     if (view.switching) view.forget();
@@ -28,9 +28,16 @@ function startRead(view, cx) {
   return id;
 }
 
+// Check the live layout as well as the read's identity. A response can arrive before the visibility timer observes a hide.
+function canRead(view, id = view.loadId) {
+  if (id !== view.loadId) return false;
+  if (!view.surfaceAlive()) { view.evict(); return false; }
+  if (view.evicted || !view.onScreen()) { view.deferRead(); return false; }
+  return true;
+}
+
 function endRead(view, cx, id) {
-  if (id !== view.loadId) return;
-  if (view.surfaceAlive?.() === false) { view.evict(); return; }
+  if (!canRead(view, id)) return;
   view.loading = null;
   view.report();
   cx.notify();
@@ -43,21 +50,19 @@ function endRead(view, cx, id) {
 // Only the latest read counts: a read of the page being read waits for it (a burst of changes can't restart it forever),
 // a read of another starts at once and the old one's answer is dropped.
 export function loadReview(view, cx, poll = false) {
-  if (view.surfaceAlive?.() === false) { view.evict(); return; }
-  // Evicted (main.js evict): read when shown again.
-  if (view.evicted) { view.dirty = true; return; }
+  if (!canRead(view)) return;
   if (!view.root || !view.page) return;
   if (view.loading?.root === view.root && view.loading.page === view.page) { view.again = true; return; }
   // Switching, the group shown is the old page's: the new page's first group comes with the read instead.
   const { root, page } = view, switched = view.switching, t = theme(), group = switched ? null : view.group(), marks = view.marks, id = startRead(view, cx);
-  view.dirty = false;
   // Rows only for the files in view or just after that have none: apply() keeps the rest, and each asked-for file is highlighted anew.
   const rows = poll || !group ? [] : view.rowsWanted();
   const key = JSON.stringify(colors(t));
   cx.spawn(async (cx) => {
     try {
+      if (!canRead(view, id)) return;
       const r = await review(root, "/api/review", { page, colors: colors(t), rows, firstRows: !group });
-      if (id !== view.loadId || view.surfaceAlive?.() === false) return;
+      if (!canRead(view, id)) return;
       // The theme changed meanwhile: these rows have the old colors, and later reads ask only for files without rows.
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       // Read before a reviewed mark landed, it would undo the mark on screen: the mark's own read follows.
@@ -80,7 +85,7 @@ export function loadReview(view, cx, poll = false) {
         if (pref("autoAnalyze") === true && a.agent && !a.error && a.state === "none") view.analyze(cx, false);
       }
     } catch (e) {
-      if (id === view.loadId) {
+      if (canRead(view, id)) {
         view.error = e?.message ?? String(e);
         if (view.switching) view.forget();
         // No daemon to ask: a run shown as going would poll, and each poll try to start the daemon, until it answers.
@@ -98,7 +103,8 @@ const rowCount = (hunks) => hunks.reduce((n, hunk) => n + hunk.rows.length, 0);
 // of the whole page for them weighed half a megabyte a batch, nearly all of it the files and groups already shown. The daemon
 // serves them from the diff shown; one it no longer holds is `stale`, and the whole page is read again, rows and all.
 export function loadRows(view, cx) {
-  if (view.surfaceAlive?.() === false) return;
+  if (!canRead(view)) return;
+  if (view.dirty) return view.load(cx);
   const rows = view.rowsWanted(), more = rows.length ? null : view.pageWanted();
   if (!rows.length && !more) return;
   if (view.stale || view.loading) return view.load(cx);
@@ -106,10 +112,11 @@ export function loadRows(view, cx) {
   const whole = more && view.full.get(more);
   cx.spawn(async (cx) => {
     try {
+      if (!canRead(view, id)) return;
       const r = whole
         ? await review(root, "/api/review/file", { page, file: more, colors: colors(t), from: whole.rows.length })
         : await review(root, "/api/review/rows", { page, colors: colors(t), files: more ? [more] : rows, base: shown.base?.sha ?? "", head: shown.head?.sha ?? "", ...more ? { from: rowCount(view.fileAt(more).hunks) } : {} });
-      if (id !== view.loadId || view.surfaceAlive?.() === false) return;
+      if (!canRead(view, id)) return;
       if (JSON.stringify(colors(theme())) !== key) { view.again = true; return; }
       if (r.stale) { view.stale = view.again = true; return; }
       // shortcut: a whole file changed between its pages goes on from the new text until the read that drops it, a second at most; the answer could name its sha.
@@ -135,32 +142,40 @@ export function loadRows(view, cx) {
       view.items();
     } catch (e) {
       // A batch a daemon without the route (an older one) or a failed read didn't bring: the whole page brings it, or says why.
-      if (id === view.loadId) { if (more) view.error = e?.message ?? String(e); else view.stale = view.again = true; }
+      if (canRead(view, id)) { if (more) view.error = e?.message ?? String(e); else view.stale = view.again = true; }
     } finally { endRead(view, cx, id); }
   });
 }
 
-// A run's state, without reading the diff: running, it updates in place; ended, or failed anew, the diff is read; not
-// started yet, nothing. A daemon without the route, or any failure, reads the diff as before. One call at a time.
+// Poll a run without reading the diff. When it ends, report its outcome and refresh the diff only when shown.
 export function pollReview(view, cx) {
   if (view.surfaceAlive?.() === false) return;
   if (view.polling) return;
   const { root, page } = view;
   view.polling = true;
-  // Without a review (evicted, main.js), the run's state kept is all there is to end; the diff is read once it shows.
-  const ended = (cx, error) => { if (!view.review) { view.awayAnalysis = { state: "none", error }; view.report(); cx.notify(); } view.load(cx, true); };
+  const current = () => view.surfaceAlive() && root === view.root && page === view.page;
+  const ended = (cx, error) => {
+    // Keep the visible fallback for a daemon without this route. Hidden, end the lightweight status without reading the diff.
+    if (!view.review || !view.onScreen()) {
+      const outcome = { ...view.runState(), state: "none", progress: null, error };
+      if (view.review) view.review.analysis = outcome; else view.awayAnalysis = outcome;
+      view.startingUntil = 0;
+      view.report(); cx.notify();
+    }
+    view.load(cx, true);
+  };
   cx.spawn(async (cx) => {
     try {
       const s = await review(root, "/api/review/status", { page });
-      if (view.surfaceAlive?.() === false) return;
+      if (!current()) return;
       const a = view.runState();
-      if (root !== view.root || page !== view.page || !a) return;
+      if (!a) return;
       if (s.running) {
         const run = { ...a, state: "running", progress: s.progress };
         if (view.review) view.review.analysis = run; else view.awayAnalysis = { state: "running", error: a.error ?? null };
         view.startingUntil = 0; view.report(); cx.notify();
       } else if (a.state === "running" || (s.error && s.error !== a.error)) ended(cx, s.error ?? null);
-    } catch (e) { if (root === view.root && page === view.page) ended(cx, e?.message ?? String(e)); }
+    } catch (e) { if (current()) ended(cx, e?.message ?? String(e)); }
     finally { view.polling = false; }
   });
 }
@@ -207,11 +222,13 @@ export function applyReview(view, r) {
 // One commit's page lists only itself: the diff's commits come from its base, read without rows after each read of none, so a new
 // commit reaches the header's list. A failed read leaves the list as it was.
 function loadBaseCommits(view, cx) {
-  const { root, base } = view;
+  const { root, base, hiddenId } = view;
   if (view.page === base) return;
+  const live = () => hiddenId === view.hiddenId && root === view.root && base === view.base && canRead(view);
   cx.spawn(async (cx) => {
+    if (!live()) return;
     const r = await review(root, "/api/review", { page: base, colors: colors(theme()), rows: [] }).catch(() => null);
-    if (r && !view.evicted && root === view.root && base === view.base) { view.baseCommits = r.commits; cx.notify(); }
+    if (live() && r) { view.baseCommits = r.commits; cx.notify(); }
   });
 }
 
@@ -222,9 +239,11 @@ export function analyzeReview(view, cx, force) {
   view.startingUntil = Date.now() + 10000; view.analyzeError = null;
   cx.timer.after(10000, (cx) => { view.report(); cx.notify(); });
   cx.notify();
+  const current = () => view.surfaceAlive() && root === view.root && page === view.page;
   cx.spawn(async (cx) => {
     try { await review(root, "/api/review/analyze", { page, force }); }
-    catch (e) { if (root === view.root && page === view.page) { view.startingUntil = 0; view.analyzeError = e?.message ?? String(e); } }
+    catch (e) { if (current()) { view.startingUntil = 0; view.analyzeError = e?.message ?? String(e); view.report(); } }
+    if (!current()) return;
     cx.notify();
     view.load(cx);
   });

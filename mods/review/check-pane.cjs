@@ -3,7 +3,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const kit = require("./check-kit.js");
-const paneHeadCentre = kit.paneHeadCentre(fs.readFileSync(path.join(__dirname, "../../../layouts/herdr-t3.json"), "utf8"));
+// The standalone Review checkout runs this check from an app home with T3 installed.
+const layoutFile = "layouts/herdr-t3.json", layoutInRepo = path.join(__dirname, "../../..", layoutFile);
+const paneHeadCentre = kit.paneHeadCentre(fs.readFileSync(fs.existsSync(layoutInRepo) ? layoutInRepo : layoutFile, "utf8"));
 
 // rows.js runs as is; main.js runs on inert elements, to reach every render path with a review in hand.
 // Follow a pane's imports once, before what needs them (kit.bundle); rows, daemon and tips are supplied by its fake env.
@@ -1442,6 +1444,64 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // Data flow. A read asks rows only for the group's files without them.
   const daemon = mainScope.review, settle = () => new Promise(setImmediate);
   await settle(); await settle(); // The folder mark above, and the read after it.
+  {
+    // Review can become hidden before the lifecycle timer runs. Land each response in that gap.
+    const wake = every[1000][0], poll = every[1500][0], requested = [];
+    for (const pending of ["page", "rows", "status", "start"]) {
+      pageShown = "review";
+      let release;
+      const held = new Promise(r => { release = r; });
+      const holdRoute = { page: "/api/review", rows: "/api/review/rows", status: "/api/review/status", start: "/api/review/analyze" }[pending];
+      mainScope.review = async (root, route, body) => {
+        requested.push(route);
+        if (route === holdRoute) await held;
+        if (route === "/api/review/status") return { running: false };
+        if (route === "/api/review/analyze") return {};
+        return { ...await daemon(root, route, body), head: { sha: `new-${pending}` } };
+      };
+      if (pending === "status") pane.review.analysis = { state: "running", agent: true };
+      pane.report();
+      const shown = pane.review, items = pane.itemList;
+      if (pending === "status") poll(cx);
+      else if (pending === "start") pane.analyze(cx, false);
+      else if (pending === "rows") {
+        pane.rowsWanted = () => ["a.ts"];
+        pane.loadRows(cx);
+        delete pane.rowsWanted;
+      } else pane.load(cx, true);
+      await settle();
+      assert.equal(requested.at(-1), holdRoute);
+      requested.length = 0;
+      if (pending === "rows") windowActive = false;
+      else pageShown = "files";
+      release(); await settle();
+      assert.deepEqual([requested.slice(), pane.review === shown, pane.itemList === items], [[], true, true], `${pending} returns while Review is hidden`);
+      if (pending === "status") assert.ok(!pane.analyzing() && word() === "done", "the hidden tab still reports completion");
+      assert.ok(!pane.loading, "the unfinished read does not block the next one");
+
+      pageShown = "review"; windowActive = true;
+      wake(cx); await settle(); wake(cx); await settle();
+      assert.deepEqual(requested.splice(0), ["/api/review"], `${pending} needs exactly one catch-up read`);
+      assert.equal(pane.review.head.sha, `new-${pending}`);
+      pane.startingUntil = 0; pane.report();
+    }
+    // The next visible period starts even if the old request is still out. Its late answer cannot win after the return.
+    let finishOld;
+    const old = new Promise(r => { finishOld = r; });
+    let reads = 0;
+    mainScope.review = async (root, route, body) => {
+      const seq = ++reads;
+      if (seq === 1) await old;
+      return { ...await daemon(root, route, body), title: `read ${seq}` };
+    };
+    pane.load(cx); await settle();
+    pageShown = "files"; wake(cx);
+    pageShown = "review"; wake(cx); await settle();
+    assert.equal(pane.review.title, "read 2");
+    finishOld(); await settle();
+    assert.deepEqual([reads, pane.review.title], [2, "read 2"]);
+    mainScope.review = daemon;
+  }
   const shownFiles = groupFiles(pane.group()), first = shownFiles[0], target = () => pane.review.files.find(f => f.path === first);
   for (const f of pane.review.files) if (shownFiles.includes(f.path)) f.hunks ??= [];
   delete target().hunks; pane.collapsed.delete(first);
@@ -2249,6 +2309,32 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     status = { running: false }; poll(cx); await wait();
     assert.ok(!p.analyzing() && word() === "done" && !p.review);
     sharedStore.set("review.shown", wasShown); sharedStore.set("review.status", wasStatus);
+  }
+  {
+    const panels = { s1: { open: true, tabs: [{ id: "review", born: 1 }], active: "review" } };
+    const store = new Map([["t3.panels", panels]]);
+    let deliver;
+    const scope = load("main.js", { ...env, shared: key => store.get(key), setShared: (key, val) => store.set(key, val),
+      nextCommand: () => new Promise(resolve => { deliver = resolve; }),
+      layout: () => ({ id: "panel", children: [{ id: "panel-body", active: "review", children: [{ id: "review" }, { id: "panel-empty" }] }] }) });
+    const view = new scope.Mod(); view.init({}, cx);
+    const s = Object.create(view); s.begin("s1"); view.bySpace.set("s1", s);
+    const command = async name => { deliver(name); await wait(); };
+    for (const name of ["close:menu", "close"]) {
+      const id = vm.runInContext('openPopup({ mod: "review" })', scope);
+      s.togglePopup("fold", cx);
+      await command(name);
+      assert.equal(closedOverlays.at(-1), id, `${name} dismisses the native menu first`);
+      assert.equal(s.popup, "fold", `${name} leaves the popup underneath the native menu alone`);
+      vm.runInContext(`menuClosed(${JSON.stringify(id)})`, scope);
+      await command(name);
+      assert.equal(s.popup, null, `${name} dismisses the page popup`);
+      assert.equal(store.get("t3.panels").s1.active, "review", `${name} keeps the tab when a menu is open`);
+    }
+    await command("close:menu");
+    assert.equal(store.get("t3.panels").s1.active, "review", "close:menu leaves the tab alone without a menu");
+    await command("close");
+    assert.equal(store.get("t3.panels").s1.active, null, "close still closes the surface with no menu");
   }
   console.log("ok: pairs, items, notes and heights; the pane renders every analysis state, unified and split; rows only for the group shown, kept across polls; the files in the panel's navigation column, the groups as the tree's top rows (none without an analysis), its switch and no breakpoint, the file in front its one selected row, moved by keys; Review uses Files' shared native path menu; the fold menu; analysis settings and auto analyze; reads that don't undo marks or carry over to another diff; no zoom; one review per space, none on another machine, nothing asked of it by Files, the scope button and its menu, a commit's sha and steps, wrapped lines, the shared loading, empty and error states.");
 })();

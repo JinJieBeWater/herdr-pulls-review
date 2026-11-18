@@ -77,7 +77,10 @@ export default class ReviewPanel extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const [name, page] = (await nextCommand()).split(":"), s = this.shown();
-        if (name === "close" && !closeMenus(PANE)) { if (s?.popup) s.closePopup(cx); else closeSurface(); }
+        if (name === "close" && !closeMenus(PANE)) {
+          if (s?.popup) s.closePopup(cx);
+          else if (page !== "menu") closeSurface();
+        }
         if ((name !== "scope" && name !== "settings" && name !== "base") || !s?.page) continue;
         if (!page || s.popup !== name) s.togglePopup(name, cx, true);
         if (name === "scope" && page === "commits") openScopePage(s, page, cx, 0);
@@ -85,9 +88,7 @@ export default class ReviewPanel extends View {
         cx.notify();
       }
     });
-    // While a run goes the review follows it; otherwise a slow timer reads it while it's seen. Nothing watches the folder:
-    // event-driven refresh is a separate change, and an unseen review keeps nothing going.
-    // Every space's: the tab bar's Review bar and the panel head show how each space's run goes.
+    // Analysis status keeps going for every space's Review tab and bar. Full refresh runs only while Review is seen.
     const each = (f) => { for (const s of this.bySpace.values()) f(s); };
     cx.timer.every(1500, (cx) => each(s => { if (s.analyzing()) s.poll(cx); }));
     cx.timer.every(15000, (cx) => each(s => s.refresh(cx)));
@@ -96,7 +97,7 @@ export default class ReviewPanel extends View {
       const ids = new Set(spaces().map(s => s.id));
       for (const [id, s] of this.bySpace) {
         if (!ids.has(id) || !s.surfaceAlive()) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
-        else if (!s.onScreen()) s.dirty = true;
+        else if (!s.onScreen()) s.deferRead();
         else if (s.dirty) s.load(cx);
       }
     });
@@ -154,7 +155,7 @@ export default class ReviewPanel extends View {
     const a = this.runState();
     this.awayAnalysis = this.analyzing() ? { state: a?.state ?? "none", error: a?.error ?? null } : null;
     this.evicted = true; this.dirty = true; this.restoreTo = this.current;
-    this.loadId++; this.loading = null; this.again = false; this.stale = false; this.error = null;
+    this.loadId++; this.hiddenId++; this.loading = null; this.again = false; this.stale = false; this.error = null;
     this.review = null; this.switching = false; this.baseCommits = null; this.full.clear(); this.parts.clear();
     this.scroll = null; this.wrapHold = {};
     // Back to the panel's own, none, as at begin.
@@ -173,7 +174,7 @@ export default class ReviewPanel extends View {
     // The page a count's click asked to analyze, until its first read.
     this.analyzeFor = null; this.baseCommits = null;
     this.review = null; this.error = null; this.version = 0; this.sideWidth = [0, 0, 0]; this.shift = [0, 0, 0];
-    this.startingUntil = 0; this.loading = null; this.loadId = 0; this.marks = 0; this.marking = 0;
+    this.startingUntil = 0; this.loading = null; this.loadId = 0; this.hiddenId = 0; this.marks = 0; this.marking = 0;
     this.flipped = new Set(); this.focusPath = null; this.pickedAt = 0;
     this.collapsed = new Set(); this.full = new Map(); this.parts = new Map(); this.seen = new Set();
     this.scroll = null; this.barsOn = false; this.barsRun = 0;
@@ -202,7 +203,7 @@ export default class ReviewPanel extends View {
     if (page === this.page) return;
     releaseScope(this);
     // The old page stays on screen, dimmed and inert, until the new one's read replaces it: apply() then resets what belonged to it.
-    this.page = page; this.switching = Boolean(this.review); this.error = null; this.analyzeError = null; this.startingUntil = 0;
+    this.page = page; this.switching = Boolean(this.review); this.error = null; this.analyzeError = null; this.startingUntil = 0; this.awayAnalysis = null;
     this.wasRunning = false; this.news = null;
     this.version++;
     this.load(cx);
@@ -219,10 +220,19 @@ export default class ReviewPanel extends View {
   onScreen() {
     if (!this.surfaceAlive() || appWindow()?.active === false || !spaces().some(s => s.active && s.id === this.space)) return false;
     const p = panelState();
-    return p.open && p.page === PANE;
+    return p.open && p.page === PANE && (!p.owns || p.active === PANE);
   }
 
-  refresh(cx) { if (this.onScreen()) this.load(cx); else this.dirty = true; }
+  // Drop the visible period's reads and merge their retries into the next page refresh.
+  deferRead() {
+    if (!this.dirty) {
+      this.hiddenId++;
+      if (this.page) this.loadId++;
+    }
+    this.dirty = true; this.loading = null; this.again = false;
+  }
+
+  refresh(cx) { if (this.onScreen()) this.load(cx); else this.deferRead(); }
 
   load(cx, poll = false) { return loadReview(this, cx, poll); }
 
@@ -430,7 +440,10 @@ export default class ReviewPanel extends View {
   render(cx) {
     if (props()?.files) return menuView(this);
     const t = theme(), space = spaces().find(s => s.active);
-    if (this.panel.front && this.panel.front.space !== space?.id) releaseScope(this.panel.front);
+    if (this.panel.front && this.panel.front.space !== space?.id) {
+      releaseScope(this.panel.front);
+      this.panel.front.deferRead();
+    }
     // With no review to show, the toolbar names the page alone and keeps the column's switch, greyed.
     const note = (body) => v_flex().id("review-pane").size_full().text_color(t.foreground).text_size(12)
       .child(h_flex().id("review-header").h(HEADER).flex_none().px(12).gap(8).items_center()
