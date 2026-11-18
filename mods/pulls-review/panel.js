@@ -40,16 +40,23 @@ export function panelState() {
 /** The tab bar's window part (t3-tabs' `window-end` block) as it draws with the panel `open` or not, logical px: closed, the
  *  panel's 28 toggle a group's gap after Details (none at Home, as t3-tabs draws it), then the window's own buttons 8 on,
  *  three of 28; open, nothing, the panel head has them. */
-export function windowEndPx(open) {
-  const home = shared(KEY.home), atHome = Boolean(home) && activeSpaceId() === home;
+export function windowEndPx(open, space = activeSpaceId()) {
+  const atHome = Boolean(space) && space === shared(KEY.home);
   return open ? 0 : (panelSlots().length && !atHome ? GROUP_GAP + 28 : 0) + (window()?.buttons ? 8 + 3 * 28 : 0);
 }
 
 // The panel shown or put away, the window part sized for it in the same go: the frame that shows the change has Details and
 // the toggle where they end up. t3-tabs' fit() would size it only from that frame's measure, a frame late.
-function showPanel(open) {
+function showPanel(open, space) {
   run(open ? "layout.show" : "layout.hide", { id: "panel" });
-  if (layoutNode(layout(), "window-end")) run("layout.resize", { id: "window-end", px: windowEndPx(open) });
+  sizeWindowEnd(open, space, true);
+}
+
+function sizeWindowEnd(open, space, force = false) {
+  const end = layoutNode(layout(), "window-end");
+  if (!end) return;
+  const px = windowEndPx(open, space);
+  if (force || end.size?.px !== px) run("layout.resize", { id: "window-end", px });
 }
 
 const slot = (active) => active === "review" ? "review" : active ? "files" : "panel-empty";
@@ -189,51 +196,56 @@ function keptFor(space) {
   const kept = shared(KEY.panels)?.[space];
   return { open: Boolean(kept?.open), page: slot(surfacesFor(space).active), wide: Boolean(kept?.open && kept?.wide) };
 }
-function lay(want) {
+function lay(want, space) {
   run("layout.select", { stack: "panel-body", child: want.page });
   run(want.wide ? "layout.hide" : "layout.show", { id: "work" });
-  showPanel(want.open);
+  showPanel(want.open, space);
 }
 
 /**
  * Lays the panel out as `space` left it in the same go as the select that will show that space, so its first frame has it
- * (going Home: t3-tabs' `arrive`). Until spaces() catches up (1s at most), syncPanel leaves it be rather than recording it
- * for, or restoring, the space still listed as active.
+ * (t3-tabs' `arrive`). Until spaces() catches up (1s at most), syncPanel leaves it be while it still observes the source.
  */
-export function restorePanel(view, space) {
+export function restorePanel(view, space, source = activeSpaceId()) {
   const s = panelState();
   if (!s.owns) return;
-  const want = keptFor(space);
+  const want = keptFor(space), supersedes = Boolean(view.panelPending);
   view.panelSpace = space;
-  view.panelPending = { want, until: Date.now() + 1000, space };
-  if (!same(want, s)) lay(want);
+  view.panelPending = { want, until: Date.now() + 1000, space, source };
+  // A previously queued change may not be reflected in layout() yet, so match the destination even if the snapshot does.
+  if (supersedes || !same(want, s)) lay(want, space);
+  else sizeWindowEnd(want.open, space);
 }
 
 /**
  * Switching spaces shows that space's panel; whatever opens, closes or widens it is recorded. Called from render by one copy
- * that always shows (t3-tabs' `keys`); its first frame starts from what shows rather than restoring.
+ * that always shows (t3-tabs' `keys`); its first frame starts from what shows rather than restoring. Returns the space
+ * whose work frame should be kept, including the prepared target while the model still reports the source.
  */
 export function syncPanel(view) {
-  const s = panelState(), space = spaces().find(p => p.active);
-  if (!space || !s.owns) { view.panelSpace = null; return; }
+  const s = panelState(), id = activeSpaceId();
+  if (!id || !s.owns) { view.panelSpace = view.panelPending = null; return id; }
   // Laid out ahead of a select (restorePanel) that spaces() doesn't show yet.
-  if (view.panelPending?.space && view.panelPending.space !== space.id && Date.now() < view.panelPending.until) return;
-  if (space.id !== view.panelSpace) {
+  const pending = view.panelPending;
+  if (pending?.space && id === pending.source && id !== pending.space && Date.now() < pending.until) return pending.space;
+  if (id !== view.panelSpace) {
     const first = view.panelSpace == null;
-    view.panelSpace = space.id; view.panelPending = null;
-    const want = keptFor(space.id);
+    view.panelSpace = id; view.panelPending = null;
+    const want = keptFor(id);
     if (!first && !same(want, s)) {
       // The layout's clicks land after this frame: until then (or until something else wins) what shows isn't a choice.
       view.panelPending = { want, until: Date.now() + 1000 };
-      lay(want);
-      return;
+      lay(want, id);
+      return id;
     }
+    if (!first) sizeWindowEnd(want.open, id);
   }
   if (view.panelPending) {
-    if (!same(view.panelPending.want, s) && Date.now() < view.panelPending.until) return;
+    if (!same(view.panelPending.want, s) && Date.now() < view.panelPending.until) return id;
     view.panelPending = null;
   }
   // shortcut: a closed space's entry stays; prune by spaces() if the record ever grows noticeably.
-  const kept = shared(KEY.panels)?.[space.id];
+  const kept = shared(KEY.panels)?.[id];
   if (Boolean(kept?.open) !== s.open || Boolean(kept?.wide) !== s.wide) save({ open: s.open, wide: s.wide });
+  return id;
 }
