@@ -4,6 +4,7 @@ import { FOLDS, foldAll } from "./diff.js";
 import { scopeKey } from "./scope-header.js";
 import { treeKey, revealRow } from "./file-tree.js";
 import { TREE, toggleDir, pickGroup } from "./files.js";
+import { NAV_NARROW } from "./nav-column.js";
 
 export function reviewKey(view, e, cx) {
   // Typing a model name isn't a shortcut; Escape closes the panel. An open submenu has the keyboard.
@@ -47,7 +48,7 @@ export function reviewKey(view, e, cx) {
     if (k.at !== undefined) { view.focusPath = rows[k.at].path; revealRow(view, TREE, view.focusPath); }
     else if (row.group && k.pick) { view.focusPath = row.path; pickGroup(view, row, cx); }
     else if (row.dir) { view.focusPath = row.path; toggleDir(view, row.path, cx); }
-    else if (!row.missing) { view.focusPath = row.path; view.select(row.path, cx); }
+    else if (!row.missing) { view.focusPath = row.path; if (view.width < NAV_NARROW) view.narrowNav = false; view.select(row.path, cx); }
     cx.stop_propagation(); cx.notify();
     return;
   }

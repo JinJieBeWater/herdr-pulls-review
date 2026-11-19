@@ -2,7 +2,7 @@ import { div } from "gpui-kit";
 import { hoverKept } from "./tip.js";
 import { h_flex } from "gpui-base";
 import { treeRows, pathEntries, sortEntries, treeList, treeRow, revealRow, statusBadge } from "./file-tree.js";
-import { foldAllButton } from "./nav-column.js";
+import { foldAllButton, NAV_NARROW } from "./nav-column.js";
 import { PANE, checkMark } from "./controls.js";
 import { groupFiles } from "./rows.js";
 import { categoryIcon, criticalMark } from "./groups.js";
@@ -90,7 +90,7 @@ export function fileTree(view, t) {
       leading: checkMark(t, f.changed ? "changed" : f.reviewed ? "all" : "none").id(`tree-check-${row.path}`).role("check_box")
         .accessibility_label(f.reviewed ? `${row.path}: reviewed` : `${row.path}: not reviewed`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); view.setReviewed(f, !f.reviewed, cx); }) }, f.status === "removed")
-      .on_click((_e, cx) => { view.focusPath = null; view.select(row.path, cx); });
+      .on_click((_e, cx) => { view.focusPath = null; if (view.width < NAV_NARROW) view.narrowNav = false; view.select(row.path, cx); });
   };
   // The indent guides show while the pointer is on the tree, as Files'.
   return hoverKept(view, "treeHot", "tree", div().id("review-tree").size_full().child(treeList(view, TREE, rows, draw)));

@@ -6,7 +6,7 @@ import { trigger } from "./trigger.js";
 import { tip } from "./tip.js";
 import { popupClosed } from "./review-menu.js";
 import { scopeHeader } from "./scope-header.js";
-import { navToggle, setNavOpen } from "./nav-column.js";
+import { navToggle, setNavOpen, NAV_NARROW } from "./nav-column.js";
 
 // As the app's describeProgress, but the file's name only: the agent's paths run long, often through its own scratch folder.
 function progressText(progress) {
@@ -68,7 +68,7 @@ export function header(view, t, head) {
   // words give way and the buttons never.
   // 12 in, as the panel head above it (t3-tokens「规则」R1); the bar's buttons sm on chrome, their icons 14 (T3's diff toolbar),
   // the icons a group's gap apart (P3). No rule under it, as T3's subheaders in the panel.
-  const icons = head.buttons.filter(b => !b.text), words = head.buttons.filter(b => b.text);
+  const icons = head.buttons.filter(b => !b.text), words = head.buttons.filter(b => b.text), open = view.treeOpen();
   return h_flex().id("review-header").h(HEADER).flex_none().px(12).gap(8).items_center().overflow_hidden()
     .child(scopeHeader(view, t))
     // The counts hold, as T3's stats beside its tools: a long commit subject truncates instead.
@@ -86,6 +86,10 @@ export function header(view, t, head) {
         return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, iconSize: 14, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });
       }))
       // Last, the file tree's switch, greyed with no files to list.
-      .child(tip(view, t, "review-nav-toggle", view.navOpen ? "Hide the file tree" : "Show the file tree",
-        navToggle(view, t, "mods/review", "review-nav-toggle", view.navOpen, (cx) => { view.panel.navOpen = !view.navOpen; setNavOpen(view.panel.navOpen); cx.notify(); }, !view.review || view.navEmpty()), { below: true })));
+      .child(tip(view, t, "review-nav-toggle", open ? "Hide the file tree" : "Show the file tree",
+        navToggle(view, t, "mods/review", "review-nav-toggle", open, (cx) => {
+          if (view.width < NAV_NARROW) view.narrowNav = !open;
+          else { view.panel.navOpen = !view.navOpen; setNavOpen(view.panel.navOpen); }
+          cx.notify();
+        }, !view.review || view.navEmpty()), { below: true })));
 }

@@ -22,7 +22,7 @@ import { fileTree, navHead, openTo, showGroup } from "./files.js";
 import { groupTabs } from "./groups.js";
 import { loadingState, emptyState, errorBar } from "./panel-states.js";
 import { navToggle } from "./nav-column.js";
-import { withNav, navOpen } from "./nav-column.js";
+import { withNav, navOpen, navShown } from "./nav-column.js";
 import { setReviewed, headerPress, diffView, hbars, foldMenu } from "./diff.js";
 import { analysisStatus, statusPanel, head, header } from "./header.js";
 import { reviewKey } from "./keys.js";
@@ -71,6 +71,9 @@ export default class ReviewPanel extends View {
     this.handle = cx.focus_handle();
     // Whether the file tree's column is open: the page's, for every space.
     this.navOpen = navOpen();
+    // Under NAV_NARROW, the tree shown apart from that preference, for this run only; unset, it follows the preference.
+    /** @type {boolean | undefined} */
+    this.narrowNav = undefined;
     // `review.scope` (a key, or `herdr-app do`) toggles the shown review's scope menu, as its button does; `scope:commits`
     // opens it with that submenu; `review.base` the base picker the same way. `review.settings` the same for the settings, `settings:language`, `:agent`
     // or `:model` with that submenu. `review.close`, cmd-w while it has the keyboard, closes this surface.
@@ -503,7 +506,7 @@ export default class ReviewPanel extends View {
     if ((this.rowsWanted().length || this.pageWanted()) && !this.loading && !this.error && !this.marking) this.loadRows(cx);
     const group = this.group();
     // The column lists the group's files; with none to list (no changes), it's away and its switch greyed.
-    this.navShown = this.navOpen && Boolean(this.review) && !this.navEmpty();
+    this.navShown = this.treeOpen();
     // The keys move in the file tree only while it's drawn.
     this.treeShown = this.navShown;
     // There's always a file in front while the group has one: its first, until a click, a key or the list's top says another.
@@ -565,6 +568,8 @@ export default class ReviewPanel extends View {
 
   // No files for the column to list: no changes in this diff.
   navEmpty() { return !this.review?.files.length; }
+  // Narrow, picking a file folds the tree for this run only (`narrowNav`); wide, the page's kept open state governs.
+  treeOpen() { return navShown(this.width, this.navOpen, this.narrowNav) && Boolean(this.review) && !this.navEmpty(); }
 
   toggleSplit(cx) {
     setPref("split", pref("split") !== true);

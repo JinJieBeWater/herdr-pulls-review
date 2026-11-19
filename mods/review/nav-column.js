@@ -10,6 +10,7 @@ import { alpha } from "./color.js";
 import { dragGone, pointerMoved, POINTER_WATCH } from "./tip.js";
 
 const NAV = 256, NAV_MIN = 160, NAV_MAX = 560, CONTENT_MIN = 256;
+export const NAV_NARROW = 640;
 
 /** How wide the column may be in a page `body` wide: [least, most]. */
 export const navRange = (body) => [NAV_MIN, Math.max(NAV_MIN, Math.min(NAV_MAX, body - CONTENT_MIN))];
@@ -19,9 +20,10 @@ export function navWidth(body, kept = localStorage.getItem("nav.width")) {
   return Math.min(most, Math.max(least, Number(kept) || NAV));
 }
 
-// Open until closed on this page.
+// Open until closed on this page; under NAV_NARROW a file pick collapses `narrow` without overwriting the wide preference.
 export const navOpen = () => localStorage.getItem("nav.open") !== "false";
 export const setNavOpen = (open) => localStorage.setItem("nav.open", String(open));
+export const navShown = (body, open, narrow) => body < NAV_NARROW && narrow !== undefined ? narrow : open;
 
 /** Follow the first width at once, then keep it until the room has held its latest width for 300ms.
  * Each page owns `hold`; `after(ms, f)` schedules `f(cx)` without retaining a render's context. */
