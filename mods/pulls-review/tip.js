@@ -9,6 +9,12 @@ export function keyOf(action) {
   return keyLabel(keys().find(b => b.action === action)?.keys ?? "");
 }
 
+// The undo notice's button, as T3's threadUndoLabel: the key in it, so no hover is needed to learn it, and plain Undo with none bound.
+export function undoLabel(...actions) {
+  const key = actions.map(keyOf).find(Boolean);
+  return key ? `${key} to undo` : "Undo";
+}
+
 // Keys as keys.json writes them (`cmd-shift-o`), as this platform names them.
 export function keyLabel(strokes) {
   if (!strokes.trim()) return "";
