@@ -86,7 +86,7 @@ export function initMenu(view, cx) {
   view.dir = p.dir;
   if (p.files === "folder") readFolder(view, cx);
   if (p.files === "open-in") awaitTargets(cx);
-  cx.timer.every(250, () => { if (!sourceOkay(p.source)) closeOverlay(p.overlay); });
+  view.sourceWatch = cx.timer.every(250, () => { if (!sourceOkay(p.source)) closeOverlay(p.overlay); });
 }
 
 // A breadcrumb menu's folder, read as it opens and each time it moves; a read for a folder it has left counts for nothing.
@@ -117,6 +117,7 @@ export const closeMenus = (mod = "t3-files") => closeTops(mod);
 /** Its submenu goes with it; the control that opened it, or the menu it hangs off, learns it's gone. */
 export function closeMenu(view) {
   const p = props();
+  view.sourceWatch?.cancel();
   stopsEnd(view);
   menuClosed(p.overlay);
   setShared(closedKey(menuMod(), p.parents?.length ? "submenu" : "menu"), Date.now());

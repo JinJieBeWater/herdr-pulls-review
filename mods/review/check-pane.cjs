@@ -389,6 +389,48 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.ok(opened.shown().review && !opened.shown().loading && !opened.shown().error && opened.shown().page === "/branch/fix");
     sharedStore.delete("review.shown");
   }
+  {
+    // The window behind another: a page with nothing read still does its first read, so it says "Loading" only while it
+    // loads. What comes after waits for the window: the timers read nothing, and a failed first read isn't tried again.
+    windowActive = false;
+    const pending = [], periodic = {}, asked = [];
+    let answer = () => Promise.resolve(structuredClone(review)), redraws = 0;
+    const ownCx = { ...cx, notify() { redraws++; }, spawn: f => f(ownCx), timer: { every: (ms, f) => { periodic[ms] = f; }, after: (ms, f) => pending.push([ms, f]) } };
+    const scope = load("main.js", { ...env, review: (_root, route) => { asked.push(route); return answer(); } });
+    sharedStore.set("review.shown", { s1: { root: "/repo", page: "/branch/fix", base: "/branch/fix" } });
+    // init's own redraw (the installed apps) first; the read is out once the 0ms timers ran, so a redraw after that is its answer's.
+    const start = async () => {
+      for (let i = 0; i < 3; i++) await new Promise(setImmediate);
+      for (const [ms, f] of pending.splice(0)) if (ms === 0) f(ownCx);
+      const out = redraws; await new Promise(setImmediate); return redraws > out;
+    };
+    const shows = (opened) => { drawn.clear(); opened.render(ownCx); return [drawn.has("review-loading"), drawn.has("review-error")]; };
+    const opened = new scope.Mod();
+    opened.init({}, ownCx); opened.render(ownCx);
+    assert.ok(await start() && opened.shown().review, "the first read lands and redraws with the window behind");
+    assert.deepEqual(shows(opened), [false, false]);
+    asked.length = 0; periodic[1000](ownCx); periodic[15000](ownCx); periodic[1500](ownCx); await new Promise(setImmediate);
+    assert.deepEqual(asked, [], "read once, the rest waits for the window");
+
+    answer = () => Promise.reject(new Error("daemon down"));
+    const failed = new scope.Mod();
+    failed.init({}, ownCx); failed.render(ownCx);
+    assert.ok(await start(), "a failed first read redraws too");
+    assert.deepEqual(shows(failed), [false, true]);
+    asked.length = 0; periodic[1000](ownCx); periodic[15000](ownCx); await new Promise(setImmediate);
+    assert.deepEqual([asked, shows(failed)], [[], [false, true]], "the failure stays said, without a retry behind the window");
+
+    answer = () => new Promise(() => {});
+    const silent = new scope.Mod();
+    silent.init({}, ownCx); silent.render(ownCx);
+    await start();
+    assert.deepEqual(shows(silent), [true, false]);
+    periodic[1000](ownCx); periodic[15000](ownCx);
+    assert.ok(silent.shown().loading, "the timers leave the first read going");
+    for (const [ms, f] of pending.splice(0)) if (ms === 30000) f(ownCx);
+    assert.deepEqual(shows(silent), [false, true], "no answer: it says so");
+    sharedStore.delete("review.shown"); windowActive = true;
+  }
   panel.init({}, cx);
   // The Review bar's count opened the panel: the request it left is for this space, and new.
   sharedStore.set("review", { space: "s1", root: "/repo", page: "/branch/fix", n: Date.now() });
@@ -427,7 +469,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     [{ state: "outdated", agent: true }, "Re-analyze"], [{ state: "running", agent: true, progress: { kind: "thinking", step: 1 } }, "Analyzing…"], [{ state: "current", agent: true, error: "boom" }, "Analysis failed"]];
   pane.analyzeError = null;
   for (const [analysis, text] of states) { pane.review.analysis = analysis; assert.equal(analyzeButton().text, text); }
-  // Running, the button has no spinner: the pane's header marks the review working.
+  // Running, the button has no mark of its own: the pane's header marks the review working.
   pane.review.analysis = states[4][0]; assert.equal(analyzeButton().lead, undefined);
   assert.equal(pane.head().parts.length, 3);
   pane.review.analysis = { state: "outdated", agent: true }; assert.equal(analyzeButton().note, "(outdated)");
@@ -1265,6 +1307,8 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   // `review.settings:model`, for `herdr-app do`: the settings with that submenu open.
   pane.closePopup(cx); send("settings:model"); await settled(); draw();
   assert.ok(pane.popup === "settings" && pane.settingsPage === "model" && drawn.has("review-settings-sub"));
+  // No press to place it by: beside the Model row, under View's label and two choices, a rule, AI's label and switch, Language and Agent.
+  assert.equal(pane.subRow.y, 32 / 2 + 28 / 2 + 4 + 5 + 28 + 2 * 36 + 9 + 2 * 28 + 2 * 28, "beside the Model row");
   pane.closePopup(cx);
   review.analysis = beforeSwitch; mainScope.exec = env.exec;
   pane.page = pane.base = base; pane.baseCommits = null;
@@ -1610,9 +1654,6 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   assert.equal(asked.length, 1);
   tick(); drawn.clear(); pane.render(cx);
   assert.ok(pane.error && drawn.has("review-error-retry") && texts.get("review-error-text") === pane.error && !pane.loading, "the error bar, under the toolbar, with Retry");
-  handlers.get("review-error-retry.on_hover")(true, cx); drawn.clear(); pane.render(cx);
-  assert.equal(styles["review-error-retry"].text_color, "#eeeeee", "Retry brightens on hover through the shared helper");
-  handlers.get("review-error-retry.on_hover")(false, cx);
   const late = await daemon("/repo", "/api/review", { page: there, rows: [] });
   answer({ ...late, title: "late" }); await wait();
   assert.ok(pane.review.title === "late" && !pane.error);
@@ -2141,7 +2182,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     p.apply({ ...p.review, files: [], groups: [] });
     drawn.clear(); p.render(cx);
     assert.deepEqual([texts.get("review-empty-title"), texts.get("review-empty-hint")], ["No changes", "Nothing to review in this range."]);
-    // Loading, as Files' does: a spinner and a line, announced as a status.
+    // Loading, as Files' does: the loader and a line, announced as a status.
     p.review = null; drawn.clear(); p.render(cx);
     assert.ok(texts.get("review-loading-text") === "Loading the review…" && styles["review-loading"].role === "status");
   }

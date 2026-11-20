@@ -33,12 +33,9 @@ export function navHead(view, t) {
     })));
 }
 
-/**
- * The group shown in the panel's file tree (file-tree.js), open and in the diff's order: its folders and files, then its
- * subgroups', in Files' rows (file-tree.js treeRow). The reviewed box leads every row, before the icon, three-state on a folder
- * or subgroup; a reviewed file is struck through and dimmed. The file in front (`current`) is selected. Only the rows in view
- * are drawn: a review runs to thousands of files.
- */
+/** The group shown in the panel's file tree, in the diff's order: its folders and files, then its subgroups', in Files' rows
+ *  (file-tree.js treeRow). The reviewed box leads every row, three-state on a folder or subgroup. Only the rows in view
+ *  are drawn: a review runs to thousands of files. */
 export function fileTree(view, t) {
   const mod = `mods/${PANE}`;
   const space = spaces().find(s => s.id === view.space), on = space?.machine ?? null;
@@ -96,11 +93,9 @@ export function fileTree(view, t) {
   return hoverKept(view, "treeHot", "tree", div().id("review-tree").size_full().child(treeList(view, TREE, rows, draw)));
 }
 
-/**
- * The tree's entries (file-tree.js's treeRows takes them) for one group: its own files at the top, then its subgroups (a
- * subgroup's path `group:<key>`, never joined to a folder), each with its files. A subgroup's folder's path is the subgroup's
- * and its own (`group:<key>/src`), as a folder can be in two; `real` is its own, `owner` the group whose files it holds.
- */
+/** The tree's entries (file-tree.js treeRows) for one group: its own files, then its subgroups (`group:<key>`, never joined to
+ *  a folder), each with its files. A subgroup's folder's path is the subgroup's and its own (`group:<key>/src`), as a folder
+ *  can be in two; `real` is its own, `owner` the group whose files it holds. */
 function reviewEntries(top) {
   const kids = new Map([["", []]]);
   if (!top) return kids;

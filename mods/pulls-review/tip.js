@@ -80,10 +80,16 @@ function leaveTip(id, s, cx) {
   s.timer = cx.timer.after(FADE.duration, (cx) => { dropTip(id, s); cx.notify(); });
 }
 
+// Read only for a label that is up: keyOf copies every binding, and every control with an action draws a tip.
+function withKey(label, action) {
+  const key = action ? keyOf(action) : "";
+  return key ? `${label} (${key})` : label;
+}
+
 // Above, as T3's. `below` for what has no room up there: a Popup doesn't flip as T3's does, it is pushed back over its trigger.
 // `off`: not lit whatever the pointer's on, as under the control's own menu.
 export function tip(view, t, id, label, trigger, { action, hint, below, delay = 150, off } = /** @type {{ action?: any, hint?: string, below?: boolean, delay?: number, off?: any }} */ ({})) {
-  const key = action ? keyOf(action) : "", hot = off ? null : view.hot, s = tips.get(id), shown = hot === id && s?.drawn;
+  const hot = off ? null : view.hot, s = tips.get(id), shown = hot === id && s?.drawn;
   const watch = (s, cx) => {
     s.watch = cx.timer.every(POINTER_WATCH, (cx) => {
       if (!pointerGone(s.box, s.from)) return;
@@ -111,7 +117,7 @@ export function tip(view, t, id, label, trigger, { action, hint, below, delay = 
     .when(Boolean(s?.open && (hot === id || s.closing)), pop => pop.content(tipCard(t, `tip-body-${id}-${s.n}`)
       .opacity(shown ? 1 : 0).top(shown ? 0 : below ? -4 : 4).transition("opacity", FADE).transition("top", FADE)
       .on_size_change((_size, cx) => { if (tips.get(id) !== s || s.drawn) return; s.drawn = true; cx.notify(); }).when(below, el => el.mt(4)).when(!below, el => el.mb(4))
-      .child(div().child(key ? `${label} (${key})` : label))
+      .child(div().child(withKey(label, action)))
       .when(Boolean(hint), el => el.child(div().text_color(t.muted).child(hint)))));
 }
 

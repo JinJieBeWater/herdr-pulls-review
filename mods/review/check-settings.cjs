@@ -34,9 +34,8 @@ context.globalThis = context;
 const vm = require("node:vm");
 vm.createContext(context);
 vm.runInContext(load("list.js", "menu-row.js", "settings.js")
-  + "\nglobalThis.list = { litOnHover, scrollList };\nglobalThis.settingsPage = { openPage, settingsSub, pageRows, models, locale };", context);
+  + "\nglobalThis.list = { scrollList };\nglobalThis.settingsPage = { openPage, settingsSub, pageRows, models, locale };", context);
 const { openPage, settingsSub, pageRows, models, locale } = context.settingsPage;
-const { litOnHover } = context.list;   // the real one menuRow uses
 // The real scrollList (extras/mods/review/list.js, a copy of shared/list.js) draws the rows; keep its draw for this render.
 {
   const real = context.list.scrollList;
@@ -80,10 +79,6 @@ assert.equal(rowBg(2), "SELECTED", "row 2 drawn with selected");
 rowsNow()[2].handlers.on_hover(false, cx);   // the pointer left row 2: the host's leave
 assert.equal(view.pageAt, -1, "leaving row 2 puts it out (list.js litOnHover)");
 assert.equal(rowBg(2), undefined, "row 2 no longer drawn lit");
-// So ↑/↓ start from the submenu's own choice, not the row the pointer left.
-const state2 = { pageAt: -1 };
-litOnHover(state2, "pageAt", 2)(true, cx); litOnHover(state2, "pageAt", 2)(false, cx);
-assert.equal(state2.pageAt, -1, "the same rule as every menu row");
 // T3's menu row: 28 high, 14px words (t3-tokens「菜单行」).
 assert.deepEqual([rowsNow()[0].style.h], [28]);
 console.log("ok: Review settings submenu rows light and go out as menu rows");

@@ -28,12 +28,13 @@ export function surfaceBorn(id, space = activeSpaceId()) {
   return slots.includes("panel-empty") ? surfacesFor(space, slots).tabs.find(t => t.id === id)?.born ?? null : null;
 }
 
-/** What shows: open, wide, the stack's slot (`page`) and slots; `owns` this layout's surfaces; the active space's tabs. */
-export function panelState() {
+/** What shows: open, wide, the stack's slot (`page`) and slots; `owns` this layout's surfaces; the active space's tabs
+ *  (`space`, when the caller has found it). */
+export function panelState(space = activeSpaceId()) {
   const root = layout(), panel = layoutNode(root, "panel"), body = layoutNode(root, "panel-body"), work = layoutNode(root, "work");
   const slots = (body?.children ?? []).map(c => c.id);
   return { open: Boolean(panel && !panel.hidden), page: body?.active ?? null, pages: slots, owns: slots.includes("panel-empty"),
-    wide: Boolean(panel && work?.hidden), ...surfacesFor(activeSpaceId(), slots) };
+    wide: Boolean(panel && work?.hidden), ...surfacesFor(space, slots) };
 }
 
 /** The tab bar's window part (t3-tabs' `window-end` block), in logical px, as t3-tabs draws it with the panel `open` or not;
@@ -221,7 +222,7 @@ export function restorePanel(view, space, source = activeSpaceId()) {
  * whose work frame should be kept, including the prepared target while the model still reports the source.
  */
 export function syncPanel(view) {
-  const s = panelState(), id = activeSpaceId();
+  const id = activeSpaceId(), s = panelState(id);
   if (!id || !s.owns) { view.panelSpace = view.panelPending = null; return id; }
   // Laid out ahead of a select (restorePanel) that spaces() doesn't show yet.
   const pending = view.panelPending;

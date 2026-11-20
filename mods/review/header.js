@@ -30,7 +30,7 @@ export function statusPanel(view, t) {
   return popover(view, t, "review-status-panel").w(320).p(16).gap(8).text_size(12)
     .child(div().font_medium().text_size(14).child("AI analysis"))
     .when(running, el => el.child(h_flex().gap(8).items_center().opacity(0.4)
-      .child(svg("mods/workspace-chrome/spinner.svg").size(14).flex_none().text_color(t.working).spin(900))
+      .child(svg("mods/review/icons/circle-dashed.svg").size(14).flex_none().text_color(t.working))
       .child(div().min_w(0).child(progressText(view.review.analysis.progress)))))
     .when(Boolean(error), el => el.child(div().text_color(t.ansi1).child(error)))
     .when(!running, el => el.child(h_flex().justify_end()
@@ -48,7 +48,7 @@ export function head(view) {
     const a = r.analysis, { error } = analysisStatus(view);
     const compact = view.width < COMPACT;
     // As the app's DiffAnalyzeButton, the analysis's state is the button's: running or failed, it opens the status; without
-    // a spinner of its own while running, as the pane's header marks the review working;
+    // a working mark of its own while running, as the pane's header marks the review working;
     // an agent, the settings. An analysis of an older version (the app has none) says so after its Re-analyze.
     const analyze = !a.agent ? { text: "Set up agent", lead: `${LU}/key-round.svg`, pops: "settings" }
       : view.analyzing() ? { text: "Analyzing…", pops: "status" }
@@ -57,9 +57,9 @@ export function head(view) {
     buttons.push({ id: "analyze", ...analyze, ...compact && { text: null, icon: analyze.lead ?? `${LU}/sparkles.svg`, label: analyze.text } });
     buttons.push({ id: "fold-menu", icon: `${LU}/chevrons-up-down.svg`, label: "Expand or collapse files", pops: "fold" });
   }
-  // The view (unified or split, files as a tree or a list) is set in the settings, with the analysis.
+  // The view (unified or split, lines wrapped or scrolled) is set in the settings, with the analysis.
   buttons.push({ id: "settings", icon: "mods/review/icons/settings.svg", label: "Settings", pops: "settings" });
-  // The diff shown is named by the scope button, which leads the header (scope.js).
+  // The diff shown is named by the scope button, which leads the header (scope-header.js).
   return { parts, buttons };
 }
 
@@ -80,7 +80,7 @@ export function header(view, t, head) {
     .child(h_flex().id("review-tools").flex_none().gap(GROUP_GAP).items_center()
       .children(icons.map(b => {
         const run = b.pops ? (cx, keys) => view.togglePopup(b.pops, cx, keys) : b.run;
-        // An icon alone says what it does in its label (tooltip-audit R1).
+        // An icon alone says what it does in its label.
         if (b.pops) return trigger(view, t, b.id, { icon: b.icon, iconSize: 14, label: b.label, color: t[b.color], disabled: b.disabled, below: true,
           open: view.popup === b.pops, closed: popupClosed(b.pops), onOpen: (at, cx) => run(cx, !at) });
         return tip(view, t, b.id, b.label, ghostButton(view, t, b.id, { icon: b.icon, iconSize: 14, label: b.label, act: run, color: t[b.color], disabled: b.disabled, size: "sm", surface: "chrome" }), { below: true });

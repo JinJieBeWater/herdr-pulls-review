@@ -81,7 +81,7 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
       .child(treeHead(`${id}-nav-head`, head))
       .child(div().flex_1().min_h(0).child(list))
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
-        .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize file explorer")
+        .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize the file tree")
           .when(handle?.is_focused(), el => el.bg(alpha(t.accent, "40")))
           .on_key_down((e, cx) => {
             const next = e.key === "home" ? least : e.key === "end" ? most : e.key === "left" ? width + 16 : e.key === "right" ? width - 16 : null;

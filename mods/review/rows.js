@@ -42,12 +42,9 @@ const textColumns = (text) => {
   return n;
 };
 const NOT_ASCII = /[^\0-\x9f]/;
-/**
- * Measures a row, kept on it (its tokens don't change once clipped): `columns` as wcwidth counts them, `wide` how many of
- * those are a wide character's 2, `plain` whether it's all ASCII, each character 1 column (a tab 4). Else, for lineCount, by
- * each character (a tab's 4 spaces each) how many narrow (`narrowTo`) and wide (`wideTo`) columns come before it and it.
- * What a joiner joins is drawn as one with what's before it: 0 columns.
- */
+/** Measures a row, kept on it (its tokens don't change once clipped): `columns` as wcwidth counts them, `wide` how many are a
+ *  wide character's 2, `plain` whether it's all ASCII (a tab 4). Else, for lineCount, by each character the narrow
+ *  (`narrowTo`) and wide (`wideTo`) columns up to and with it. What a joiner joins is drawn as one with what's before it: 0. */
 function measure(row) {
   const tokens = row.tokens;
   row.plain = tokens.every(([text]) => !NOT_ASCII.test(text));
@@ -86,11 +83,9 @@ export function wrapColumns(width, char, wideChar = 2 * char) {
   return { row: fit(width, codeInset(false)), pair: fit((width - 1) / 2, codeInset(true)), solo: fit(width, codeInset(true)), wide: wideChar / char };
 }
 
-/**
- * How many lines a row wraps to at `cols` columns, a wide character `wide`, as wrapRow cuts it but without cutting: a width's
- * change counts every row of the group, and cuts only those drawn. An ASCII row is its columns over the width; any other
- * finds where each line ends by halving, from its measured running columns, not a character at a time.
- */
+/** How many lines a row wraps to at `cols` columns, a wide character `wide`, as wrapRow cuts it but without cutting: a width's
+ *  change counts every row of the group, and cuts only those drawn. An ASCII row is its columns over the width; any other
+ *  finds where each line ends by halving, from its measured running columns, not a character at a time. */
 export function lineCount(row, cols, wide = 2) {
   if (!row) return 1;
   const n = span(row, wide);
@@ -155,11 +150,9 @@ export function rowsToAsk(paths, fileAt, inView, collapsed) {
   return out;
 }
 
-/**
- * Cuts each row's tokens, in place, at MAX_COLUMNS characters (at least as many columns), as they arrive: a line of a log or
- * minified file runs to megabytes, which Herdr's engine can't measure or draw before it interrupts the render. Then each is
- * measured, there in the read's task rather than in a render.
- */
+/** Cuts each row's tokens, in place, at MAX_COLUMNS characters (at least as many columns), as they arrive: a line of a log or
+ *  minified file runs to megabytes, which Herdr's engine can't measure or draw before it interrupts the render. Then each is
+ *  measured, there in the read's task rather than in a render. */
 export function clipRows(rows) {
   for (const row of rows) {
     // Only a row past the cut is copied: the daemon's come cut already.
@@ -218,11 +211,9 @@ export function pairRows(rows) {
 // 32px of slack covers a few chips a line. A wrap that counted the chips would drop it.
 export const noteWidth = (width, anchored) => (anchored ? Math.min(width - 24, 800) - 20 : width - 24) - 20 - 32;
 
-/**
- * Rough height of a note, as the app's AnalysisNoteCard lays it out: a file's own note is a row across the file
- * (12px in, 6px padding), a line's is a card under the line (12px in, at most 800 wide, 10 by 4 padding,
- * 3px apart). Either has a 12px mark and an 8px gap before its text. Characters take charWidth's columns.
- */
+/** Rough height of a note, as the app's AnalysisNoteCard lays it out: a file's own note is a row across the file
+ *  (12px in, 6px padding), a line's is a card under the line (12px in, at most 800 wide, 10 by 4 padding,
+ *  3px apart). Either has a 12px mark and an 8px gap before its text. Characters take charWidth's columns. */
 export function noteHeight(text, width, anchored) {
   const columns = Math.max(20, Math.floor(noteWidth(width, anchored) / 7));
   const lines = text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(textColumns(line) / columns)), 0);
@@ -232,12 +223,10 @@ export function noteHeight(text, width, anchored) {
 /** Every file a group shows: its own, then its children's. */
 export const groupFiles = (group) => [...group.files, ...group.children.flatMap(child => child.files)];
 
-/**
- * The list for one group: a header per child group, a header per file, and, unless the file
- * is collapsed, its notes and rows, in runs of up to RUN broken by a line's note. `full` holds a file's whole-file answer (`{ rows, truncated }`) once loaded.
- * Returns the items with their heights, as `v_virtual_list` takes them. `parts` keeps each file's items from the last
- * build, reused while what they're drawn from holds: a batch of rows or a fold rebuilds its files, not a group of thousands.
- */
+/** The list for one group: a header per child group and per file and, unless the file is collapsed, its notes and rows, in
+ *  runs of up to RUN broken by a line's note, with the heights `v_virtual_list` takes. `full` holds a file's whole-file
+ *  answer (`{ rows, truncated }`) once loaded. `parts` keeps each file's items from the last build, reused while what
+ *  they're drawn from holds: a batch of rows or a fold rebuilds its files, not a group of thousands. */
 export function buildItems(review, group, { collapsed, full, split, width, wrap = null, parts = new Map() }) {
   const items = [], byPath = new Map(review.files.map(file => [file.path, file]));
   const notesOf = (g, path) => [g, ...g.children].flatMap(x => x.notes[path] ?? []);

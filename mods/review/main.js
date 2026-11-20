@@ -97,7 +97,7 @@ export default class ReviewPanel extends View {
       const ids = new Set(spaces().map(s => s.id));
       for (const [id, s] of this.bySpace) {
         if (!ids.has(id) || !s.surfaceAlive()) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
-        else if (!s.onScreen()) s.deferRead();
+        else if (!s.readable()) s.deferRead();
         else if (s.dirty) s.load(cx);
       }
     });
@@ -117,11 +117,8 @@ export default class ReviewPanel extends View {
 
   shown() { return this.panel.bySpace.get(spaces().find(s => s.active)?.id) ?? null; }
 
-  /**
-   * A space's review, made the first time it shows. It inherits the panel (Object.create), so the methods and helpers that
-   * take `view` work on it unchanged, while what it writes - and what its reads write when they answer, after the space has
-   * changed - stays its own.
-   */
+  /** A space's review, made the first time it shows. It inherits the panel (Object.create), so what takes `view` works on it
+   *  unchanged, while what it writes, and what its reads write when they answer after the space has changed, stays its own. */
   spaceReview(space, cx) {
     const panel = this.panel;
     let s = panel.bySpace.get(space.id);
@@ -212,16 +209,21 @@ export default class ReviewPanel extends View {
   // No review shown, or none yet: what belonged to the last one goes with it.
   forget() { this.restoreTo = null; this.review = null; this.switching = false; this.groupKey = null; this.current = null; this.full.clear(); this.fullReads.clear(); this.parts.clear(); this.shift = [0, 0, 0]; }
 
-  // The window active, this review's space the active one, and the panel open on its review page.
   surfaceAlive() {
     return !panelState().owns || surfaceBorn("review", this.space) === this.surfaceBorn;
   }
 
-  onScreen() {
-    if (!this.surfaceAlive() || appWindow()?.active === false || !spaces().some(s => s.active && s.id === this.space)) return false;
+  // This review's space the active one and the panel open on its review page, whichever window is in front.
+  inView() {
+    if (!this.surfaceAlive() || !spaces().some(s => s.active && s.id === this.space)) return false;
     const p = panelState();
     return p.open && p.page === PANE && (!p.owns || p.active === PANE);
   }
+
+  onScreen() { return appWindow()?.active !== false && this.inView(); }
+
+  // Reads wait for the window to be in front, but for the first: until it lands or fails, the page says it is loading.
+  readable() { return this.onScreen() || (!this.review && !this.error && this.inView()); }
 
   // Drop the visible period's reads and merge their retries into the next page refresh.
   deferRead() {
@@ -232,7 +234,7 @@ export default class ReviewPanel extends View {
     this.dirty = true; this.loading = null; this.again = false;
   }
 
-  refresh(cx) { if (this.onScreen()) this.load(cx); else this.deferRead(); }
+  refresh(cx) { if (this.readable()) this.load(cx); else this.deferRead(); }
 
   load(cx, poll = false) { return loadReview(this, cx, poll); }
 
@@ -382,12 +384,9 @@ export default class ReviewPanel extends View {
   // The blank after the list, so its last header can still reach the top: a view's height less what follows that header.
   trailing() { this.items(); return Math.max(0, Math.ceil(this.diffHeight - this.tail)); }
 
-  /**
-   * Brings an item's top to the list's top, exactly. The list scrolls only to the near edge: an item above the view lands at
-   * the top, one below at the bottom. So below, first bottom-align the first item a view's height past it, which puts this
-   * one just over the top; once that frame is drawn, scroll to this one, now above the view, so its top lands at the top.
-   * Rows arriving in between rebuild the list: the item is found again by its key, and brought up afresh.
-   */
+  /** Brings an item's top to the list's top. The list scrolls only to the near edge (above the view lands at the top, below
+   *  at the bottom): so below, bottom-align the first item a view's height past it, and once that frame is drawn scroll to
+   *  this one, now above the view. Rows arriving in between rebuild the list: the item is found again by its key. */
   scrollToTop(index, cx) {
     const sizes = this.listSizes(), start = this.visible?.start ?? 0;
     const token = this.settling = {}, key = this.itemList[index]?.key, built = this.itemsId;
@@ -450,7 +449,7 @@ export default class ReviewPanel extends View {
         .child(div().id("review-title").flex_1().pl(8).font_medium().child("Review"))
         .child(navToggle(this, t, "mods/review", "review-nav-toggle", this.navOpen, () => {}, true)))
       .child(div().id("review-note").flex_1().min_h(0).child(body));
-    const starting = () => note(loadingState(t, "review-loading", "Loading the review…"));
+    const starting = () => note(loadingState("mods/review", t, "review-loading", "Loading the review…"));
     if (!space) return starting();
     if (panelState().owns && !surfacesFor(space.id).tabs.some(t => t.id === "review")) return div().size_full();
     if (space.machine) return note(emptyState(t, "review-empty", `${LU}/file-diff.svg`, "Not on this computer", `Review reads repositories on this machine only, and this space is on ${space.machine}.`));
@@ -533,7 +532,7 @@ export default class ReviewPanel extends View {
       .children(this.review && !this.switching ? [groupTabs(this, t, (key, cx) => showGroup(this, key, cx))].filter(Boolean) : [])
       .child((!this.review
         // As the app's FeedbackLoading.
-        ? div().flex_1().min_h(0).when(!this.error, el => el.child(loadingState(t, "review-loading", "Loading the review…")))
+        ? div().flex_1().min_h(0).when(!this.error, el => el.child(loadingState("mods/review", t, "review-loading", "Loading the review…")))
         // The diff on the left, the files in the panel's navigation column on the right, at the window's edge (ADR 0013).
         : div().flex_1().min_h(0).child(withNav(t, "review", this.width, { open: this.navShown, head: navHead(this, t), list: fileTree(this, t).size_full(),
           // The group shown's summary over its diff, as the app's group header: its title 13 medium, its words 12.

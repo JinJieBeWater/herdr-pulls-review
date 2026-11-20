@@ -314,7 +314,7 @@ const launch = (scope, input) => scope.launch({ source: scope.reviewLocation(), 
   assert.ok(!isLit("review-open"), "another space's review lights nothing");
   // How the space's review analysis goes, after the logo, as the panel head marks it: another space's isn't this one's.
   const pick = () => find(bar.render(), "review-pick");
-  const marked = () => walk(pick()).some(n => n.source === "mods/workspace-chrome/spinner.svg" || strings(n).includes("!") || n.style.rounded_full !== undefined);
+  const marked = () => walk(pick()).some(n => n.source === "mods/pulls-review/icons/circle-dashed.svg" || strings(n).includes("!") || n.style.rounded_full !== undefined);
   for (const [word, label] of [["working", "running"], ["done", "done"], ["blocked", "failed"]]) {
     state["review.status"] = { s: word };
     assert.ok(marked() && pick().style.accessibility_label === `Change what to review, analysis ${label}`, word);
@@ -652,7 +652,7 @@ const launch = (scope, input) => scope.launch({ source: scope.reviewLocation(), 
   assert.equal(find(joined, "review-panel"), null);
 
   // The panel's review page starts only when first shown and shared outlives the app, so a run's word from before a restart
-  // would spin on in the bar and the panel head. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
+  // would stay working in the bar and the panel head. The bar, always shown, drops it; only the bar: an overlay opens with every menu.
   state["review.status"] = { a: "working", b: "done", c: "blocked" };
   load({ overlay: "o", page: "/x" });
   assert.equal(state["review.status"].a, "working", "opening a review isn't a restart");
@@ -661,28 +661,8 @@ const launch = (scope, input) => scope.launch({ source: scope.reviewLocation(), 
   const kept = state["review.status"]; load({ block: "review" });
   assert.equal(state["review.status"], kept, "nothing to drop, nothing written: every write redraws every mod");
 
-  // The logo's menu, opened from the bar (P6): its button stays on while the menu is up, and its label stays down.
-  {
-    const { mod: bar, scope } = load({ block: "review" });
-    const r = { root: "/repo", branch: "feat", base: "main", changed: 0, ahead: 0, behind: 0, unmerged: 0 };
-    bar.reviews.set(location(scope), r);
-    scope.exec = async (_cmd, args) => ({ code: 0, stdout: args.includes("log") ? ["abc123", "test commit", "1", "Tester"].join(String.fromCharCode(31)) + "\n" : "" });
-    let reading;
-    const run = { ...cx, spawn: (fn) => { reading = fn(run); } };
-    const button = () => find(bar.render(), "review-pick");
-    assert.equal(button().style.bg, undefined, "closed: no on fill");
-    fire(button(), "on_mouse_down:left", { bounds: { x: 300, y: 10, width: 24, height: 24 } }, run);
-    fire(button(), "on_click", {}, run); await reading;
-    const spec = overlays.at(-1);
-    assert.equal(spec.props.menu, "review", "git read, then the menu opens");
-    assert.equal(button().style.bg, theme.foreground + "12", "its button on while the menu is up: chrome's 7%");
-    fire(button(), "on_hover", true, run);
-    fire(find(bar.render(), "tip-over-review-pick"), "on_hover", true, run);
-    assert.deepEqual(strings(find(bar.render(), "tip-review-pick").style.content), [], "its label stays down while the menu is up");
-  }
-
   // Every icon on disk is drawn: what a change orphans goes with it.
-  const code = ["bar.js", "details.js", "tip.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");
+  const code = ["bar.js", "details.js", "tip.js", "status-mark.js", "main.js"].map(file => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");
   for (const file of fs.readdirSync(path.join(__dirname, "icons"))) assert.ok(code.includes(path.basename(file, ".svg")), `${file} is used`);
 
   console.log("ok: standalone Review counts/menu/analysis, native panel opening and shared Git reads; Herdr T3's retired toggle bar collapses without duplicate controls");

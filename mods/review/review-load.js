@@ -31,7 +31,7 @@ function startRead(view, cx) {
 function canRead(view, current = () => true) {
   if (!current()) return false;
   if (!view.surfaceAlive()) { view.evict(); return false; }
-  if (view.evicted || !view.onScreen()) { view.deferRead(); return false; }
+  if (view.evicted || !view.readable()) { view.deferRead(); return false; }
   return true;
 }
 
@@ -40,13 +40,15 @@ function canRead(view, current = () => true) {
 function readVisible(view, cx, { current, request, commit, fail = null, done = null }) {
   const period = view.hiddenId;
   const live = () => canRead(view, () => period === view.hiddenId && current());
+  // A first read behind another window stops being readable as it lands (main.js readable): it still ends and redraws.
+  let landed = false;
   cx.spawn(async (cx) => {
     if (!live()) return;
     try {
       const result = await request();
-      if (live()) commit(result, cx);
-    } catch (e) { if (live()) fail?.(e, cx); }
-    finally { if (done && live()) done(cx); }
+      if (live()) { landed = true; commit(result, cx); }
+    } catch (e) { if (live()) { landed = true; fail?.(e, cx); } }
+    finally { if (done && (landed || live())) done(cx); }
   });
 }
 

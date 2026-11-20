@@ -7,13 +7,10 @@ import { glow } from "./tip.js";
 import { stop } from "./focus.js";
 import { alpha } from "./color.js";
 
-// Herdr's own spinner, which every mod can draw.
-const SPINNER = "mods/workspace-chrome/spinner.svg";
-
-/** Loading: a spinner and a line, centered, announced as a status (as T3's FeedbackLoading). */
-export function loadingState(t, id, text) {
+/** Loading: T3's loader arc, still, and a line, centered, announced as a status (as T3's FeedbackLoading). `mod`: the caller's folder (`mods/t3-files`), whose own icons/ holds the arc. */
+export function loadingState(mod, t, id, text) {
   return h_flex().id(id).size_full().gap(8).items_center().justify_center().text_size(12).text_color(t.dim).role("status")
-    .child(svg(SPINNER).size(14).flex_none().text_color(t.working).spin(900))
+    .child(svg(`${mod}/icons/loader-circle.svg`).size(14).flex_none().text_color(t.working))
     .child(div().id(`${id}-text`).child(text));
 }
 

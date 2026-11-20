@@ -8,6 +8,7 @@ export const KEY = {
   settings: "t3.settings", pins: "t3.pins", notice: "t3.notice", focus: "t3.focus", spaceIcons: "t3.spaceIcons", agentOrder: "t3.agentOrder", panels: "t3.panels", projects: "t3.projects",
   home: "t3-tabs.home", undo: "t3-tabs.undo", unsettled: "t3-tabs.unsettled", compact: "t3-tabs.compact", recent: "t3-tabs.recent",
   inboxRows: "t3-inbox.rows", agentsRows: "t3-agents.rows", actions: "t3-actions.actions", openTarget: "t3.openTarget", detailsItems: "t3-actions.detailsItems",
+  markdown: "t3-files.markdown",
 };
 
 // The stamp a popup's close() writes and the control that opens it reads (justClosed in focus.js): `<mod>.closed` when the mod

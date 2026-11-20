@@ -97,10 +97,10 @@ export function pageRows(view) {
   return rows.map(m => ({ id: m.key ?? `model-${m.id}`, name: m.name, detail: m.detail, on: m.id === model, pick: (cx) => saveLlm(view, { agentModel: m.id }, cx) }));
 }
 
-// The panel's rows at main.js's top (BELOW), right 40, past its border and padding: a label, four choices of 36, a rule, a
+// The panel's rows at main.js's top (BELOW), right 40, past its border and padding: a label, two choices of 36, a rule, a
 // label and the switch, then Language, Agent and Model.
 // shortcut: assumes all three rows and no error note above them; a row the pointer is on gives its own bounds instead.
-const navRow = (view, id) => ({ x: view.width - 40 - 320 + 5, y: BELOW + 5 + 237 + MODEL_ROW * ["language", "agent", "model"].indexOf(id), width: 310, height: MODEL_ROW });
+const navRow = (view, id) => ({ x: view.width - 40 - 320 + 5, y: BELOW + 5 + 165 + MODEL_ROW * ["language", "agent", "model"].indexOf(id), width: 310, height: MODEL_ROW });
 
 // A setting's submenu, beside its row (`row`, in the pane), which stays lit. A press on the panel stops there, so the
 // keyboard is sent where the submenu wants it: the model search, else the pane's keys.
@@ -131,11 +131,9 @@ function settingsRest(view, key, e, cx) {
 const rule = (t) => div().h(1).my(4).mx(8).flex_none().bg(t.border);
 const note = (t, text, color = t.dim) => div().p(8).flex_none().text_size(12).font_medium().text_color(color).child(text);
 
-/**
- * The settings, as the app's settings dialog in a panel: the view's choices, then the analysis's - analyzing when a count opens a review,
- * and the language, agent and model, each a row naming its value. A row opens its list as a submenu left of the panel
- * (settingsSub), as T3's MenuSub; a pick, ←, or Escape closes it.
- */
+/** The settings, as the app's settings dialog in a panel: the view's choices, then the analysis's (analyzing when a count
+ *  opens a review, and the language, agent and model, each a row naming its value). A row opens its list as a submenu left
+ *  of the panel (settingsSub), as T3's MenuSub; a pick, ←, or Escape closes it. */
 export function settingsPanel(view, t) {
   const page = view.settingsPage, locale = view.locale(), { agent, model, catalog } = view.models();
   const split = pref("split") === true, autoAnalyze = pref("autoAnalyze") === true;

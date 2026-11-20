@@ -1,5 +1,5 @@
-// An agent's status mark, one shape wherever it's drawn: working spins, blocked and failed share the rounded `!` (failed in
-// ansi1, T3's destructive), done is a bare dot. Anything else has none: each place says idle its own way.
+// An agent's status mark, one shape wherever it's drawn: working is T3's still dashed circle, blocked and failed share the
+// rounded `!` (failed in ansi1, T3's destructive), done is a bare dot. Anything else has none: each place says idle its own way.
 import { div, svg } from "gpui-kit";
 import { alpha } from "./color.js";
 
@@ -11,8 +11,9 @@ export function took(ms, now) {
   return s < 60 ? `${s}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-export function statusMark(t, st, size = 12) {
-  if (st === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900);
+// `mod`: the caller's folder (`mods/t3-pane`), whose own icons/ holds the circle.
+export function statusMark(mod, t, st, size = 12) {
+  if (st === "working") return svg(`${mod}/icons/circle-dashed.svg`).size(12).flex_none().text_color(t.working);
   if (st === "blocked" || st === "error") {
     const c = st === "error" ? t.ansi1 : t.blocked;
     return div().size(size).flex_none().rounded(4).bg(alpha(c, "26")).text_size(size < 14 ? 10 : 11).font_bold().text_color(c)
