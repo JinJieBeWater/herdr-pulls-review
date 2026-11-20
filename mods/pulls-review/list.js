@@ -1,4 +1,4 @@
-// The one way a popup's list moves. scripts/sync.sh copies this to the mods that use it.
+// The one way a popup's list moves.
 import { div } from "gpui-kit";
 import { settings, props, closeOverlay } from "herdr";
 
@@ -8,8 +8,8 @@ export function step(e, at, n) {
   return e.key === "down" ? (at + 1) % n : (at <= 0 ? n : at) - 1;
 }
 
-// A menu with no search field, as T3's Base UI menus: ↑/↓, Home, End, and typing a row's first letters (750ms apart at most);
-// the same letter again steps through the rows it starts. The row to move to, or -1 for any other key.
+// A menu with no search field, as T3's Base UI menus: ↑/↓, Home, End, and typing a row's first letters; the same letter
+// again steps through the rows it starts. The row to move to, or -1 for any other key.
 export function menuJump(view, e, labels, at) {
   const moved = step(e, at, labels.length);
   if (moved >= 0) return moved;
@@ -35,10 +35,9 @@ export const litOnHover = (state, key, i) => (on, cx) => {
 };
 
 // A list that keeps the highlight in view: a scroll area can't be told to scroll, and a virtual list's rows can't hold handlers.
-// Every row is `row` px apart and only those in view are drawn. `at`: the highlighted row, or -1 if it's not in this list.
-// `height`: the list's, when the caller knows it; else the caller sizes the list and it's measured, a tall screen's rows drawn
-// until then: a render that draws a thousand rows runs past Herdr's limit, and one interrupted is never measured.
-// `wheeled(keep, cx)`: the wheel moved the list; put the highlight on row `keep` (-1: it's not in this list), or the next frame scrolls back to it.
+// Without `height` it's measured, a tall screen's rows drawn until then: a thousand rows run past Herdr's limit, and a render
+// cut short is never measured. `wheeled(keep, cx)` puts the highlight on row `keep` (-1: not here), or the next frame scrolls
+// back to it.
 const UNMEASURED = 2000;
 /** @param {any} view @param {string} id @param {{ count: number, row: number, at?: number, height?: number, draw: any, wheeled?: any }} options */
 export function scrollList(view, id, { count, row, at = -1, height, draw, wheeled }) {
@@ -72,10 +71,8 @@ export function scrollList(view, id, { count, row, at = -1, height, draw, wheele
     .children(rows);
 }
 
-// A menu's lit row as it opens (docs/internals/t3-tokens.md「菜单行」): opened by keys (Enter or Space on its button, →, a
-// shortcut; a button's opener sees no pointer press), its first row; by the pointer, none until the first arrow key. A menu
-// drawn in the view takes `openLit(keys)`; a popup menu's opener puts `litProp(keys)` in its props (popup-menu.js openPopup
-// and openBeside do it from their `keys`), and the popup reads it back with `propsLit()` as it starts.
+// A menu's lit row as it opens (docs/internals/t3-tokens.md「菜单行」): its first opened by keys, none by the pointer until an
+// arrow key. A popup menu's opener puts `litProp(keys)` in its props, and the popup reads it back with `propsLit()`.
 export const openLit = (keys) => (keys ? 0 : -1);
 export const litProp = (keys) => (keys ? { lit: 0 } : {});
 export const propsLit = () => props()?.lit ?? -1;

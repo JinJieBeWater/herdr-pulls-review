@@ -1,5 +1,5 @@
-// A popup menu's row, as T3's MenuItem (ui/menu.tsx), for every menu: docs/internals/t3-tokens.md「菜单行」. The menu keeps
-// its own keys (list.js menuJump), scrolling (scrollList) and submenus (submenu.js). scripts/sync.sh copies this to the mods that use it.
+// A popup menu's row, as T3's MenuItem (ui/menu.tsx): docs/internals/t3-tokens.md「菜单行」. The menu keeps its own keys,
+// scrolling and submenus.
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { litOnHover } from "./list.js";
@@ -9,11 +9,10 @@ import { glow, tip } from "./tip.js";
 export const MENU_ROW = 28;
 
 /**
- * `at`: [state, key, i], the row's place, lit while `state[key] === i` (list.js litOnHover); `open`: its submenu is open,
- * lit too, with a chevron when `sub`: the mod's icons folder, holding its own chevron-right.svg (scripts/sync.sh copies it). `icon`: an svg path (drawn muted) or an element, 2px into the padding and gap; `lead`:
- * an element before it that isn't an icon (a radio's check slot). `trail`: what ends the row (menuHint, a check). `color`:
- * the words' (T3's destructive). Disabled: faded, never lit or picked; its `hint` says why in tip()'s tooltip, so `view`
- * is the one whose `hot` tips follow. `also(row)` adds the menu's own handlers (a submenu's on_mouse_move) to the row.
+ * `at`: [state, key, i], lit while `state[key] === i` (list.js litOnHover); `open`: its submenu is open, lit too. `sub`: the
+ * mod's icons folder, for its chevron-right.svg. `icon`: an svg path (drawn muted) or an element; `lead`: an element before it
+ * that isn't an icon (a radio's check slot). Disabled: faded, never lit or picked; its `hint` says why in a tooltip that follows
+ * `view`'s `hot`. `also(row)` adds the menu's own handlers to the row.
  * @param {any} view @param {any} t @param {string} id
  * @param {{ at: [any, string, number], label: any, open?: boolean, icon?: any, lead?: any, trail?: any, color?: string, sub?: string | false,
  *   disabled?: boolean, hint?: string, pick?: (cx: any) => void, also?: (row: any) => any }} o
@@ -29,13 +28,13 @@ export function menuRow(view, t, id, { at: [state, key, i], label, open = false,
     .when(Boolean(icon), (el) => el.child(div().flex_none().mx(-2).child(typeof icon === "string" ? svg(icon).size(16).text_color(t.muted) : icon)))
     .child(div().flex_1().min_w(0).truncate().child(label))
     .when(Boolean(trail), (el) => el.child(trail))
-    // T3's MenuSubTrigger ends in its chevron, 80% opaque, 2px into the padding.
+    // As T3's MenuSubTrigger's chevron.
     .when(Boolean(sub), (el) => el.child(svg(`${sub}/chevron-right.svg`).size(16).mr(-2).flex_none().text_color(t.muted).opacity(0.8)));
   const done = also ? also(row) : row;
   return disabled && hint ? tip(view, t, id, hint, done.on_hover(glow(view, id))) : done;
 }
 
-/** A row's shortcut or note at its end, as T3's MenuShortcut: 12, medium, dim. */
+/** A row's shortcut or note at its end, as T3's MenuShortcut. */
 export const menuHint = (t, text) => div().flex_none().text_size(12).font_medium().text_color(t.dim).child(text);
 
 /** T3's MenuSeparator. */

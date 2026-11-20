@@ -1,8 +1,6 @@
-// Keyboard focus as T3's focus-visible: Tab walks the controls, and what it's on wears a 2px inset ring. The kit has neither a
-// focus_visible builder nor a way to read the input modality, so this keeps both. scripts/sync.sh copies this to the mods that use it.
-// A control tracking a handle takes the keyboard from the terminal when pressed, and the kit can't prevent that, so outside
-// an overlay the window's controls are tab stops only in keyboard mode: pane.go onto a sidebar mod ("focus") starts it, the
-// keyboard leaving every stop ends it. A terminal keeps Tab, so nothing else starts it, and with the mode off nothing here listens.
+// Keyboard focus as T3's focus-visible; the kit has neither a focus_visible builder nor the input modality, so this keeps both.
+// A control tracking a handle takes the keyboard from the terminal when pressed, so outside an overlay controls are tab stops
+// only in keyboard mode: pane.go onto a sidebar mod starts it, the keyboard leaving every stop ends it.
 import { div } from "gpui-kit";
 import { shared, setShared } from "herdr";
 import { KEY } from "./store.js";
@@ -78,9 +76,9 @@ export function enter(view, cx, first) {
   cx.notify();
 }
 
-// A popup's button toggles it. The press that brings the click is a press outside it too, which already closed it, so the click
-// mustn't reopen it. The button calls pressed on its press and justClosed on its click, naming the shared key the popup's close()
-// stamps. 50 ms, for a close reported just before the press. No press (the keyboard, assistive tech), nothing to tell.
+// The press that brings a popup button's click is a press outside the popup too, which already closed it, so the click mustn't
+// reopen it: the button calls pressed on its press and justClosed on its click, with the shared key the popup's close() stamps.
+// The margin is for a close reported just before the press.
 export const pressed = (view) => { view.pressAt = Date.now(); };
 export function justClosed(view, key) {
   const closing = view.pressAt != null && (shared(key) ?? 0) >= view.pressAt - 50;
@@ -111,9 +109,8 @@ export function focusRoot(view, el) {
     .on_mouse_down("left", (_e, cx) => { s.keyboard = false; cx.notify(); });
 }
 
-// Makes `el` a tab stop with T3's ring (focus-visible:ring-2 ring-inset ring-ring: its ring is the primary, here `accent`), drawn
-// over it so nothing moves. As T3's rows, every stop is in the Tab order: no roving. Call it last: the ring goes over the children.
-// Enter and Space click what has on_click; `enter` is for a row that goes by its mouse-up. `handle`: a stop that has its own.
+// Makes `el` a tab stop with T3's inset ring, drawn over it so nothing moves; call it last, so the ring covers the children.
+// As T3's rows, every stop is in the Tab order: no roving. `enter` is for a row that goes by its mouse-up; `handle` a stop's own.
 export function stop(view, t, id, el, radius = 6, { enter: act, handle } = /** @type {{ enter?: any, handle?: any }} */ ({})) {
   const s = view.fs;
   if (!s.modal && !shared(MODE)) return el;

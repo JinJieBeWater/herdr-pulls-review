@@ -1,9 +1,6 @@
 // The Review bar: the focused worktree's uncommitted files and its commits ahead of and behind
-// its upstream, each opening that diff.
-// Its logo lists what else there is to pick: a commit, or another branch. The git reads are review-git.js's, shared with the
-// Review page's scope menu.
+// its upstream, each opening that diff. The counts read the remote-tracking refs as they are; nothing fetches.
 // Herdr T3 owns its panel controls; an older toggle-only bar collapses to nothing.
-// The counts read the remote-tracking refs as they are; fetching is left to you.
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popup } from "gpui-base";
@@ -331,7 +328,6 @@ export function reviewBar(view, t, stopPress) {
   // The diff, whichever of its commits the pane is on.
   const isShown = (args) => here?.base === argPage(args, r.branch);
   // The accessibility label says what each count compares, which the short label can't. No color: here it means an agent's state.
-  // The count leads; what it counts stays quiet beside it.
   // As T3's ghost xs buttons: 24, 8 in, no outline. Quiet: dim and medium, lit (foreground) hovered or while its diff is the one
   // shown; a hover style can't brighten the icon, so the hover is view.hot. Its label is the name's first part. Compact, the label
   // gives back the words the count lost, `· merged?` included.

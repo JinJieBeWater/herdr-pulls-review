@@ -1,8 +1,5 @@
-// An agent's status mark, one shape wherever it's drawn: tabs, Go to, the pane header, the Review run (14), its sub-agent
-// button and menu and the Agents list (12), the Inbox card (16). Working spins; blocked and failed share the rounded `!` on 15% of its
-// colour, failed in ansi1 (T3's destructive); done is a bare 6px dot, a column of marks centres it 12 wide. Anything else
-// has none: each place says idle its own way.
-// scripts/sync.sh copies this to the mods that use it.
+// An agent's status mark, one shape wherever it's drawn: working spins, blocked and failed share the rounded `!` (failed in
+// ansi1, T3's destructive), done is a bare dot. Anything else has none: each place says idle its own way.
 import { div, svg } from "gpui-kit";
 import { alpha } from "./color.js";
 

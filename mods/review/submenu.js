@@ -1,7 +1,5 @@
 // A menu row that opens a submenu beside it, as T3's MenuSub (Base UI's SubmenuTrigger): where the submenu goes, and when
-// a pointer resting on rows opens or switches it (docs/internals/specs/menus.md). It draws nothing: each menu draws its
-// own and opens it its own way (t3-menu: a popup overlay; the Review page: beside its menu inside the pane).
-// scripts/sync.sh copies this to the mods that use it.
+// a pointer resting on rows opens or switches it (docs/internals/specs/menus.md). It draws nothing: each menu opens its own.
 // Keys, as Base UI's: → or Enter on the row opens it, with the first row (or its search) lit; ← or Escape in it closes it.
 
 // Base UI's SubmenuTrigger `delay`, and T3's MenuSubPopup `alignOffset`: its first row level with the row that opened it.

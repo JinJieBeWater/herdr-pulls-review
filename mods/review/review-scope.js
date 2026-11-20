@@ -1,9 +1,6 @@
 // What the review compares, as T3's DiffPanel header names it, and the scope menu the Review page's header and Details' Quick
-// Review both open: its counts, commits and bases read afresh at each opening (review-git.js, read-only, as the Review bar's;
-// a read for a menu since closed or moved on is dropped), the last read drawn meanwhile (`scopeCache`), its rows, its Commits submenu's body and their keys. A view drawing
-// the menu supplies two methods: `pick(page, { analyze, base, stays }, cx)` asks for that range (the Review page and Details
-// each ask their own way, panel.js reviewRequest), and `openCommits(cx, lit)` opens Commits where that view puts it. The
-// Review page's header, base picker and in-page menus are its own (extras/mods/review/scope-header.js).
+// Review both open. A view drawing the menu supplies `pick(page, { analyze, base, stays }, cx)`, asking for that range its own
+// way (panel.js reviewRequest), and `openCommits(cx, lit)`, opening Commits where that view puts it.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { shared } from "herdr";
@@ -30,7 +27,6 @@ export const chosenBase = (view) => shared(BASES)?.[view.space] ?? null;
 // A branch's Changes: against the base picked, or the default branch as the Review bar's count opens it.
 export const changesPage = (base, head) => base ? argPage([`${base}...${head}`]) : argPage([], head);
 
-// As T3's disabled menu items: there, greyed, inert.
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 // The diff's commits, oldest first: on one commit's page, still its base's.
@@ -71,7 +67,7 @@ export function releaseScope(view) {
 const scopeCache = new Map();
 
 // Counts, commits and refs, read afresh; what comes back for a menu since closed or moved on is dropped. Until it lands, the
-// last read of this repository and base shows (`scopeCached`); with none, the rows' counts stay blank, `…` past 150ms.
+// last read of this repository and base shows (`scopeCached`); with none, the rows' counts stay blank, `…` once slow.
 export function readScope(view, cx) {
   releaseScope(view);
   const { root, space } = view, base = chosenBase(view), token = {}, key = `${root}\n${base ?? ""}`;
@@ -101,7 +97,8 @@ export function readScope(view, cx) {
 }
 
 /** The menu's rows: the scopes as radios, each with its count as a number and its unit, then the submenu of commits. One
- *  checked only for the range shown (`view.page`; none before a first review). An empty one is greyed, unless it's shown. */
+ *  checked only for the range shown (`view.page`; none before a first review). An empty one is greyed, as T3's disabled
+ *  items, unless it's shown. */
 export function scopeRows(view) {
   const r = repo(view), p = repo(view) && view.picks, { kind } = scopeOf(view), c = r?.chosen;
   // Not read yet: no count, the number's place blank (or `…` while slow), and not greyed as empty.
@@ -188,9 +185,8 @@ export function openScope(view, cx, lit = -1) {
   readScope(view, cx);
 }
 
-/** One of the scope menu's rows (scopeRows' `r`, its `i`th), as T3's MenuRadioItem and MenuSubTrigger (menu-row.js): the
- *  mark's slot kept on every row so the words line up; Commits' row stays lit while its submenu is open (`open`). `icons`: the
- *  mod's own folder, for the check. `also(row)`: the menu's own handlers (resting on Commits opens it, submenu.js). */
+/** One of the scope menu's rows, as T3's MenuRadioItem and MenuSubTrigger: the mark's slot kept on every row so the words
+ *  line up. `icons`: the mod's own folder, for the check; `also(row)`: the menu's own handlers. */
 export function scopeRow(view, t, r, i, { icons = LU, open = false, also = undefined } = {}) {
   return menuRow(view, t, r.id, { at: [view, "scopeAt", i], label: r.label, open, lead: pickMark(Boolean(r.on), icons), sub: Boolean(r.sub) && icons,
     disabled: r.known && !r.count && !r.on, pick: (cx) => pickScopeRow(view, r, cx),

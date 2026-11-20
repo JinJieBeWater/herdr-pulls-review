@@ -1,4 +1,4 @@
-// File menus and Files use the same paths and directory listings; copied beside each mod by sync.sh.
+// File menus and Files use the same paths and directory listings.
 import { sortEntries } from "./file-tree.js";
 
 /** `a/b`: either may be "" (the space's folder, or a path from it). */

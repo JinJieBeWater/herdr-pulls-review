@@ -69,7 +69,7 @@ assert.deepEqual(kinds(buildItems(review, both, { ...opts, split: true })), ["f"
 assert.deepEqual(kinds(buildItems(review, both, opts)), ["f", "h", "r2", "n(old 2)", "r1", "n(new 2)", "n(new 2 again)"]);
 {
   // A batch's rows, a page more, a fold, a whole file or a note rebuild only that file's items: kept from the last build in
-  // `parts`, the others are the same objects. A group of a thousand files was rebuilt whole on every one.
+  // `parts`, the others are the same objects.
   const files = [file("a.ts"), file("c.ts")], r = { ...review, files }, g = { key: "g", files: ["a.ts", "c.ts"], notes: {}, children: [] };
   const o = { ...opts, collapsed: new Set(), full: new Map(), parts: new Map() }, body = (list, path) => list.filter(i => i.path === path && i.kind !== "file");
   const kept = (before, after, path) => body(before, path).length > 0 && body(before, path).every((item, i) => item === body(after, path)[i]);
@@ -154,9 +154,9 @@ assert.deepEqual(lineText(wrapRow({ tokens: [] }, 5)), [""]);
 assert.deepEqual(lineText(wrapRow({ tokens: [["abce\u0301f"]] }, 4)), ["abce\u0301", "f"]);
 assert.deepEqual(lineText(wrapRow({ tokens: [["ab👨\u200d👩c"]] }, 4)), ["ab👨\u200d👩", "c"]);
 assert.deepEqual(lineText(wrapRow({ tokens: [["ab✅c"]] }, 3)), ["ab", "✅c"]);
-// It cuts runs of one width at once, not a character at a time (a first build cut 922 rows, 185k characters, in 38 of the
-// render's 50ms): the same lines as cutting each character in turn, an astral pair never split, nor after a joiner; a wide
-// character as wide as measured. lineCount, which a width's change runs on every row, counts as many lines without cutting.
+// It cuts runs of one width at once, not a character at a time: the same lines as cutting each character in turn, an
+// astral pair never split, nor after a joiner; a wide character as wide as measured. lineCount, which a width's change
+// runs on every row, counts as many lines without cutting.
 {
   const each = (tokens, cols, wide = 2) => {
     const lines = [[]];
@@ -491,8 +491,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   activeSpace = "s1"; windowActive = false;
   windowActive = true; pane.report();
   assert.equal(word(), null, "back at the window, it's read");
-  // Spaces gone, and the tabs words were kept by before, drop out; another space's word stays, and writing yours doesn't
-  // reorder it into a loop.
+  // Spaces gone drop out; another space's word stays, and writing yours doesn't reorder it into a loop.
   sharedStore.set("review.status", { gone: "working", s2: "working" }); pane.report();
   assert.deepEqual(plain(sharedStore.get("review.status")), { s2: "working" });
   const kept = sharedStore.get("review.status"); pane.report();
@@ -1011,8 +1010,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     setPref("split", true);
     assert.equal(sizeAt(1000), 20 + Math.ceil(300 / wrapColumns(1000, 8).pair) * 20, "split, each half wraps on its own, a pair as its longer side");
     assert.ok(pane.sideMax(0) === 0 && pane.sideMax(1) === 0);
-    // Dragged, a width that keeps changing keeps the lines as they were cut, and cuts them again once it has held (nav-column.js holdWidth):
-    // cutting the rows in view anew at each step was most of a step (76ms against 27 unwrapped, the floor 19).
+    // Dragged, a width that keeps changing keeps the lines as they were cut, and cuts them again once it has held (nav-column.js holdWidth).
     {
       setPref("split", false); timers.length = 0;
       const area = handlers.get("review-diff-area.on_size_change");
@@ -1039,14 +1037,14 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   const scroll = (dy) => { handlers.get("review-diff-area.on_scroll_wheel")({ delta: { x: 0, y: dy }, local_position: { x: 100, y: 0 } }, cx); drawn.clear(); pane.render(cx); };
   scroll(-400);
   assert.ok(drawn.has("review-header") && drawn.has("review-nav"));
-  // What else to review is the header's scope menu now, not the Review bar's: no branch button, with or without a bar.
+  // What else to review is the header's scope menu, not the Review bar's: no branch button, with or without a bar.
   barIn = true; drawn.clear(); pane.render(cx);
   assert.ok(!drawn.has("review-pick") && drawn.has("review-scope"));
   barIn = false;
   // Under COMPACT the header's text buttons are icons.
   pane.width = 500; drawn.clear(); pane.render(cx);
   assert.ok(drawn.has("analyze"));
-  // The bar reads what the pane shows, for its count; the commits are the pane's own now.
+  // The bar reads what the pane shows, for its count; the commits are the pane's own.
   const base = pane.page, baseEntry = () => sharedStore.get("review.shown").s1;
   assert.deepEqual(plain(baseEntry()), { root: "/repo", page: base, base, label: "Changes" }, "with its scope button's words, for Details");
   const settled = () => new Promise(setImmediate);
@@ -1521,7 +1519,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   status = { running: false }; routes.length = 0;
   every[1500][0](cx); await settle();
   assert.deepEqual(plain(routes), ["/api/review/status", "/api/review"]);
-  // A daemon without the route reads the diff, as before.
+  // A daemon without the route reads the diff.
   mainScope.review = (root, route, body) => route === "/api/review/status" ? Promise.reject(new Error("Cannot find any route matching")) : daemon(root, route, body);
   pane.review.analysis = { state: "running", agent: true }; routes.length = 0;
   every[1500][0](cx); await settle();
@@ -1774,8 +1772,7 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     assert.equal(p.current, order[2], "the keys'");
   }
   {
-    // A big review's tree draws its folder rows without reading the whole group again for each: a filter of every file per
-    // folder row drawn was 40 × 20k reads a render, 63 ms in Herdr (performance-audit.md).
+    // A big review's tree draws its folder rows without reading the whole group again for each.
     const big = Array.from({ length: 3000 }, (_, i) => `dir${String(i % 30).padStart(2, "0")}/f${i}.ts`);
     const groups = [{ key: "s", label: "S", category: "core", critical: false, missing: [], notes: {}, files: big, children: [] }];
     const { p, scope } = await paneOf({ review: async () => ({ ...review, files: big.map(f => file(f, { hunks: undefined })), groups }) });
@@ -2050,8 +2047,8 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
   let top = 0;
   const windowed = { v_virtual_list: (_id, count, _sizes, _key, render) => { render({ start: top, end: Math.min(count, top + 40) }).forEach(Boolean); return element(); } };
   {
-    // Scrolling a big group, a batch's rows come on their own, not inside the page's every file and group again. The old
-    // read's cost is replayed beside each: the same rows inside the whole page, as the daemon answered them before.
+    // Scrolling a big group, a batch's rows come on their own, not inside the page's every file and group again: each is
+    // weighed against the same rows inside the whole page.
     const files = Array.from({ length: 1554 }, (_, i) => ({ ...file(`apps/web/src/features/module-${Math.floor(i / 20)}/component-${i}.tsx`, { additions: 40, deletions: 0 }), hunks: undefined }));
     const hunks = () => [{ header: "@@ -0,0 +1,40 @@", rows: Array.from({ length: 40 }, (_, k) => ({ kind: "+", new: k + 1, tokens: [["const ", "#ff00ff"], [`value${k}`], [" = ", "#888888"], [`"${k}"`, "#00ff00"]] })) }];
     const group = (key, list) => ({ key, label: key, category: "core", critical: false, missing: [], notes: {}, children: [], files: list.map(f => f.path) });

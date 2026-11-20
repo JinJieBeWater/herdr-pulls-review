@@ -111,8 +111,7 @@ export function diffView(view, t) {
     .child(div().id("review-diff-area").flex_1().min_h(0).overflow_hidden().relative().text_size(12)
       .on_size_change((size, cx) => {
         view.diffHeight = size.height / zoom();
-        // Wrapped lines are cut again only once the width holds (view.wrapHold): a panel dragged changes it every frame, and
-        // cutting the rows in view anew each time, as new text for Herdr to lay out, was most of a step (76ms against 27 unwrapped).
+        // Wrapped lines are cut again only once the width holds (view.wrapHold): a panel dragged changes it every frame.
         if (Math.abs(size.width / zoom() - view.view) >= 1) { view.view = size.width / zoom(); holdWidth(view.wrapHold, view.view, (ms, f) => cx.timer.after(ms, f)); cx.notify(); }
       })
       // Code scrolls sideways by the wheel: split, each side under the pointer; the full-width rows under either.

@@ -1,8 +1,5 @@
-// A pulls.review review, the unique `review` surface of the space panel (docs/adr/0017): groups (the AI analysis, else
-// rule-based), each group's files and their diffs, reviewed marks, one commit at a time. One copy serves every space and
-// shows the active one's review. The pulls-review mod's "herdr" mode and the header's scope menu ask for a page through shared(PANE)
-// `{ space, root, page, base?, n, analyze }`. The Files page asks nothing of it (docs/adr/0015).
-// Everything comes from the jin.review daemon, which listens on this machine only: a remote space has no review.
+// A pulls.review review, the one `review` surface of the space panel (docs/adr/0017), showing the active space's. Others ask
+// for a page through shared(PANE); all of it comes from the jin.review daemon, on this machine only: a remote space has none.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
@@ -118,7 +115,6 @@ export default class ReviewPanel extends View {
     });
   }
 
-  // The active space's review, if it has one yet.
   shown() { return this.panel.bySpace.get(spaces().find(s => s.active)?.id) ?? null; }
 
   /**
@@ -266,7 +262,7 @@ export default class ReviewPanel extends View {
   }
 
   // This space's entry in a value shared by space, none with no value. Every write redraws every mod: only a change, and
-  // spaces gone (or the tabs these were keyed by before) drop out.
+  // keys of no live space drop out.
   keep(key, value) {
     if (!this.surfaceAlive()) return;
     const all = shared(key) ?? {}, ids = new Set(spaces().map(s => s.id));

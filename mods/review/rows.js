@@ -22,7 +22,7 @@ export function charWidth(cp) {
   while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (STARTS[mid] <= cp) lo = mid; else hi = mid - 1; }
   return WIDTHS[lo];
 }
-// The BMP, where nearly all code is, a lookup each: a search per character was a third of a big group's wrap.
+// The BMP, where nearly all code is, a lookup each.
 const BMP = new Uint8Array(0x10000);
 STARTS.forEach((start, i) => { if (start < 0x10000) BMP.fill(WIDTHS[i], start, Math.min(STARTS[i + 1] ?? 0x10000, 0x10000)); });
 // shortcut: by code point, as wcwidth, not by grapheme as string-width: an emoji joined of several counts each, so it wraps
@@ -89,8 +89,7 @@ export function wrapColumns(width, char, wideChar = 2 * char) {
 /**
  * How many lines a row wraps to at `cols` columns, a wide character `wide`, as wrapRow cuts it but without cutting: a width's
  * change counts every row of the group, and cuts only those drawn. An ASCII row is its columns over the width; any other
- * finds where each line ends by halving, from its measured running columns, not a character at a time (a Docs group's
- * 964 rows of Chinese, 208k characters, took 24ms a width on QuickJS by wrapRow).
+ * finds where each line ends by halving, from its measured running columns, not a character at a time.
  */
 export function lineCount(row, cols, wide = 2) {
   if (!row) return 1;
@@ -115,9 +114,8 @@ export function lineCount(row, cols, wide = 2) {
  * token's color. Kept on the row for the width it was cut at: its tokens don't change once arrived. */
 export function wrapRow(row, cols, wide = 2) {
   if (row.wrapAt === cols && row.wrapWide === wide) return row.wrapped;
-  // By code points, cut only where a line breaks: in a render, a group's first build cut ~185k characters, each a string and a
-  // regex test, in ~38ms of Herdr's ~50. Widths as measure() counts them; a pair is never split, nor a line broken before a
-  // zero-width mark or a joined character. A row that fits is as it is.
+  // By code points, cut only where a line breaks. Widths as measure() counts them; a pair is never split, nor a line
+  // broken before a zero-width mark or a joined character. A row that fits is as it is.
   const fits = span(row, wide) <= cols, lines = [[]];
   let narrow = 0, wides = 0, prev = 0;
   for (const [token, color] of row.tokens) {
@@ -160,7 +158,7 @@ export function rowsToAsk(paths, fileAt, inView, collapsed) {
 /**
  * Cuts each row's tokens, in place, at MAX_COLUMNS characters (at least as many columns), as they arrive: a line of a log or
  * minified file runs to megabytes, which Herdr's engine can't measure or draw before it interrupts the render. Then each is
- * measured, there in the read's task rather than in a render: on QuickJS, about 11ms a read of 600 KB of rows.
+ * measured, there in the read's task rather than in a render.
  */
 export function clipRows(rows) {
   for (const row of rows) {

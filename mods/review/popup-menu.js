@@ -1,7 +1,5 @@
-// Popup menus that hang off one another, as T3's MenuSub: t3-menu's Snooze, Files' Open with, Details' menus
-// and the Commits of Details' Review row. Which popup hangs off which is kept for this run only, in one registry: mods share one JS context
-// (terminal-context.js), so every copy reads the same. A submenu is a popup of its own beside its row (submenu.js places it).
-// scripts/sync.sh copies this to the mods that use it.
+// Popup menus that hang off one another, as T3's MenuSub; a submenu is a popup of its own beside its row. Which hangs off
+// which is kept for this run in one registry: mods share one JS context (terminal-context.js), so every copy reads the same.
 import { openOverlay, closeOverlay, props, settings, shared } from "herdr";
 import { subPlace, subOpened } from "./submenu.js";
 import { MENU_ROW } from "./menu-row.js";
@@ -22,9 +20,7 @@ export function openPopup(spec, parent = null, kind = null, keys = false) {
 /** What gives the keyboard back as popup `id` closes on its own (menuClosed): `back`, from the view that opened it. */
 export const backTo = (id, back) => { const m = popups().get(id); if (m) m.back = back; };
 
-/** Whether popup `id` is still open. */
 export const isOpen = (id) => popups().has(id);
-/** Whether popup `parent` has a `kind` popup open off it. */
 export const hasOpen = (parent, kind) => [...popups().values()].some((m) => m.parent === parent && m.kind === kind);
 
 /** In a popup's close(): it leaves the registry, and what hangs off it closes with it, leaving first so it hands nothing back.

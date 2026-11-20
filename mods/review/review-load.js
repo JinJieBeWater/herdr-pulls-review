@@ -57,11 +57,10 @@ function endRead(view, cx) {
   if (view.again) view.load(cx);
 }
 
-// Rows come only for the group shown (a large diff's run to megabytes), and none while polling a run:
-// apply() keeps the rows of files whose sha didn't change. With no group yet, the first group's rows come with the read;
-// a daemon too old for `firstRows` ignores it, and the group's rows are asked for once it shows.
-// Only the latest read counts: a read of the page being read waits for it (a burst of changes can't restart it forever),
-// a read of another starts at once and the old one's answer is dropped.
+// Rows come only for the group shown (a large diff's run to megabytes), none while polling a run: apply() keeps the rows of
+// files whose sha didn't change. With no group yet the first group's rows come with the read (a daemon too old for
+// `firstRows` ignores it, and they're asked for once the group shows). Only the latest read counts: a read of the page being
+// read waits for it (a burst of changes can't restart it forever); a read of another starts at once, the old answer dropped.
 export function loadReview(view, cx, poll = false) {
   if (!canRead(view)) return;
   if (!view.root || !view.page) return;
@@ -111,9 +110,9 @@ export function loadReview(view, cx, poll = false) {
 
 const rowCount = (hunks) => hunks.reduce((n, hunk) => n + hunk.rows.length, 0);
 
-// After the open, a batch's rows, or the next page of a file cut short as its end nears the view, come on their own: a read
-// of the whole page for them weighed half a megabyte a batch, nearly all of it the files and groups already shown. The daemon
-// serves them from the diff shown; one it no longer holds is `stale`, and the whole page is read again, rows and all.
+// After the open, a batch's rows, or the next page of a file cut short as its end nears the view, come on their own, not
+// inside the whole page. The daemon serves them from the diff shown; one it no longer holds is `stale`, and the whole page
+// is read again, rows and all.
 export function loadRows(view, cx) {
   if (!canRead(view)) return;
   if (view.dirty) return view.load(cx);

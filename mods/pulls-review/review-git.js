@@ -1,6 +1,4 @@
-// What the Review bar counts and the Review page's scope menu lists, read from git: the focused worktree's uncommitted
-// files, its commits ahead of the default branch and of its upstream, its commits, the other branches and the bases to pick.
-// scripts/sync.sh copies this to pulls-review and review. Read-only: nothing here writes under .git.
+// What the Review bar counts and the Review page's scope menu lists, read from git. Read-only: nothing here writes under .git.
 import { exec } from "herdr";
 
 // Keep these reads from updating the repository's index or filesystem-monitor state.
@@ -62,7 +60,7 @@ export async function readReview(cwd) {
   return review;
 }
 
-// Read on demand (a menu's opening), so the bar's 10 s poll stays as cheap as it was.
+// Read on demand (a menu's opening), so the bar's poll stays cheap.
 // shortcut: the newest 200 commits and 20 branches, so search can't reach past them; read more if a repo needs it.
 // `unpushed`: the shas not on the upstream, for the menus' ↑.
 export async function readPicks(r) {

@@ -5,8 +5,7 @@ import { checking, exec, hc, window, notify, closeOverlay, appHome, readTextFile
 import { argPage, changedFiles, git } from "./review-git.js";
 import { openReview } from "./panel.js";
 
-// `open` in this folder's config.json, which the person creates; none means "herdr" (see mods/README.md):
-// "herdr":    the fork's daemon, drawn in the review page of the window's panel (the review mod).
+// `open` in this folder's config.json (mods/README.md); none or "herdr" is the fork's daemon in the panel's review page.
 // "pwa":      the fork's `jin.review -d --pwa`, in the installed jin.review app.
 // "browser":  the fork's `jin.review -d`, one background server for every repo, in the browser.
 // "official": the `pulls.review` CLI. Each worktree gets its own server, kept running by herdr-core.

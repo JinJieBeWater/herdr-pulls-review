@@ -129,8 +129,7 @@ export function treeOf(view) {
   return view.treeOf.rows;
 }
 
-// A group's files under each of its folders, made with the tree's rows: a filter of the group per folder row drawn was
-// rows × files each render.
+// A group's files under each of its folders, made with the tree's rows, so a folder row drawn doesn't filter the whole group.
 function underFolders(view, group) {
   const made = view.treeOf.under ??= new Map();
   if (!made.has(group)) {

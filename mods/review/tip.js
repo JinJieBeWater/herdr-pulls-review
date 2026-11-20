@@ -1,5 +1,5 @@
-// A hover label as T3's (its ui/tooltip.tsx): small and dark, the label with its key, and under it a dim hint if there is one.
-// `.tooltip()` takes only a string, in the shell's own style, hence this. scripts/sync.sh copies this to the mods that use it.
+// A hover label as T3's ui/tooltip.tsx: the label with its key, a dim hint under it.
+// Herdr's `.tooltip()` takes only a string, in the shell's own style.
 import { div } from "gpui-kit";
 import { v_flex, Popup } from "gpui-base";
 import { keys, window } from "herdr";
@@ -32,13 +32,10 @@ export function keyLabel(strokes) {
   }).join(" ");
 }
 
-// Herdr drops a leave while the pointer's last known place is in the element's last box (should_dispatch_hover), and GPUI has by then marked it left,
-// so none comes after: the pointer leaving the window, a key press or a press dragged out strand a hover. So what shows on hover also watches where the
-// pointer is. No box yet, as for what slid under a still pointer: its moving from `from`, where it was then, means off, as a move still on it would have
-// reported a box first; with no `from`, no word either way. macOS sends a window, active or not, no moves once the pointer is out, and its last place
-// stays put: one whose last step, twice over, crosses the window's edge has left. shortcut: a pointer stopped dead just short of an edge after a fast
-// step counts as gone; drop all this if Herdr's filter goes. shortcut: a window coming up over an inactive Herdr crosses no edge, so a hover under it
-// stays until the pointer's next move here; nothing a mod hears can say more.
+// Herdr drops a leave while the pointer's last place is in the element's last box (should_dispatch_hover), so a hover watches the pointer.
+// No box yet: moved from `from` means off. macOS sends no moves once the pointer is out, so a last step that, doubled, leaves the window has.
+// shortcut: drop this if Herdr's filter goes. A pointer stopped short of an edge after a fast step counts as gone, and a hover under a
+// window raised over an inactive Herdr stays until the pointer next moves here.
 export const POINTER_WATCH = 100;
 export const pointerAt = () => globalThis.window.mouse_position?.();
 const track = { at: null, step: { x: 0, y: 0 } };
@@ -60,9 +57,8 @@ export function pointerGone(box, from, predictExit = true) {
 // A drag has a release to wait for, and one out of an inactive window's sight never comes.
 export const dragGone = (box) => window()?.active === false || pointerGone(box);
 
-// The label fades and slides 4px off its control, in and out: T3's also scales, which Herdr can't. A transition adopts the first value it sees,
-// so it draws clear until laid out. A new id per opening: a size reports only the first time an id is laid out.
-// A Popup, as a HoverCard stays open under the pointer and a popup blocks what it covers even when clear: one fading out would leave a dead patch.
+// A transition adopts the first value it sees, so the label draws clear until laid out; a size reports only the first time an id
+// is laid out, so each opening takes a new id. A popup blocks what it covers even when clear.
 const tips = new Map();
 export const FADE = /** @type {const} */ ({ duration: 150, easing: "ease-out" });
 /** The label's card, as T3's TooltipPopup: docs/internals/t3-tokens.md「Tooltip」. measured-text.js's named() draws it too. */
@@ -111,7 +107,7 @@ export function tip(view, t, id, label, trigger, { action, hint, below, delay = 
     watch(next, cx);
   };
   return Popup.new(`tip-${id}`, div().id(`tip-over-${id}`).on_hover(hover).on_mouse_move((e) => { pointerMoved(e.position); const at = tips.get(id); if (at) at.box = e.bounds; }).child(trigger)).anchor(below ? "top_center" : "bottom_center")
-    // While lit or leaving: a dialog opened from the button covers it, nothing reports the leaving until the pointer moves, and the label would stay up over it.
+    // While lit or leaving only: a dialog opened from the button gets no leave until the pointer moves, and the label would stay over it.
     .when(Boolean(s?.open && (hot === id || s.closing)), pop => pop.content(tipCard(t, `tip-body-${id}-${s.n}`)
       .opacity(shown ? 1 : 0).top(shown ? 0 : below ? -4 : 4).transition("opacity", FADE).transition("top", FADE)
       .on_size_change((_size, cx) => { if (tips.get(id) !== s || s.drawn) return; s.drawn = true; cx.notify(); }).when(below, el => el.mt(4)).when(!below, el => el.mb(4))

@@ -1,7 +1,6 @@
 // The space panel (docs/adr/0012, 0017): the `panel` column at the window's right, the `panel-body` stack its render slots.
-// Each space keeps `{ tabs, active, open, wide }` in t3.panels (docs/internals/storage.md); surfaces.js says what a step does
-// to the tabs, this stores it and lays the panel out. Where Herdr's own layout docks the Review extra in its stack instead
-// (no `panel-empty` slot), the host owns the head and these only show the page.
+// Each space keeps its record in t3.panels (docs/internals/storage.md). Where Herdr's own layout docks the Review extra in its
+// stack instead (no `panel-empty` slot), the host owns the head and these only show the page.
 import { layout, run, spaces, shared, setShared, exec, window } from "herdr";
 import { KEY } from "./store.js";
 import { GROUP_GAP } from "./button.js";
@@ -37,9 +36,8 @@ export function panelState() {
     wide: Boolean(panel && work?.hidden), ...surfacesFor(activeSpaceId(), slots) };
 }
 
-/** The tab bar's window part (t3-tabs' `window-end` block) as it draws with the panel `open` or not, logical px: closed, the
- *  panel's 28 toggle a group's gap after Details (none at Home, as t3-tabs draws it), then the window's own buttons 8 on,
- *  three of 28; open, nothing, the panel head has them. */
+/** The tab bar's window part (t3-tabs' `window-end` block), in logical px, as t3-tabs draws it with the panel `open` or not;
+ *  open, the panel head has its buttons. */
 export function windowEndPx(open, space = activeSpaceId()) {
   const atHome = Boolean(space) && space === shared(KEY.home);
   return open ? 0 : (panelSlots().length && !atHome ? GROUP_GAP + 28 : 0) + (window()?.buttons ? 8 + 3 * 28 : 0);
@@ -188,7 +186,7 @@ export const reviewRepo = async (space = activeSpaceId()) => {
   return root ? { root, problem: "" } : { root: null, problem: "This tab's folder is not in a Git repository." };
 };
 
-// --- Each space keeps its panel, as T3 keeps one per thread. The width stays the window's.
+// Each space keeps its panel, as T3 keeps one per thread; the width stays the window's.
 
 const same = (a, b) => a.open === b.open && a.page === b.page && a.wide === b.wide;
 // The panel as `space` left it; closed if it never had one.
@@ -204,7 +202,7 @@ function lay(want, space) {
 
 /**
  * Lays the panel out as `space` left it in the same go as the select that will show that space, so its first frame has it
- * (t3-tabs' `arrive`). Until spaces() catches up (1s at most), syncPanel leaves it be while it still observes the source.
+ * (t3-tabs' `arrive`). Until spaces() catches up, syncPanel leaves it be while it still observes the source.
  */
 export function restorePanel(view, space, source = activeSpaceId()) {
   const s = panelState();

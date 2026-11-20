@@ -1,7 +1,5 @@
-// The space panel's navigation column, one for the Files and Review pages (docs/adr/0013): right of the content, ruled off
-// on its left, its left edge dragged, a 36 head over what it lists. As T3's FileExplorerPane: 256 to start, 160 at least,
-// at most 560 and never leaving the content less than 256. Each page keeps its width (`nav.width`) and whether its column
-// is open (`nav.open`) in its own localStorage. scripts/sync.sh copies this to both mods.
+// The space panel's navigation column, one for the Files and Review pages (docs/adr/0013), sized as T3's FileExplorerPane.
+// Each page keeps its width (`nav.width`) and whether its column is open (`nav.open`) in its own localStorage.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
@@ -25,7 +23,7 @@ export const navOpen = () => localStorage.getItem("nav.open") !== "false";
 export const setNavOpen = (open) => localStorage.setItem("nav.open", String(open));
 export const navShown = (body, open, narrow) => body < NAV_NARROW && narrow !== undefined ? narrow : open;
 
-/** Follow the first width at once, then keep it until the room has held its latest width for 300ms.
+/** Follow the first width at once, then keep it until the room has held its latest width a while.
  * Each page owns `hold`; `after(ms, f)` schedules `f(cx)` without retaining a render's context. */
 export function holdWidth(hold, width, after) {
   if (hold.at == null) { hold.at = width; return; }
@@ -34,24 +32,21 @@ export function holdWidth(hold, width, after) {
   after(300, (cx) => { if (run === hold.run && hold.at !== hold.want) { hold.at = hold.want; cx.notify(); } });
 }
 
-// The column's edge being dragged, on this page (each mod has its own copy): the pointer's x and the width it started from,
-// and the width it's at now.
+// The edge being dragged on this page; each mod has its own copy.
 let drag = null;
 
 /**
- * The page's `content`, and right of it, while `open`, the column: `head` in its 36 head, `list` under it. `id` names it;
- * `body` is the page's width. Its left edge drags, and the width it lands at stays on this page.
- */
-/**
- * The tree's head, the navigation column's and generic Files' (docs/internals/specs/files.md#tree-header): 32 high, the page
- * headers' height, not T3's 36, so generic Files' search row, its page's first, has its centre on the work column's pane header's
- * (40 + 16 = 56), and a column's head shares a centre with Review's file header beside it; 8 under it, so the tree still starts
- * 40 under the head's top. 12 in (t3-tokens「规则」R1); no rule under it, as T3's subheaders in the panel.
+ * The tree's head, the navigation column's and generic Files' (docs/internals/specs/files.md#tree-header): the page headers'
+ * height, not T3's 36, so its centre lines up with the pane header's and with Review's file header beside it.
  * @param {string} id @param {any} head
  */
 export const treeHead = (id, head) => h_flex().id(id).h(32).mb(8).flex_none().px(12).gap(8).items_center().child(head);
 
-/** @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, handle?: any }} parts */
+/**
+ * The page's `content` and, while `open`, the column right of it: `head` over `list`. Its left edge drags, and the width it
+ * lands at stays on this page.
+ * @param {any} t @param {string} id @param {number} body @param {{ content: any, head: any, list: any, open: boolean, handle?: any }} parts
+ */
 export function withNav(t, id, body, { content, head, list, open, handle }) {
   // The content on the theme's `background`, as T3's code surface (`--code-background`); the column stays on the page's chrome.
   if (!open) return div().id(`${id}-solo`).size_full().min_w(0).bg(t.background).child(content);
@@ -67,9 +62,8 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
     if (to !== Math.round(navWidth(body))) localStorage.setItem("nav.width", String(to));
     cx.notify();
   };
-  // Not Herdr's resizable group: it keeps its panels' sizes under its id and scales them with the page, so a resizing panel
-  // drew the column a frame scaled, then a frame at its width again (a group named by the page's width), and twitched.
-  // The pointer's positions are zoomed pixels.
+  // Not Herdr's resizable group: it keeps its panels' sizes under its id and scales them with the page, so the column twitches
+  // on resize. The pointer's positions are zoomed pixels.
   return h_flex().id(`${id}-split`).size_full().min_w(0)
     .when(mine, (el) => el.cursor_col_resize())
     .on_mouse_move((e, cx) => {
@@ -86,7 +80,6 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
       .child(div().id(`${id}-nav-rule`).absolute().top(0).bottom(0).left(0).w(1).bg(t.border).opacity(0.6))
       .child(treeHead(`${id}-nav-head`, head))
       .child(div().flex_1().min_h(0).child(list))
-      // The edge, 6 wide across the rule, over what's beside it.
       .child(div().id(`${id}-nav-edge`).absolute().top(0).bottom(0).left(-3).w(6).cursor_col_resize()
         .when(Boolean(handle), el => el.track_focus(handle).tab_index(0).accessibility_label("Resize file explorer")
           .when(handle?.is_focused(), el => el.bg(alpha(t.accent, "40")))
@@ -104,7 +97,7 @@ export function withNav(t, id, body, { content, head, list, open, handle }) {
         })));
 }
 
-/** The toolbar's switch for the column, last at its right, on while open; greyed when `disabled`. As the 40 bar's others: sm, on chrome, a 14 icon. */
+/** The toolbar's switch for the column, last at its right. */
 /** @param {any} view @param {any} t @param {string} mod @param {string} id @param {boolean} open @param {any} toggle @param {boolean} [disabled] */
 export function navToggle(view, t, mod, id, open, toggle, disabled = false) {
   return ghostButton(view, t, id, { icon: `${mod}/icons/folder-tree.svg`, label: open ? "Hide the file tree" : "Show the file tree", act: toggle, on: open, disabled, size: "sm", iconSize: 14, surface: "chrome" });

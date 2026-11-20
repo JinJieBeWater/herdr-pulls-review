@@ -1,5 +1,4 @@
-// A theme color at a share of its own opacity, for every fill, wash and ring the layout derives from one. scripts/sync.sh
-// copies this to the mods that use it.
+// A theme color at a share of its own opacity, for every fill, wash and ring the layout derives from one.
 
 /**
  * `color` (`#rgb`, `#rrggbb` or `#rrggbbaa`, as Herdr's themes write them) at `share`, two hex digits as the layout writes its

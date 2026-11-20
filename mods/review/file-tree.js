@@ -1,14 +1,11 @@
 // The space panel's file tree, one for the Files and Review pages (docs/adr/0013): T3's Pierre tree at its compact density.
-// The rows as data (treeRows, pathEntries, rowAt, treeKey) and one row drawn (treeRow); scripts/sync.sh copies this, with
-// list.js and pierre-icons.js, to both mods.
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { scrollList } from "./list.js";
 import { pierreFileIcon } from "./pierre-icons.js";
 import { alpha } from "./color.js";
 
-// Pierre's compact density (factor 0.8): a 24 row, 6.4 in, a 16 icon and a 4.8 gap; a level is one icon and its gap, so a
-// folder's rows start under its name.
+// Pierre's compact density (factor 0.8); a level is one icon and its gap, so a folder's rows start under its name.
 const TREE_ROW = 24;
 const PAD = 6.4, GAP = 4.8, ICON = 16, LEVEL = ICON + GAP;
 // A change's letter in its status's color, as T3's FileStatus.
@@ -113,8 +110,8 @@ export function treeKey(key, rows, at) {
 /** @param {any} view @param {string} id */
 export const revealRow = (view, id, path) => { view.treeReveal = { ...view.treeReveal, [id]: path }; };
 
-/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. A row's box 12 in on both
- *  sides, the column head's edge (t3-tokens「规则」R1), not Pierre's 16: 12 less the rows' 1.6. */
+/** The rows in a list that draws only those in view; `draw(row, i)` makes one, handlers and all. A row's box sits 12 in,
+ *  the column head's edge (t3-tokens「规则」R1), not Pierre's 16. */
 export function treeList(view, id, rows, draw) {
   const want = view.treeReveal?.[id], at = want == null ? -1 : rowAt(rows, want);
   if (at >= 0 && view.listHeight?.[id] !== undefined) view.treeReveal = { ...view.treeReveal, [id]: undefined };
@@ -123,13 +120,10 @@ export function treeList(view, id, rows, draw) {
 }
 
 /**
- * One row, as Pierre's, the same on the Files and Review pages: a level's indent, the page's own `leading` in a fixed lane
- * before the icon (Review's reviewed box), the icon, the name, then a change's letter and the page's own `trailing`. No
- * chevron: a folder's icon opens with it. A file's icon is its Pierre one, `icon` stands in for either (a Review group's).
- * Selected on the text color at 12%, hovered at 7%; the row the keys are on ringed; `dim` (ignored, reviewed) greys the name
- * and halves the icon. `guides`, while the tree is hovered: a line down each open folder, under its first box (`leading`, else
- * its icon), so it never crosses a child's box. `mod` is the mod's
- * folder, whose icons/ hold icons/tree and icons/pierre.
+ * One row, as Pierre's, on the Files and Review pages: `leading` in a fixed lane before the icon (Review's reviewed box),
+ * `trailing` after a change's letter. No chevron: a folder's icon opens with it. `guides`, while the tree is hovered: a line
+ * down each open folder under its first box, so it never crosses a child's. `mod` is the mod's folder, holding icons/tree and
+ * icons/pierre.
  */
 /** @param {any} t @param {string} mod @param {any} row @param {string} id @param {{ selected?: boolean, focused?: boolean, context?: boolean, guides?: boolean, status?: string, dim?: boolean, struck?: boolean, leading?: any, trailing?: any, icon?: any, drag?: { path: string, on: string } }} options */
 export function treeRow(t, mod, row, id, { selected = false, focused = false, context = false, guides = false, status, dim = false, struck = false, leading, trailing, icon, drag } = {}) {

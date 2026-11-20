@@ -5,11 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 
-// ---- fake kit: keeps handlers, children, style, id ------------------------------------------------
 const kit = require("./check-kit.js");
 const element = kit.elements(), draw = (kind) => () => element(kind);
 
-// ---- real modules, imports stripped --------------------------------------------------------------
 const load = (...files) => kit.strip(files.map((f) => fs.readFileSync(path.join(__dirname, f), "utf8")).join("\n"));
 
 const state = {};

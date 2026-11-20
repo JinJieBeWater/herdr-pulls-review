@@ -1,5 +1,4 @@
-// Where the layout keeps what outlives a frame, and under what name: docs/internals/storage.md. scripts/sync.sh copies this
-// to the mods that use it.
+// Where the layout keeps what outlives a frame, and under what name: docs/internals/storage.md.
 
 // Every shared key the layout's mods keep data under: `<mod>.<name>` when one mod writes it, `t3.<name>` when several do or it
 // is the layout's own. Code names a key only through here.

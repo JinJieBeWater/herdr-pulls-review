@@ -49,8 +49,7 @@ export function donut(t, value) {
 
 /**
  * As pulls.review's DiffGroupNav: the groups as one row of tabs across the page under its toolbar, sideways scrolled rather
- * than wrapped. A tab is upstream's two lines in T3's outline, the group shown lit at 12%: its category icon (grey until
- * shown or hovered), label and critical mark over its counts, its progress as a donut. Picking one shows it alone, in the diff and the tree, where its subgroups are. A lone group has no row.
+ * than wrapped. Picking one shows it alone, in the diff and the tree, where its subgroups are. A lone group has no row.
  */
 export function groupTabs(view, t, pick) {
   const groups = view.review.groups;

@@ -7,7 +7,7 @@ import { closedKey } from "./store.js";
 export const PANE = "review", LU = "mods/review/icons", COMPACT = 640, MODEL_ROW = 28;
 export const zoom = () => Number(settings()?.zoom) || 1;
 // Stamped as the Review page's popover `name` closes to a press outside it, for the button that opened it (trigger.js); another's
-// button still opens its own. One key for every Review tab: two presses 50 ms apart in two of them can't both be on a button.
+// button still opens its own. One key for every Review tab: two presses a moment apart in two of them can't both be on a button.
 export const popupClosed = (name) => closedKey(PANE, name);
 
 // `icons`: the drawing mod's own folder, as a mod draws only its own icons.

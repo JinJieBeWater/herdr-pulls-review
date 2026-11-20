@@ -1,10 +1,6 @@
-// A space panel's surfaces (docs/adr/0017, 0018), as T3 Code's rightPanelStore (09a54f01) keeps them: what adding, opening,
-// activating and closing do to the list. Pure: panel.js stores the result and lays the panel out. scripts/sync.sh copies it.
-//
-// A list: { tabs, active }. A tab: { id, born, reveal, path?, folder?, trail? }. `id` is "files" (the generic Files, the whole
-// tree), "review" or `file:<path>` (a file, or with `folder` a folder: its tree from there). `born` names one instance, so a
-// mod can tell a closed and re-added tab from the one it read for. `reveal` counts the times it was picked: Files clears its
-// search and shows the file each time, as T3's revealRequestId.
+// A space panel's surfaces (docs/adr/0017, 0018), as T3 Code's rightPanelStore keeps them; pure, panel.js stores the result.
+// A tab's `id` is "files" (the generic Files), "review" or `file:<path>` (with `folder`, a folder's tree from there).
+// `born` names one instance, so a mod tells a re-added tab from the one it read for; `reveal` counts picks, as T3's revealRequestId.
 
 const surfaceFile = (path, born, extra = {}) => ({ id: `file:${path}`, path, born, reveal: 0, ...extra });
 

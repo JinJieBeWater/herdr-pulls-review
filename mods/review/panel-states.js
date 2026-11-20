@@ -1,5 +1,5 @@
 // What the Files and Review pages show while there's nothing else to (docs/adr/0013): loading, empty and failed, one way
-// on both. Each paints no background: the panel's shows through. scripts/sync.sh copies this to both mods.
+// on both. Each paints no background: the panel's shows through.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { button as drawButton, radiusOf } from "./button.js";
@@ -10,14 +10,14 @@ import { alpha } from "./color.js";
 // Herdr's own spinner, which every mod can draw.
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 
-/** Loading: a 14 spinner and a line, centered, announced as a status (as T3's FeedbackLoading). */
+/** Loading: a spinner and a line, centered, announced as a status (as T3's FeedbackLoading). */
 export function loadingState(t, id, text) {
   return h_flex().id(id).size_full().gap(8).items_center().justify_center().text_size(12).text_color(t.dim).role("status")
     .child(svg(SPINNER).size(14).flex_none().text_color(t.working).spin(900))
     .child(div().id(`${id}-text`).child(text));
 }
 
-/** Empty: a 24 icon (a path in the mod's folder), a 13 medium title and a 12 `dim` hint, centered, 8 apart. */
+/** Empty: an icon (a path in the mod's folder), a title and a `dim` hint, centered. */
 export function emptyState(t, id, icon, title, hint) {
   return v_flex().id(id).size_full().p(24).gap(8).items_center().justify_center().text_center().text_color(t.dim)
     .child(svg(icon).size(24).flex_none().text_color(t.dim))
@@ -25,7 +25,7 @@ export function emptyState(t, id, icon, title, hint) {
     .when(Boolean(hint), (el) => el.child(div().id(`${id}-hint`).text_size(12).child(hint)));
 }
 
-/** Failed: a red bar under the toolbar, `ansi1` on a wash of it (its 0x18 alpha, Review's before), and Retry, T3's xs ghost button. */
+/** Failed: a red bar under the toolbar, `ansi1` on a wash of it, and Retry, T3's xs ghost button. */
 export function errorBar(t, id, text, retry, view) {
   return noticeBar(t, id, text, t.ansi1, "retry", "Retry", retry, view);
 }

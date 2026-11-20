@@ -1,6 +1,6 @@
 // A button that opens a popup or a menu, as the sidebar's Filter by space (docs/internals/t3-tokens.md「规则」P6): its label is
 // the layout's card, a second line if it needs one, and goes down while what it opened is up; the button stays on meanwhile; a
-// second click closes it. scripts/sync.sh copies this to each mod that uses it.
+// second click closes it.
 import { button, radiusOf } from "./button.js";
 import { tip, glow } from "./tip.js";
 import { stop, pressed, justClosed } from "./focus.js";

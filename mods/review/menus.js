@@ -1,7 +1,6 @@
-// Files and Review's menus (docs/adr/0018): native popups of their own mod. A tree row's (right-click, Shift+F10),
-// a breadcrumb's folder (›) and Open in's apps (⌄, drawn by open-in.js as Details' is). A row's Open with opens its submenu
-// beside it in a popup of its own (submenu.js); they close together. A breadcrumb's folder menu, as T3's FileBreadcrumbs, moves
-// through folders in place, Back on top. Each acts only while the space and tab it was opened on still show (`source`).
+// Files and Review's menus (docs/adr/0018), native popups of their own mod: a tree row's, a breadcrumb's folder and Open in's
+// apps. A breadcrumb's folder menu, as T3's FileBreadcrumbs, moves through folders in place, Back on top. Each acts only while
+// the space and tab it was opened on still show (`source`).
 import { svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { checking, props, closeOverlay, theme, shared, setShared, spaces, exec, run, notify, window } from "herdr";
@@ -17,7 +16,7 @@ import { LIST, join, parseListing } from "./file-listing.js";
 
 const menuMod = () => props()?.menuMod ?? "t3-files";
 const menuIcons = () => `mods/${menuMod()}`; // each mod draws only its own icons/
-// As t3-menu's: 220 wide, 4 in, rows of 28; a folder's at most 12 rows before it scrolls.
+// As t3-menu's.
 export const MENU_W = 220, FOLDER_H = 8 + 12 * MENU_ROW;
 // Stamped as a top menu closes, for the control that opened it (trigger.js); a submenu's, for the menu it hangs off.
 export const MENU_CLOSED = closedKey("t3-files", "menu");
@@ -42,8 +41,8 @@ export function rowItems({ remote = false, platform, agent = null, editors = [],
   ].filter(it => it && (!deleted || it.id === "copy-path"));
 }
 
-// Into the agent's input as a paste, never sent: the clipboard carries it and gets its text back. Paste reads the clipboard a
-// moment later, so it's put back after 150 ms. A clipboard holding no text (an image) isn't touched.
+// Into the agent's input as a paste, never sent: the clipboard carries it and gets its text back once the paste has read it.
+// A clipboard holding no text (an image) isn't touched.
 export function mention(path, address, cx) {
   if (/[\x00-\x1f\x7f]/.test(path)) {
     notify({ title: "Couldn't insert this path", body: "It contains control characters. Use Copy path instead.", level: "warning" });
