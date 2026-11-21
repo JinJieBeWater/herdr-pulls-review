@@ -25,8 +25,11 @@ export const MENU_CLOSED = closedKey("t3-files", "menu");
  *  `keys`: opened by keys, its first row lit. */
 export const openMenu = (kind, place, extra, keys = false) => openPopup({ mod: extra.menuMod ?? "t3-files", width: MENU_W, ...place, props: { ...extra, files: kind } }, null, null, keys);
 
-/** The space and tab a menu was opened on are still the ones shown. */
-const sourceOkay = (s) => { const sp = spaces().find(x => x.active); return sp?.id === s.space && sp.tabs.some(t => t.active && t.id === s.tab); };
+/** The space and tab a menu was opened on are still the ones shown, plus any caller check (Files' live root). */
+const sourceOkay = (s, check = null) => {
+  const sp = spaces().find(x => x.active);
+  return Boolean(sp && sp.id === s.space && sp.tabs.some(t => t.active && t.id === s.tab) && (!check || check(s, sp)));
+};
 
 /** A tree row's items: a remote one can't be opened or revealed here; `agent` is the tab's last active terminal. */
 /** @param {{ remote?: boolean, platform?: string, agent?: any, editors?: string[], deleted?: boolean }} o */
@@ -66,14 +69,15 @@ export function mention(path, address, cx) {
 }
 
 /** Opens `rel` in app `name`, here only, once more checking the menu's space still shows; the app that opened is the next default. */
-export function launch(source, rel, name) {
+export function launch(source, rel, name, check = null) {
   if (source.on || window()?.platform !== "macos") return;
-  openTarget(name, join(source.root, rel), () => sourceOkay(source)).then(actual => { if (actual) setShared(KEY.openTarget, actual); })
+  openTarget(name, join(source.root, rel), () => sourceOkay(source, check)).then(actual => { if (actual) setShared(KEY.openTarget, actual); })
     .catch(e => notify({ title: "Couldn't open this file", body: String(e), level: "error" }));
 }
 
-export function initMenu(view, cx) {
+export function initMenu(view, cx, check = null) {
   const p = props();
+  view.check = check;
   view.keys = cx.focus_handle(); view.keys.focus();
   stopsInit(view, cx, "modal");
   // As T3's, nothing is lit until a key or the pointer gets there; keys that opened a submenu light its first row.
@@ -86,7 +90,7 @@ export function initMenu(view, cx) {
   view.dir = p.dir;
   if (p.files === "folder") readFolder(view, cx);
   if (p.files === "open-in") awaitTargets(cx);
-  view.sourceWatch = cx.timer.every(250, () => { if (!sourceOkay(p.source)) closeOverlay(p.overlay); });
+  view.sourceWatch = cx.timer.every(250, () => { if (!sourceOkay(p.source, view.check)) closeOverlay(p.overlay); });
 }
 
 // A breadcrumb menu's folder, read as it opens and each time it moves; a read for a folder it has left counts for nothing.
@@ -95,8 +99,9 @@ function readFolder(view, cx) {
   view.entries = null;
   if (checking()) return;
   cx.spawn(async (cx) => {
+    if (!sourceOkay(p.source, view.check)) { closeOverlay(p.overlay); return; }
     const r = await exec("sh", ["-c", LIST, "files", join(p.source.root, dir)], { on: p.source.on }).catch(() => null);
-    if (view.dir !== dir) return;
+    if (view.dir !== dir || !sourceOkay(p.source, view.check)) return;
     view.entries = r?.code === 0 ? parseListing(r.stdout) : "failed";
     cx.notify();
   });
@@ -126,9 +131,9 @@ export function closeMenu(view) {
 // What a menu lists: { id, label, icon?|glyph?, sub?, disabled?, hint?, checked?, keepOpen?, run?(cx) }.
 function items(view) {
   const p = props(), t = theme(), s = p.source, ICONS = menuIcons();
-  if (p.files === "editors") return p.editors.map(name => ({ id: `editor:${name}`, label: name, glyph: targetIcon(ICONS, name, t), run: () => launch(s, p.path, name) }));
+  if (p.files === "editors") return p.editors.map(name => ({ id: `editor:${name}`, label: name, glyph: targetIcon(ICONS, name, t), run: () => launch(s, p.path, name, view.check) }));
   if (p.files === "row") return rowItems({ remote: Boolean(s.on), platform: window()?.platform, agent: p.agent, editors: p.editors, deleted: p.deleted }).map(it => ({ ...it, run: (cx) => {
-    if (it.id === "open") launch(s, p.path, shared(KEY.openTarget) ?? "Finder");
+    if (it.id === "open") launch(s, p.path, shared(KEY.openTarget) ?? "Finder", view.check);
     else if (it.id === "reveal") exec("open", ["-R", "--", join(s.root, p.path)]).then(r => { if (r.code !== 0) throw new Error(r.stderr); }).catch(e => notify({ title: "Couldn't reveal in Finder", body: String(e), level: "error" }));
     else if (it.id === "copy-path") cx.write_to_clipboard(p.path);
     else if (it.id === "mention" && p.agent) mention(p.path, p.agent.terminal, cx);
@@ -154,6 +159,7 @@ function openSub(view, i, lit) {
 }
 
 function choose(view, i, cx, lit = false) {
+  if (!sourceOkay(props().source, view.check)) { closeChain(); return; }
   const it = items(view)[i];
   if (!it || it.disabled) return;
   if (it.into !== undefined) return goTo(view, it.into, cx, lit);
@@ -165,7 +171,7 @@ function choose(view, i, cx, lit = false) {
 
 export function menuView(view) {
   const p = props(), t = theme(), ICONS = menuIcons();
-  if (p.files === "open-in") return targetsMenu(view, ICONS, p.targets ?? [], p.reason, (name) => { if (sourceOkay(p.source)) setShared(KEY.openTarget, name); closeOverlay(p.overlay); });
+  if (p.files === "open-in") return targetsMenu(view, ICONS, p.targets ?? [], p.reason, (name) => { if (sourceOkay(p.source, view.check)) setShared(KEY.openTarget, name); closeOverlay(p.overlay); });
   // Its submenu closed itself (← or Esc in it, a click beside it): the keyboard comes back here.
   subGone(view, closedKey(menuMod(), "submenu"));
   const list = items(view), o = list[0]?.id === ".." ? 1 : 0;

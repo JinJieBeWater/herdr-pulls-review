@@ -5,7 +5,7 @@ import { layout, run, spaces, shared, setShared, exec, window } from "herdr";
 import { KEY } from "./store.js";
 import { GROUP_GAP } from "./button.js";
 import { workFolder } from "./terminal-context.js";
-import { surfaceActivate, surfaceAdd, surfaceOpenFile, surfaceNavigate, surfaceClose } from "./surfaces.js";
+import { surfaceActivate, surfaceAdd, surfaceOpenFile, surfaceNavigate, surfaceClose, surfaceResetFiles } from "./surfaces.js";
 
 /** Layout `node`'s descendant (or itself) with `id`, else null. */
 export const layoutNode = (node, id) => node?.id === id ? node : (node?.children ?? []).reduce((hit, c) => hit ?? layoutNode(c, id), null);
@@ -99,6 +99,19 @@ export function openFile(path) { showSurfaces(surfaceOpenFile(panelState(), path
 /** A breadcrumb's folder, from the active tab (surfaces.js navigateFolder). */
 export function navigateFolder(path, trail = path, keep = false) { showSurfaces(surfaceNavigate(panelState(), path, trail, keep, newBorn())); }
 
+/** Drops `space`'s file/folder tabs when its Files root changes, keeping generic Files and Review. */
+export function resetFilesTabs(space = activeSpaceId()) {
+  if (!space) return false;
+  const slots = panelSlots();
+  if (!slots.includes("panel-empty")) return false;
+  const all = shared(KEY.panels) ?? {}, was = all[space];
+  if (!was?.tabs?.length) return false;
+  const current = surfacesFor(space, slots), next = surfaceResetFiles(current, newBorn());
+  if (next === current) return false;
+  setShared(KEY.panels, { ...all, [space]: { tabs: next.tabs, active: next.active, open: Boolean(was.open), wide: Boolean(was.wide) } });
+  return true;
+}
+
 /** mode: "one", "others", "right", "all" (surfaces.js close). The last one gone puts the panel away. Each mod lets go of what a
  * closed tab held when its `born` is gone from the list. In Herdr's own layout, the panel goes. */
 export function closeSurface(id = panelState().active, mode = "one") {
@@ -112,10 +125,25 @@ export function closeSurface(id = panelState().active, mode = "one") {
   hidePanel();
 }
 
+// Default px width when restoring a widened panel whose pre-wide width wasn't recorded in this run.
+const PANEL_PX = 540;
+function setWide(wide) {
+  const panel = layoutNode(layout(), "panel");
+  if (wide) {
+    const px = panel?.size?.px;
+    if (Number.isFinite(px) && px > 0) globalThis.t3PanelPx = px;
+    run("layout.resize", { id: "panel", weight: 1 });
+    run("layout.hide", { id: "work" });
+  } else {
+    if (panel && !panel.size?.px) run("layout.resize", { id: "panel", px: globalThis.t3PanelPx ?? PANEL_PX });
+    run("layout.show", { id: "work" });
+  }
+}
+
 // Put away: the work column back if the panel had taken its place; the tabs stay.
 export function hidePanel() {
   const s = panelState();
-  if (s.wide) run("layout.show", { id: "work" });
+  if (s.wide) setWide(false);
   showPanel(false);
   if (s.owns) save({ open: false, wide: false });
 }
@@ -139,7 +167,7 @@ export function togglePanel(page) {
 export function toggleWide() {
   const s = panelState();
   if (!s.open) return;
-  run(s.wide ? "layout.show" : "layout.hide", { id: "work" });
+  setWide(!s.wide);
   save({ wide: !s.wide });
 }
 
@@ -197,7 +225,7 @@ function keptFor(space) {
 }
 function lay(want, space) {
   run("layout.select", { stack: "panel-body", child: want.page });
-  run(want.wide ? "layout.hide" : "layout.show", { id: "work" });
+  setWide(want.wide);
   showPanel(want.open, space);
 }
 

@@ -23,3 +23,10 @@ export function workFolder(space = spaces().find(s => s.active)?.id, tab = space
   return (was && all.find(p => p.terminal === was.terminal)?.cwd) || all.find(p => p.tab === tab && p.cwd)?.cwd
     || spaces().find(s => s.id === space)?.folder || null;
 }
+
+/** First live terminal cwd belonging to `sp` in `ps` order, or null. */
+export function spaceFolder(sp, ps = panes()) {
+  if (!sp?.tabs?.length) return null;
+  const ids = new Set(sp.tabs.map(t => t.id));
+  return ps.find(p => p.cwd && ids.has(p.tab))?.cwd || null;
+}

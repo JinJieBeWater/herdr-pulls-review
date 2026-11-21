@@ -5,6 +5,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, VirtualListScrollHandle, InputState, TextView } from "gpui-base";
 import { checking, exec, nextCommand, setShared, shared, spaces, theme, props, window as appWindow } from "herdr";
 import { panelState, surfacesFor, closeSurface, reviewRepo, surfaceBorn, reviewRequest, reviewShown, REVIEW_SHOWN, REVIEW_STATUS } from "./panel.js";
+import { workFolder } from "./terminal-context.js";
 import { buildItems, contentWidth, groupFiles, rowsToAsk, wrapColumns, CHAR, LOOKAHEAD } from "./rows.js";
 import { PANE, LU, SPLIT_MIN, DISABLED, HEADER, BELOW, pref, setPref, zoom, subState } from "./controls.js";
 import { GROUP_GAP } from "./button.js";
@@ -94,10 +95,12 @@ export default class ReviewPanel extends View {
     cx.timer.every(15000, (cx) => each(s => s.refresh(cx)));
     // Unseen, a review is due a read, which follows within a second of it being seen again. A space closed leaves nothing.
     cx.timer.every(1000, (cx) => {
-      const ids = new Set(spaces().map(s => s.id));
+      const byId = new Map(spaces().map(s => [s.id, s]));
       for (const [id, s] of this.bySpace) {
-        if (!ids.has(id) || !s.surfaceAlive()) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
+        const sp = byId.get(id);
+        if (!sp || !s.surfaceAlive()) { s.evict(); this.bySpace.delete(id); if (this.front === s) this.front = null; }
         else if (!s.readable()) s.deferRead();
+        else if (s.noRepo && !s.root && !s.loading) { if (!sp.machine && workFolder(id) !== s.startFolder) s.start(sp, cx); }
         else if (s.dirty) s.load(cx);
       }
     });
@@ -151,7 +154,7 @@ export default class ReviewPanel extends View {
     const a = this.runState();
     this.awayAnalysis = this.analyzing() ? { state: a?.state ?? "none", error: a?.error ?? null } : null;
     this.evicted = true; this.dirty = true; this.restoreTo = this.current;
-    this.loadId++; this.hiddenId++; this.loading = null; this.again = false; this.stale = false; this.error = null;
+    this.loadId++; this.startId++; this.hiddenId++; this.loading = null; this.again = false; this.stale = false; this.error = null;
     this.review = null; this.switching = false; this.baseCommits = null; this.full.clear(); this.fullReads.clear(); this.parts.clear();
     this.scroll = null; this.wrapHold = {};
     // Back to the panel's own, none, as at begin.
@@ -164,7 +167,7 @@ export default class ReviewPanel extends View {
     // What it showed, if that was this tab's: closed and added again, it starts from the default.
     const was = reviewShown(space);
     this.space = space; this.root = was?.root ?? null; this.page = was?.page ?? null; this.base = was?.base ?? this.page;
-    this.handled = Date.now() - FRESH; this.noRepo = false; this.evicted = false; this.awayAnalysis = null;
+    this.handled = Date.now() - FRESH; this.noRepo = false; this.startFolder = null; this.startId = 0; this.evicted = false; this.awayAnalysis = null;
     // The width wrapped lines are cut at (`at`), a moment behind a width that's moving (nav-column.js holdWidth).
     this.wrapHold = {};
     // The page a count's click asked to analyze, until its first read.
@@ -180,12 +183,15 @@ export default class ReviewPanel extends View {
   // diff panel opens, against the base picked for the space; a detached HEAD, with no branch, on its uncommitted changes.
   start(space, cx) {
     if (checking()) return;
+    this.startFolder = workFolder(space.id);
     // Evicted or closed meanwhile (evict bumps loadId): a late answer sets nothing and reads no further.
-    const id = this.loadId, live = () => !this.evicted && id === this.loadId;
+    const id = this.loadId, probe = this.startId = (this.startId ?? 0) + 1;
+    const live = () => !this.evicted && id === this.loadId && probe === this.startId;
     cx.spawn(async (cx) => {
       const { root } = await reviewRepo(space.id);
       if (!live()) return;
       if (this.root || !root) { this.noRepo = !this.root; return cx.notify(); }
+      this.noRepo = false;
       this.root = root;
       const head = await exec("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "symbolic-ref", "--short", "-q", "HEAD"], { cwd: root }).catch(() => null);
       const branch = head?.code === 0 && head.stdout.trim();

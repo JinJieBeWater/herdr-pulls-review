@@ -52,3 +52,22 @@ export function surfaceClose(s, id, mode = "one") {
   const was = s.tabs.findIndex(t => t.id === s.active);
   return { tabs, active: (s.tabs.slice(was + 1).find(t => tabs.includes(t)) ?? tabs.at(-1))?.id ?? null };
 }
+
+/** Drops every file/folder tab when Files changes root, keeping generic Files (without a stale trail) and Review.
+ *  If the active tab was removed, switches to generic Files, adding one when absent. */
+export function surfaceResetFiles(s, born) {
+  let changed = false;
+  const kept = [];
+  for (const t of s.tabs) {
+    if (t.path) { changed = true; continue; }
+    if (t.id === "files" && (t.folder || t.trail !== undefined)) {
+      changed = true;
+      kept.push({ id: "files", born: t.born, reveal: t.reveal ?? 0 });
+    } else kept.push(t);
+  }
+  if (!changed) return s;
+  if (!s.active || kept.some(t => t.id === s.active)) return { tabs: kept, active: s.active };
+  return kept.some(t => t.id === "files")
+    ? { tabs: kept, active: "files" }
+    : { tabs: [...kept, { id: "files", born, reveal: 0 }], active: "files" };
+}

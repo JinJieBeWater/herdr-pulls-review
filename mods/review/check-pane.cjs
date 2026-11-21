@@ -2325,6 +2325,35 @@ const timers = [], tick = () => timers.splice(0).forEach(f => f(cx));
     sharedStore.set("review.shown", wasShown); sharedStore.set("review", wasAsk ?? null);
   }
   {
+    // Opened outside a repository (e.g. ~), Review recovers once the terminal moves into a repository instead of staying stuck on noRepo.
+    const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown");
+    const sp = { id: "norepo-recover", active: true, folder: "/Users/me", machine: null, tabs: [{ id: "tab", active: true }] };
+    let liveCwd = "/Users/me", probes = 0;
+    const scope = load("main.js", { ...env, spaces: () => [sp],
+      focused: () => ({ space: sp.id, tab: "tab", terminal: "t9" }), panes: () => [{ tab: "tab", terminal: "t9", cwd: liveCwd }],
+      layout: () => ({ id: "root", children: [{ id: "work" }, { id: "panel", children: [{ id: "panel-body", active: "review", children: ["files", "review", "panel-empty"].map(id => ({ id })) }] }] }),
+      review: async () => structuredClone(review),
+      exec: async (_cmd, args, { cwd }) => {
+        if (args.includes("--show-toplevel")) { probes++; return cwd.startsWith("/work/repo") ? { code: 0, stdout: "/work/repo\n" } : { code: 128, stdout: "" }; }
+        return { code: 0, stdout: "main\n" };
+      },
+    });
+    sharedStore.set("t3.panels", { [sp.id]: { open: true, tabs: [{ id: "review", born: 1 }], active: "review" } });
+    sharedStore.set("review.shown", {});
+    const view = new scope.Mod(); view.init({}, cx);
+    const tick1s = every[1000].at(-1);
+    view.render(cx); await wait(); view.render(cx); await wait();
+    const s = view.bySpace.get(sp.id);
+    assert.deepEqual([s.noRepo, s.root, probes], [true, null, 1], "starts on Not a git repository");
+    tick1s(cx); await wait();
+    assert.equal(probes, 1, "does not re-probe while the working folder has not changed");
+    liveCwd = "/work/repo/sub";
+    tick1s(cx); await wait(); view.render(cx); await wait();
+    assert.deepEqual([s.noRepo, s.root, Boolean(s.review)], [false, "/work/repo", true], "cd into a git repo recovers and loads the review");
+    if (wasPanels === undefined) sharedStore.delete("t3.panels"); else sharedStore.set("t3.panels", wasPanels);
+    sharedStore.set("review.shown", wasShown);
+  }
+  {
     // In this layout's panel, a range picked in the page's own scope menu names its tab (born), so the page takes it up.
     const wasPanels = sharedStore.get("t3.panels"), wasShown = sharedStore.get("review.shown"), wasAsk = sharedStore.get("review");
     const sp = { id: "own-pick", active: true, folder: "/repo", machine: null, tabs: [] };
